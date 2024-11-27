@@ -1,0 +1,5 @@
+json_folder/
+data/
+*.pyc
+*.ipynb
+*.xlsx
