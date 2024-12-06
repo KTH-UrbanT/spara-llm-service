@@ -20,6 +20,6 @@
     "account_url" : "https://sparadocuments.blob.core.windows.net" , 
     "database_name" : "sparadocuments", 
     "container_name" : "sparacontainer" , 
-    "container_name_blob" : "spara" , 
+    "container_name_blob" : "testspara" , 
     "temp_folder_download" : "temp_folder_download"
 }

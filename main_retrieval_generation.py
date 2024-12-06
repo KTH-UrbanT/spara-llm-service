@@ -1,56 +1,126 @@
-import json 
-from knowledge_base.main_KB import *
-from context_retrieval.main_context_retrieval import *
+# Import necessary libraries
+import json  # For loading the configuration file
+from knowledge_base.vector_database import VectorDataBase  # For interacting with the vector database
+from context_retrieval.main_context_retrieval import *  # For context retrieval logic
+import os  # For environment variables
+from openai import AzureOpenAI  # For interacting with OpenAI's API (Azure version)
+from dotenv import load_dotenv  # For loading environment variables from .env file
 
-from openai import AzureOpenAI  
-from dotenv import load_dotenv
-
+# Load environment variables from the .env file
 load_dotenv()
 
+import copy  # For creating deep copies of objects
 
+# Load configuration settings from a JSON file
 main_config = json.load(open('main_config.json'))
 
+# Initialize the context retrieval object (initially set to None)
+context_retreival_obj = None
 
+# Initialize and configure the vector database object with the settings from main_config
+vector_database_obj = VectorDataBase(
+    indexing_policy=main_config['indexing_policy'], 
+    vector_embedding_policy=main_config['vector_embedding_policy'], 
+    database_name=main_config['database_name'], 
+    container_name=main_config['container_name']
+)
 
-vector_database_obj = VectorDataBase(indexing_policy = main_config['indexing_policy'] , 
-                                    vector_embedding_policy = main_config['vector_embedding_policy'] , 
-                                    database_name = main_config['database_name'] , 
-                                    container_name = main_config['container_name'])
+# Set up the connection to the vector database
 vector_database_obj.setup_connection()
 
-context_retreival_obj = RetrievalText(vector_search = vector_database_obj.vector_search , 
-                                        openai_embeddings = vector_database_obj.openai_embeddings)
+# Initialize the context retrieval object using the vector search from vector_database_obj
+context_retreival_obj = RetrievalText(
+    vector_search=vector_database_obj.vector_search, 
+    openai_embeddings=vector_database_obj.openai_embeddings
+)
 
-print('Context Retreival has been established')
+# Print a confirmation message indicating that the context retrieval system has been established
+print('Context Retrieval has been established')
 
 
 
 class RetrievalGeneration:
-    def __init__(self , context_retreival_obj):
+    """
+    A class to handle the process of generating responses based on context retrieval 
+    and existing conversation history using OpenAI's language model (Azure version).
+    """
+    def __init__(self):
+        """
+        Initialize the RetrievalGeneration object by setting up the context retrieval object 
+        and Azure OpenAI client using environment variables.
+        """
+        global context_retreival_obj # Reference the global context_retreival_obj
         self.context_retreival_obj = context_retreival_obj
-        endpoint = os.getenv("ENDPOINT_URL")  
-        self.deployment = os.getenv("DEPLOYMENT_NAME")  
-        subscription_key = os.getenv("AZURE_OPENAI_API_KEY")
+        
+        # Load the Azure endpoint, deployment name, and API key from environment variables
+        endpoint = os.getenv("AZURE_ENDPOINT")  
+        self.deployment = os.getenv("LANGUAGE_MODEL_DEPLOYMENT_NAME")  
+        subscription_key = os.getenv("OPENAI_API_KEY")
+        
+        # Initialize the Azure OpenAI client
         self.client = AzureOpenAI(  
                 azure_endpoint=endpoint,  
                 api_key=subscription_key,  
-                api_version="2024-05-01-preview",  
+                api_version = os.getenv("LANGUAGE_MODEL_API_VERSION"),  
             )  
 
-    def generate_reply(self , question , prompt) :
-        docs = context_retreival_obj.search_text_with_score(question , 3)
-        content_from_doc = ' '.join(i[0].page_content for  i in docs)
-        prompt.append({'role' : 'user' , 'content' : content_from_doc})
+    def generate_reply_texts(self , question , existing_conversation , type ) :
+        """
+        Generate a reply based on the question and the type of search (text-based or vector-based).
+
+        Parameters:
+        - question: The user's question to generate a reply for.
+        - existing_conversation: The previous conversation history to provide context.
+        - type: The type of search ('text', 'text_with_score', 'vector', or 'hybrid') to retrieve context.
+
+        Returns:
+        - new_conversation: The updated conversation with the newly generated assistant reply.
+        """
+        new_conversation = copy.deepcopy(existing_conversation)
+        
+        # Depending on the 'type' parameter, retrieve relevant documents from the context retrieval system
+        if type == 'text' : 
+            docs = context_retreival_obj.search_text(question)
+            content_from_doc = ' '.join(i.page_content for  i in docs)
+        elif type == 'text_with_score' : 
+            docs = context_retreival_obj.search_text_with_score(question)
+            content_from_doc = ' '.join(i[0].page_content for  i in docs)
+        elif type == 'vector' : 
+            docs = context_retreival_obj.search_vector(question)
+            content_from_doc = ' '.join(i.page_content for  i in docs)
+        elif type == 'hybrid' : 
+            docs = context_retreival_obj.hybrid_search(question)
+            content_from_doc = ' '.join(i.page_content for  i in docs)                       
+        # prompt_conversation =  existing_conversation.copy()
+        # existing_conversation.append({  "role" : "user"  , "content" : question   })
+        print(len(docs))
+        
+        # Append the user's question along with the context from the retrieved documents to the conversation
+        new_conversation.append({
+            "role" : "user"  ,
+            "content" : question   + "\n Context : " + content_from_doc
+        })
+        
+        # Generate the assistant's reply using the OpenAI model based on the updated conversation
         completion = self.client.chat.completions.create(  
-        model=self.deployment,  
-        messages=prompt,  
-        max_tokens=800,  
-        temperature=0.7,  
-        top_p=0.95,  
-        frequency_penalty=0,  
-        presence_penalty=0,  
-        stop=None,  
-        stream=False  
-    )
-        return completion.choices[0].message.content
+            model=self.deployment,  
+            messages=new_conversation,  # Provide the conversation history as context
+            max_tokens=800,  # Limit the maximum number of tokens in the reply
+            temperature=0.1,  # Set the temperature to control randomness of the output
+            top_p=0.95,  # Set the cumulative probability for sampling
+            frequency_penalty=0,  # No penalty for frequent tokens
+            presence_penalty=0,  # No penalty for repeating content
+            stop=None,  # No explicit stop sequence
+            stream=False  # Do not stream the response
+        )
+        
+        # Update the conversation with the assistant's reply
+        new_conversation[-1]['content'] = question  # Reset the last 'user' message content to just the question
+        new_conversation.append({
+            "role": "assistant",  
+            "content": completion.choices[0].message.content  # Append the generated assistant reply
+        })
+        
+        # Return the updated conversation
+        return new_conversation
         

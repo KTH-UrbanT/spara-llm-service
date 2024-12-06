@@ -1,0 +1,41 @@
+install and set up the DefaultAzureCredential in Visual Studio Code, follow these steps:
+
+Step 1: Install Required Azure SDKs
+Open a terminal in Visual Studio Code.
+
+Run the following command to install the azure-identity package, which includes the DefaultAzureCredential class:
+
+pip install azure-identity
+
+If you're using a requirements.txt file, add this line to it:
+
+azure-identity
+
+Verify installation by running:
+
+pip show azure-identity
+This should display package details if installed successfully.
+
+Step 2: Configure Azure Authentication
+The DefaultAzureCredential class works by automatically detecting authentication methods based on the environment. It supports several authentication options, such as Azure CLI, managed identity, and environment variables.
+
+Option 1: Use Azure CLI for Authentication
+Install the Azure CLI if it's not already installed:
+Follow the Azure CLI installation guide. https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
+Log in to your Azure account:
+
+az login
+
+Set the correct subscription (if you have multiple subscriptions):
+
+az account set --subscription "YourSubscriptionID"
+
+
+Option 2: Use Environment Variables for Authentication
+Set the following environment variables in your system or within Visual Studio Code for service principal-based authentication:
+
+AZURE_CLIENT_ID: Your Azure client ID.
+AZURE_TENANT_ID: Your Azure tenant ID.
+AZURE_CLIENT_SECRET: Your Azure client secret.
+You can add these variables to a .env file or your system environment settings.
+
