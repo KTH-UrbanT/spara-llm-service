@@ -84,18 +84,18 @@ class RedisQueueManager:
         else:
             print(f"Thread {thread_name} does not exist.")
 
-
+# RedisQueueManager()
 # Example Usage
-if __name__ == "__main__":
-    # Initialize the Redis queue manager
-    queue_manager = RedisQueueManager()
+# if __name__ == "__main__":
+#     # Initialize the Redis queue manager
+#     queue_manager = RedisQueueManager()
 
-    # Example: Add messages to a new thread
-    queue_manager.initialize_thread("thread:1", "What is the weather today?")
-    queue_manager.initialize_thread("thread:2", "Tell me about AI.")
+#     # Example: Add messages to a new thread
+#     queue_manager.initialize_thread("thread:1", "What is the weather today?")
+#     queue_manager.initialize_thread("thread:2", "Tell me about AI.")
 
-    # Process all threads
-    queue_manager.process_all_threads()
+#     # Process all threads
+#     queue_manager.process_all_threads()
 
-    # Example: Delete a thread
-    # queue_manager.delete_thread("thread:1")
+#     # Example: Delete a thread
+#     # queue_manager.delete_thread("thread:1")
