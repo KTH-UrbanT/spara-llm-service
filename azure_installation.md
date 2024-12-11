@@ -12,7 +12,7 @@
 
 3. If you're using a `requirements.txt` file, add this line to it:
 
-   ```text
+   ```
    azure-identity
    ```
 
@@ -23,8 +23,6 @@
    ```
 
    This should display package details if installed successfully.
-
----
 
 ## Step 2: Configure Azure Authentication
 

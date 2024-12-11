@@ -1,0 +1,91 @@
+import redis
+import json
+import os
+from main_retrieval_generation import RetrievalGeneration  # Assuming this is the file containing your class
+
+class RedisEventManager:
+    def __init__(self, redis_host="127.0.0.1", redis_port=6379):
+        self.redis_client = redis.StrictRedis(host=redis_host, port=redis_port, decode_responses=True)
+        self.language_model = RetrievalGeneration()
+
+    def initialize_thread(self, thread_name, user_message):
+        """
+        Initializes a new thread with the prompt from 'prompt.txt'
+        followed by the user message.
+        """
+        if not self.redis_client.exists(thread_name):
+            # Load the initial prompt from the file
+            if os.path.exists("prompt.txt"):
+                with open("prompt.txt", "r") as prompt_file:
+                    prompt = prompt_file.read().strip()
+                # Push the prompt into the thread's queue
+                self.redis_client.rpush(thread_name, json.dumps({"content": prompt, "role": "system"}))
+                print(f"Initialized thread {thread_name} with prompt.")
+            else:
+                print("Error: 'prompt.txt' file not found. Cannot initialize the thread.")
+                return
+
+        # Push the user message into the thread's queue
+        self.redis_client.rpush(thread_name, json.dumps({"content": user_message, "role": "user"}))
+        print(f"Added user message to thread {thread_name}.")
+
+        # Publish an event for the new message
+        self.redis_client.publish("thread_events", json.dumps({"event": "message_added", "thread_name": thread_name}))
+
+    def enqueue_message(self, thread_name, message):
+        """Push a new message to the specific Redis thread queue."""
+        self.redis_client.rpush(thread_name, json.dumps({"content": message, "role": "user"}))
+        self.redis_client.publish("thread_events", json.dumps({"event": "message_added", "thread_name": thread_name}))
+
+    def read_all_messages(self, thread_name):
+        """Read all messages from a specific Redis thread queue without deleting."""
+        messages = self.redis_client.lrange(thread_name, 0, -1)
+        return [json.loads(message) for message in messages]
+
+    def process_thread(self, thread_name):
+        """Process a single message thread."""
+        print(f"Processing thread: {thread_name}")
+
+        # Read all messages from the thread's queue
+        existing_conversation = self.read_all_messages(thread_name)
+        if not existing_conversation:
+            print(f"Thread {thread_name} is empty. Skipping...")
+            return
+
+        # Prepare the existing conversation structure for the language model
+        messages = existing_conversation[:-1]
+
+        # Call the language model for responses
+        responses = self.language_model.generate_reply_texts(
+            existing_conversation[-1]['content'], messages, type="text"
+        )
+
+        # Push the response back to the queue
+        self.redis_client.rpush(thread_name, json.dumps(responses[-1]))
+        print(f"Processed and updated thread: {thread_name}")
+
+    def event_listener(self):
+        """Listen for events on the Redis Pub/Sub channel and process them."""
+        pubsub = self.redis_client.pubsub()
+        pubsub.subscribe("thread_events")
+
+        print("Listening for thread events...")
+        for message in pubsub.listen():
+            if message['type'] == 'message':
+                event_data = json.loads(message['data'])
+                event = event_data.get("event")
+                thread_name = event_data.get("thread_name")
+
+                if event == "message_added":
+                    self.process_thread(thread_name)
+
+# # Example Usage
+# if __name__ == "__main__":
+#     # Initialize the Redis event manager
+#     event_manager = RedisEventManager()
+
+#     # Example: Add messages to a new thread
+#     event_manager.initialize_thread("thread:1", "What is the weather today?")
+
+#     # Start listening for events
+#     event_manager.event_listener()
