@@ -1,5 +1,5 @@
 from azure.cosmos import CosmosClient, PartitionKey 
-from knowledge_base.azure_cosmos_custom import AzureCosmosDBNoSqlVectorSearchCustom
+from src.knowledge_base.azure_cosmos_custom import AzureCosmosDBNoSqlVectorSearchCustom
 from langchain_openai import AzureOpenAIEmbeddings
 import os
 from dotenv import load_dotenv

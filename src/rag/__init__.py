@@ -1,7 +1,7 @@
 # Import necessary libraries
 import json  # For loading the configuration file
-from knowledge_base.vector_database import VectorDataBase  # For interacting with the vector database
-from context_retrieval.main_context_retrieval import *  # For context retrieval logic
+from src.knowledge_base.vector_database import VectorDataBase  # For interacting with the vector database
+from src.context_retrieval import *  # For context retrieval logic
 import os  # For environment variables
 from openai import AzureOpenAI  # For interacting with OpenAI's API (Azure version)
 from dotenv import load_dotenv  # For loading environment variables from .env file
@@ -12,7 +12,16 @@ load_dotenv()
 import copy  # For creating deep copies of objects
 
 # Load configuration settings from a JSON file
-main_config = json.load(open('main_config.json'))
+import os
+import json
+
+# Dynamically determine the absolute path to the config file
+config_path = os.path.join(os.path.dirname(__file__), "..", "config", "llm-config.json")
+config_path = os.path.abspath(config_path)  # Ensure it's an absolute path
+
+# Load the configuration
+with open(config_path, "r") as f:
+    main_config = json.load(f)
 
 # Initialize the context retrieval object (initially set to None)
 context_retreival_obj = None

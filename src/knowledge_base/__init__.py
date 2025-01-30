@@ -1,7 +1,7 @@
 import json 
-from knowledge_base.main_KB import *
-from knowledge_base.azure_blob import Azure_Blob
-from knowledge_base.vector_database import VectorDataBase
+from .main_KB import *
+from .azure_blob import Azure_Blob
+from .vector_database import VectorDataBase
 
 import argparse
 

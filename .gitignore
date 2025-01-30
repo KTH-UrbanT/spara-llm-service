@@ -1,9 +1,11 @@
 .env
+.venv
 
 *.pyc
 __pycache__
 
-*.ipynb
+notebooks/
+*.ipynb_checkpoints/
 
 json_folder/
 data/

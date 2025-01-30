@@ -2,7 +2,7 @@ import redis
 import json
 import os
 import copy
-from main_retrieval_generation import RetrievalGeneration
+from src.rag import RetrievalGeneration
 
 
 class RedisQueueManager:
@@ -11,6 +11,10 @@ class RedisQueueManager:
         self.language_model = RetrievalGeneration()
 
     def initialize_thread(self, thread_name, user_message):
+        """
+        Initializes a new thread by adding a system prompt (if available)
+        followed by the user's message.
+        """
         if not self.redis_client.exists(thread_name):
             if os.path.exists("prompt.txt"):
                 with open("prompt.txt", "r") as prompt_file:
@@ -35,15 +39,11 @@ class RedisQueueManager:
             self.initialize_thread(thread_name, user_message)
 
     def get_all_threads(self):
-        """
-        Returns a list of all existing thread names in the Redis queue.
-        """
+        """Returns a list of all existing thread names in the Redis queue."""
         return self.redis_client.keys()
 
     def delete_all_threads(self):
-        """
-        Deletes all existing threads from the Redis queue.
-        """
+        """Deletes all existing threads from the Redis queue."""
         thread_keys = self.redis_client.keys()
         if thread_keys:
             self.redis_client.delete(*thread_keys)
@@ -52,10 +52,23 @@ class RedisQueueManager:
             print("No threads found to delete.")
 
     def process_thread(self, thread_name):
+        """
+        Processes a thread by generating a reply based on the latest user message
+        and the previous conversation context.
+        """
         existing_conversation = self.read_all_messages(thread_name)
         if not existing_conversation:
             print(f"Thread {thread_name} is empty. Skipping...")
             return
+
+        # Handle new conversation scenario (only one message from user)
+        if len(existing_conversation) == 1 and existing_conversation[0]["role"] == "user":
+            if os.path.exists("prompt.txt"):
+                with open("prompt.txt", "r") as prompt_file:
+                    prompt = prompt_file.read().strip()
+                self.redis_client.lset(thread_name, 0, json.dumps({"content": prompt, "role": "system"}))
+                self.redis_client.rpush(thread_name, json.dumps(existing_conversation[0]))  # Add user message again
+                print(f"Added system prompt to thread {thread_name} as the first message.")
 
         messages = copy.deepcopy(existing_conversation)[:-1]
         responses = self.language_model.generate_reply_texts(existing_conversation[-1]['content'], messages, type="text")
@@ -63,10 +76,12 @@ class RedisQueueManager:
         print(f"Processed and updated thread: {thread_name}")
 
     def read_all_messages(self, thread_name):
+        """Reads all messages from the specified thread."""
         messages = self.redis_client.lrange(thread_name, 0, -1)
         return [json.loads(message) for message in messages]
 
     def event_listener(self):
+        """Listens for updates on the thread and triggers processing."""
         pubsub = self.redis_client.pubsub()
         pubsub.subscribe("thread_events")
         print("Listening for thread events...")
