@@ -1,6 +1,12 @@
+.env
+
+*.pyc
+__pycache__
+
+*.ipynb
+
 json_folder/
 data/
-*.pyc
-*.ipynb
+
 *.xlsx
 dump.rdb
