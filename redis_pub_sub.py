@@ -3,11 +3,29 @@ import json
 import os
 import copy
 from main_retrieval_generation import RetrievalGeneration
+import time
 
 
 class RedisQueueManager:
-    def __init__(self, redis_host="127.0.0.1", redis_port=6379):
-        self.redis_client = redis.StrictRedis(host=redis_host, port=redis_port, decode_responses=True)
+    def __init__(self, redis_host=None, redis_port=None):
+        redis_host = redis_host or os.getenv("REDIS_HOST", "127.0.0.1")
+        redis_port = redis_port or int(os.getenv("REDIS_PORT", 6379))
+
+        # Retry logic for Redis connection
+        self.redis_client = None
+        retries = 5
+        while retries > 0:
+            try:
+                self.redis_client = redis.StrictRedis(host=redis_host, port=redis_port, decode_responses=True)
+                self.redis_client.ping()  # Test connection
+                print("Connected to Redis")
+                break
+            except redis.exceptions.ConnectionError:
+                retries -= 1
+                print(f"Redis connection failed, retries left: {retries}")
+                time.sleep(2)  # Wait before retrying
+        if not self.redis_client:
+            raise Exception("Failed to connect to Redis after several retries.")
         self.language_model = RetrievalGeneration()
 
     def initialize_thread(self, thread_name, user_message):
