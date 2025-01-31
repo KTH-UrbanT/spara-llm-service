@@ -21,4 +21,5 @@ openpyxl
 jq
 redis
 notebook
+pytest
 ipykernel

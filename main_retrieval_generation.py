@@ -21,8 +21,8 @@ context_retreival_obj = None
 vector_database_obj = VectorDataBase(
     indexing_policy=main_config['indexing_policy'], 
     vector_embedding_policy=main_config['vector_embedding_policy'], 
-    database_name=main_config['database_name'], 
-    container_name=main_config['container_name']
+    database_name=os.environ.get('database_name'), 
+    container_name=os.environ.get('container_name')
 )
 
 # Set up the connection to the vector database
@@ -64,7 +64,7 @@ class RetrievalGeneration:
                 api_version = os.getenv("LANGUAGE_MODEL_API_VERSION"),  
             )  
 
-    def generate_reply_texts(self , question , existing_conversation , type ) :
+    def generate_reply_texts(self, question, existing_conversation, type):
         """
         Generate a reply based on the question and the type of search (text-based or vector-based).
 
@@ -77,33 +77,35 @@ class RetrievalGeneration:
         - new_conversation: The updated conversation with the newly generated assistant reply.
         """
         new_conversation = copy.deepcopy(existing_conversation)
-        
-        # Depending on the 'type' parameter, retrieve relevant documents from the context retrieval system
-        if type == 'text' : 
-            docs = context_retreival_obj.search_text(question)
-            content_from_doc = ' '.join(i.page_content for  i in docs)
-        elif type == 'text_with_score' : 
-            docs = context_retreival_obj.search_text_with_score(question)
-            content_from_doc = ' '.join(i[0].page_content for  i in docs)
-        elif type == 'vector' : 
-            docs = context_retreival_obj.search_vector(question)
-            content_from_doc = ' '.join(i.page_content for  i in docs)
-        elif type == 'hybrid' : 
-            docs = context_retreival_obj.hybrid_search(question)
-            content_from_doc = ' '.join(i.page_content for  i in docs)                       
-        # prompt_conversation =  existing_conversation.copy()
-        # existing_conversation.append({  "role" : "user"  , "content" : question   })
-        print(len(docs))
-        
+
+        try:
+            # Depending on the 'type' parameter, retrieve relevant documents from the context retrieval system
+            if type == 'text':
+                docs = self.context_retreival_obj.search_text(question)
+                content_from_doc = ' '.join(i.page_content for i in docs)
+            elif type == 'text_with_score':
+                docs = self.context_retreival_obj.search_text_with_score(question)
+                content_from_doc = ' '.join(i[0].page_content for i in docs)
+            elif type == 'vector':
+                docs = self.context_retreival_obj.search_vector(question)
+                content_from_doc = ' '.join(i.page_content for i in docs)
+            elif type == 'hybrid':
+                docs = self.context_retreival_obj.hybrid_search(question)
+                content_from_doc = ' '.join(i.page_content for i in docs)
+        except Exception as e:
+            print(f"Error during context retrieval: {e}")
+            docs = []  # Set docs to an empty list if an exception occurs
+            content_from_doc = ""  # Set content to empty string
+
         # Append the user's question along with the context from the retrieved documents to the conversation
         new_conversation.append({
-            "role" : "user"  ,
-            "content" : question   + "\n Context : " + content_from_doc
+            "role": "user",
+            "content": question + "\n Context : " + content_from_doc
         })
-        
+
         # Generate the assistant's reply using the OpenAI model based on the updated conversation
-        completion = self.client.chat.completions.create(  
-            model=self.deployment,  
+        completion = self.client.chat.completions.create(
+            model=self.deployment,
             messages=new_conversation,  # Provide the conversation history as context
             max_tokens=800,  # Limit the maximum number of tokens in the reply
             temperature=0.1,  # Set the temperature to control randomness of the output
@@ -113,14 +115,13 @@ class RetrievalGeneration:
             stop=None,  # No explicit stop sequence
             stream=False  # Do not stream the response
         )
-        
+
         # Update the conversation with the assistant's reply
         new_conversation[-1]['content'] = question  # Reset the last 'user' message content to just the question
         new_conversation.append({
-            "role": "assistant",  
+            "role": "assistant",
             "content": completion.choices[0].message.content  # Append the generated assistant reply
         })
-        
+
         # Return the updated conversation
         return new_conversation
-        
