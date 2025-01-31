@@ -138,6 +138,6 @@ The `DefaultAzureCredential` class works by automatically detecting authenticati
 
 Run the following command in the terminal 
    ```bash
-   python3 redis_pub_sub.py
+   python redis_pub_sub.py
    ```
 
