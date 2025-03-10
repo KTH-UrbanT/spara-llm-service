@@ -33,23 +33,41 @@ class RedisQueueManager:
         Initializes a new thread by adding a system prompt (if available)
         followed by the user's message.
         """
-        if not self.redis_client.exists(thread_name):
-            if os.path.exists("prompt.txt"):
-                with open("prompt.txt", "r") as prompt_file:
-                    prompt = prompt_file.read().strip()
-                self.redis_client.rpush(thread_name, json.dumps({"content": prompt, "role": "system"}))
+        try : 
+            if not self.redis_client.exists(thread_name):
+                prompt = os.getenv("PROMPT", "").strip()
+                # if os.path.exists("prompt.txt"):
+                #     with open("prompt.txt", "r") as prompt_file:
+                #         prompt = prompt_file.read().strip()
+                if not prompt:
+                        print("Warning: 'PROMPT' environment variable is not set. Using default message.")
+                        prompt = ""
+                self.redis_client.rpush(thread_name, json.dumps
+                                        (
+                                            {
+                                                "content": prompt, 
+                                                "role": "system" , 
+                                                "timestamp": time.time()
+                                            }
+                                        ))
                 print(f"Initialized thread {thread_name} with prompt.")
-            else:
-                print("Error: 'prompt.txt' file not found.")
-                return
-        self.add_message_to_thread(thread_name, user_message)
+            self.add_message_to_thread(thread_name, user_message)
+        except redis.RedisError as e:
+            print(f"Error: Redis issue while initializing thread '{thread_name}': {e}")
 
     def add_message_to_thread(self, thread_name, user_message):
         """
         Adds a new user message to an existing thread and processes it.
         """
         if self.redis_client.exists(thread_name):
-            self.redis_client.rpush(thread_name, json.dumps({"content": user_message, "role": "user"}))
+            self.redis_client.rpush(thread_name, json.dumps
+                                    (
+                                        {
+                                            "content": user_message, 
+                                            "role": "user" , 
+                                            "timestamp": time.time()
+                                        }
+                                    ))
             self.redis_client.publish("thread_events", json.dumps({"event": "message_added", "thread_name": thread_name}))
             print(f"Added message to existing thread: {thread_name}")
         else:
@@ -74,24 +92,62 @@ class RedisQueueManager:
         Processes a thread by generating a reply based on the latest user message
         and the previous conversation context.
         """
-        existing_conversation = self.read_all_messages(thread_name)
-        if not existing_conversation:
-            print(f"Thread {thread_name} is empty. Skipping...")
-            return
+        try : 
+            existing_conversation = self.read_all_messages(thread_name)
+            if not existing_conversation:
+                print(f"Thread {thread_name} is empty. Skipping...")
+                return
 
-        # Handle new conversation scenario (only one message from user)
-        if len(existing_conversation) == 1 and existing_conversation[0]["role"] == "user":
-            if os.path.exists("prompt.txt"):
-                with open("prompt.txt", "r") as prompt_file:
-                    prompt = prompt_file.read().strip()
-                self.redis_client.lset(thread_name, 0, json.dumps({"content": prompt, "role": "system"}))
-                self.redis_client.rpush(thread_name, json.dumps(existing_conversation[0]))  # Add user message again
-                print(f"Added system prompt to thread {thread_name} as the first message.")
+            # Handle new conversation scenario (only one message from user)
+            if len(existing_conversation) == 1 and existing_conversation[0]["role"] == "user":
+                prompt = os.getenv("PROMPT", "").strip()
+                if not prompt:
+                    print("Warning: 'PROMPT' environment variable is not set. Using default message.")
+                    prompt = ""
+                # if os.path.exists("prompt.txt"):
+                #     with open("prompt.txt", "r") as prompt_file:
+                #         prompt = prompt_file.read().strip()
+                system_message = {
+                    "content": prompt,
+                    "role": "system",
+                    "timestamp": time.time(),
+                }
+                try:
+                    # Update the first message in Redis
+                    self.redis_client.lset(thread_name, 0, json.dumps(system_message))
+                    # Re-add the user message for context
+                    self.redis_client.rpush(thread_name, json.dumps(existing_conversation[0]))
+                    print(f"Added system prompt to thread '{thread_name}' as the first message.")
+                except redis.RedisError as e:
+                    print(f"Error: Redis issue while updating thread '{thread_name}': {e}")
+                    return
 
-        messages = copy.deepcopy(existing_conversation)[:-1]
-        responses = self.language_model.generate_reply_texts(existing_conversation[-1]['content'], messages, type="text")
-        self.redis_client.rpush(thread_name, json.dumps(responses[-1]))
-        print(f"Processed and updated thread: {thread_name}")
+            messages = copy.deepcopy(existing_conversation)[:-1]
+            user_message = existing_conversation[-1]['content']
+
+            try:
+                responses = self.language_model.generate_reply_texts(user_message, messages, type="text")
+
+                if not responses or not isinstance(responses, list):
+                    print(f"Error: No valid response generated for thread '{thread_name}'.")
+                    return
+
+                # Add timestamp
+                responses[-1]["timestamp"] = time.time()
+
+                response_json = json.dumps(responses[-1])  # Validate JSON serialization
+                self.redis_client.rpush(thread_name, response_json)
+                print(f"Processed and updated thread: '{thread_name}'.")
+            except redis.RedisError as e:
+                print(f"Redis error while saving response in thread '{thread_name}': {e}")
+            except (TypeError, ValueError) as e:
+                print(f"JSON serialization error for AI response in thread '{thread_name}': {e}")
+            except AttributeError as e:
+                print(f"Error: 'language_model.generate_reply_texts' method failed in thread '{thread_name}': {e}")
+        except SystemExit:
+            print("System exit detected. Exiting process.")
+        except Exception as e:
+            print(f"Unexpected error in thread '{thread_name}': {e}")        
 
     def read_all_messages(self, thread_name):
         """Reads all messages from the specified thread."""
