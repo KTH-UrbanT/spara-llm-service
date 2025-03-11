@@ -35,13 +35,13 @@ class RedisQueueManager:
         """
         try : 
             if not self.redis_client.exists(thread_name):
-                prompt = os.getenv("PROMPT", "").strip()
-                # if os.path.exists("prompt.txt"):
-                #     with open("prompt.txt", "r") as prompt_file:
-                #         prompt = prompt_file.read().strip()
-                if not prompt:
-                        print("Warning: 'PROMPT' environment variable is not set. Using default message.")
-                        prompt = ""
+                #prompt = os.getenv("PROMPT", "").strip()
+                if os.path.exists("prompt.txt"):
+                    with open("prompt.txt", "r") as prompt_file:
+                        prompt = prompt_file.read().strip()
+                # if not prompt:
+                #         print("Warning: 'PROMPT' environment variable is not set. Using default message.")
+                #         prompt = ""
                 self.redis_client.rpush(thread_name, json.dumps
                                         (
                                             {
@@ -100,13 +100,13 @@ class RedisQueueManager:
 
             # Handle new conversation scenario (only one message from user)
             if len(existing_conversation) == 1 and existing_conversation[0]["role"] == "user":
-                prompt = os.getenv("PROMPT", "").strip()
-                if not prompt:
-                    print("Warning: 'PROMPT' environment variable is not set. Using default message.")
-                    prompt = ""
-                # if os.path.exists("prompt.txt"):
-                #     with open("prompt.txt", "r") as prompt_file:
-                #         prompt = prompt_file.read().strip()
+                # prompt = os.getenv("PROMPT", "").strip()
+                # if not prompt:
+                #     print("Warning: 'PROMPT' environment variable is not set. Using default message.")
+                #     prompt = ""
+                if os.path.exists("prompt.txt"):
+                    with open("prompt.txt", "r") as prompt_file:
+                        prompt = prompt_file.read().strip()
                 system_message = {
                     "content": prompt,
                     "role": "system",
@@ -122,7 +122,10 @@ class RedisQueueManager:
                     print(f"Error: Redis issue while updating thread '{thread_name}': {e}")
                     return
 
-            messages = copy.deepcopy(existing_conversation)[:-1]
+            if len(existing_conversation) == 1 and existing_conversation[0]["role"] == "user":
+                messages = [system_message]
+            else : 
+                messages = copy.deepcopy(existing_conversation)[:-1]
             user_message = existing_conversation[-1]['content']
 
             try:
