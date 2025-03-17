@@ -3,4 +3,5 @@ data/
 *.pyc
 *.ipynb
 *.xlsx
+.env
 dump.rdb

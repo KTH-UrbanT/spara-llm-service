@@ -1,10 +1,14 @@
 import json 
-from knowledge_base.main_KB import *
+from knowledge_base.knowledge_base import *
 from knowledge_base.azure_blob import Azure_Blob
 from knowledge_base.vector_database import VectorDataBase
 
 import argparse
+import os 
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def main(main_config : dict) : 
     """
@@ -15,8 +19,15 @@ def main(main_config : dict) :
     - main_config: A dictionary containing configuration details (e.g., Azure Blob settings, 
                     vector database settings, etc.).
     """
-    # Initialize Azure Blob storage connection object with configuration from main_config
-    azure_blob_obj = Azure_Blob(account_url = main_config['account_url'] , container_name_blob = main_config['container_name_blob'])
+    required_keys = ["indexing_policy", "vector_embedding_policy", "temp_folder_download"]
+
+    for key in required_keys:
+        if key not in main_config:
+            # Update the exception message for consistency with the test
+            raise KeyError(f"Missing required key in main_config: {key}")
+        
+    # Initialize Azure Blob storage connection object with configuration from main_config        
+    azure_blob_obj = Azure_Blob(account_url = os.environ.get('account_url') , container_name_blob = os.environ.get('container_name_blob'))
     
     # Setup the connection to Azure Blob Storage
     azure_container_client = azure_blob_obj.setup_blob_connection()
@@ -27,8 +38,8 @@ def main(main_config : dict) :
     # Initialize vector database object with configuration from main_config
     vector_database_obj = VectorDataBase(indexing_policy = main_config['indexing_policy'] , 
                                      vector_embedding_policy = main_config['vector_embedding_policy'] , 
-                                     database_name = main_config['database_name'] , 
-                                     container_name = main_config['container_name'])
+                                     database_name = os.environ.get('database_name') , 
+                                     container_name = os.environ.get('container_name'))
     
     # Setup the connection to the vector database
     vector_database_obj.setup_connection()

@@ -1,22 +1,46 @@
-# Setting Up DefaultAzureCredential in Visual Studio Code
+# Setting Up LLM Service Packages Along with DefaultAzureCredential in Visual Studio Code
 
-## Step 1: Install Required Azure SDKs
+We need DefaultAzureCredential as we connect with Azure services for Vector Database for LLM service.
+
+---
+
+## Step 1: Install Required Python Packages and Azure SDKs
 
 1. Open a terminal in Visual Studio Code.
 
-2. Run the following command to install the `azure-identity` package, which includes the `DefaultAzureCredential` class:
+2. Create a new Python environment. Follow the steps below based on your operating system:
+
+   ### Windows
+   1. Open Command Prompt or PowerShell.
+   2. Navigate to your project directory.
+   3. Create a virtual environment:
+      ```bash
+      python -m venv .env
+      ```
+   4. Activate the environment:
+      ```bash
+      .env\Scripts\activate
+      ```
+
+   ### macOS
+   1. Open the Terminal.
+   2. Navigate to your project directory.
+   3. Create a virtual environment:
+      ```bash
+      python3 -m venv .env
+      ```
+   4. Activate the environment:
+      ```bash
+      source .env/bin/activate
+      ```
+
+3. Run the following command to install the necessary packages for the language service, including the `DefaultAzureCredential` class:
 
    ```bash
-   pip install azure-identity
+   pip install -r requirements.txt
    ```
 
-3. If you're using a `requirements.txt` file, add this line to it:
-
-   ```text
-   azure-identity
-   ```
-
-4. Verify installation by running:
+4. Verify the installation of `azure-identity`:
 
    ```bash
    pip show azure-identity
@@ -47,12 +71,73 @@ The `DefaultAzureCredential` class works by automatically detecting authenticati
    az account set --subscription "YourSubscriptionID"
    ```
 
-### Option 2: Use Environment Variables for Authentication
+---
 
-1. Set the following environment variables in your system or within Visual Studio Code for service principal-based authentication:
+## Step 3: Set Up Redis Server
 
-   - `AZURE_CLIENT_ID`: Your Azure client ID.
-   - `AZURE_TENANT_ID`: Your Azure tenant ID.
-   - `AZURE_CLIENT_SECRET`: Your Azure client secret.
+### Windows
 
-2. You can add these variables to a `.env` file or your system environment settings.
+#### Install Windows Subsystem for Linux (WSL)
+1. Open PowerShell as Administrator.
+2. Enable WSL:
+   ```bash
+   wsl --install
+   ```
+   This command installs WSL and the default Linux distribution (usually Ubuntu).
+3. Restart your computer if prompted.
+4. After restarting, open the WSL terminal (e.g., Ubuntu) and set up your Linux distribution by following the on-screen instructions.
+
+#### Install Redis on WSL
+1. Open the WSL terminal.
+2. Update the package lists:
+   ```bash
+   sudo apt update
+   ```
+3. Install Redis:
+   ```bash
+   sudo apt install redis-server
+   ```
+4. Start the Redis server:
+   ```bash
+   sudo service redis-server start
+   ```
+5. Verify Redis is running:
+   ```bash
+   redis-cli ping
+   ```
+   If Redis is running, it will respond with `PONG`.
+
+### macOS
+
+#### Install Redis using Homebrew
+1. Open the Terminal.
+2. Install Homebrew (if not already installed):
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+3. Install Redis:
+   ```bash
+   brew install redis
+   ```
+
+#### Start Redis
+1. Start the Redis service:
+   ```bash
+   brew services start redis
+   ```
+2. Verify Redis is running:
+   ```bash
+   redis-cli ping
+   ```
+   If Redis is running, it will respond with `PONG`.
+
+---
+
+
+## Step 4: Start Up Redis Server
+
+Run the following command in the terminal 
+   ```bash
+   python redis_pub_sub.py
+   ```
+
