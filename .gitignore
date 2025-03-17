@@ -4,3 +4,4 @@ data/
 *.ipynb
 *.xlsx
 .env
+dump.rdb
