@@ -11,7 +11,7 @@ lxml
 pdf2image
 pdfminer
 opencv-python
-unstructured_inference
+unstructured-inference
 lxml_html_clean
 unstructured
 pandas 
