@@ -47,7 +47,8 @@ class RedisQueueManager:
                                             {
                                                 "content": prompt, 
                                                 "role": "system" , 
-                                                "timestamp": time.time()
+                                                "timestamp": time.time(), 
+                                                "added_to_database" : 0
                                             }
                                         ))
                 print(f"Initialized thread {thread_name} with prompt.")
@@ -65,7 +66,8 @@ class RedisQueueManager:
                                         {
                                             "content": user_message, 
                                             "role": "user" , 
-                                            "timestamp": time.time()
+                                            "timestamp": time.time(),
+                                            "added_to_database" : 0
                                         }
                                     ))
             self.redis_client.publish("thread_events", json.dumps({"event": "message_added", "thread_name": thread_name}))
@@ -111,6 +113,7 @@ class RedisQueueManager:
                     "content": prompt,
                     "role": "system",
                     "timestamp": time.time(),
+                    "added_to_database" : 0
                 }
                 try:
                     # Update the first message in Redis
@@ -137,6 +140,7 @@ class RedisQueueManager:
 
                 # Add timestamp
                 responses[-1]["timestamp"] = time.time()
+                responses[-1]["added_to_database"] =  0
 
                 response_json = json.dumps(responses[-1])  # Validate JSON serialization
                 self.redis_client.rpush(thread_name, response_json)
