@@ -78,7 +78,7 @@ class RetrievalGeneration:
         """
         #new_conversation = copy.deepcopy(existing_conversation)
         new_conversation = copy.deepcopy([
-                                    {key: value for key, value in message.items() if key != "timestamp"}
+                                    {key: value for key, value in message.items() if key not in ["timestamp" , "added_to_database"]}
                                     for message in existing_conversation
                                 ])
 
