@@ -77,11 +77,14 @@ class RetrievalGeneration:
         - new_conversation: The updated conversation with the newly generated assistant reply.
         """
         #new_conversation = copy.deepcopy(existing_conversation)
+        # new_conversation = copy.deepcopy([
+        #                             {key: value for key, value in message.items() if key not in ["timestamp" , "added_to_database"]}
+        #                             for message in existing_conversation
+        #                         ])
         new_conversation = copy.deepcopy([
-                                    {key: value for key, value in message.items() if key not in ["timestamp" , "added_to_database"]}
-                                    for message in existing_conversation
-                                ])
-
+                                        {key: value for key, value in message.items() if key in ["role", "content"]}
+                                        for message in existing_conversation
+                                    ])
         try:
             # Depending on the 'type' parameter, retrieve relevant documents from the context retrieval system
             if type == 'text':
