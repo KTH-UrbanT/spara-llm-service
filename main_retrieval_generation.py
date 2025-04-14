@@ -85,7 +85,6 @@ class RetrievalGeneration:
                                         {key: value for key, value in message.items() if key in ["role", "content"]}
                                         for message in existing_conversation
                                     ])
-
         try:
             # Depending on the 'type' parameter, retrieve relevant documents from the context retrieval system
             if type == 'text':
