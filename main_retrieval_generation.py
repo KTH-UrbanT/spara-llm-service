@@ -5,7 +5,7 @@ from context_retrieval.main_context_retrieval import *  # For context retrieval 
 import os  # For environment variables
 from openai import AzureOpenAI  # For interacting with OpenAI's API (Azure version)
 from dotenv import load_dotenv  # For loading environment variables from .env file
-
+import building_specs
 # Load environment variables from the .env file
 load_dotenv()
 
@@ -108,8 +108,10 @@ class RetrievalGeneration:
         # Append the user's question along with the context from the retrieved documents to the conversation
         new_conversation.append({
             "role": "user",
-            "content": question + "\n Context : " + content_from_doc
+            "content": question + "\n Context : " + content_from_doc +
+            building_specs.main(question)
         })
+        print(new_conversation)
 
         # Generate the assistant's reply using the OpenAI model based on the updated conversation
         completion = self.client.chat.completions.create(
