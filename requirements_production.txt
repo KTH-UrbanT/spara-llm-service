@@ -8,3 +8,4 @@ pymongo==4.10.1
 redis
 python-dotenv
 jq
+backoff
