@@ -3,7 +3,8 @@ import json  # For loading the configuration file
 from knowledge_base.vector_database import VectorDataBase  # For interacting with the vector database
 from context_retrieval.main_context_retrieval import *  # For context retrieval logic
 import os  # For environment variables
-from openai import AzureOpenAI  # For interacting with OpenAI's API (Azure version)
+import backoff
+from openai import AzureOpenAI, RateLimitError   # Correctly import error classes  # For interacting with OpenAI's API (Azure version)
 from dotenv import load_dotenv  # For loading environment variables from .env file
 import building_specs
 # Load environment variables from the .env file
@@ -63,7 +64,25 @@ class RetrievalGeneration:
                 api_key=subscription_key,  
                 api_version = os.getenv("LANGUAGE_MODEL_API_VERSION"),  
             )  
-
+    @backoff.on_exception(backoff.expo,
+                          RateLimitError,
+                          max_tries=5,
+                          jitter=None)
+    def _create_completion(self, new_conversation):
+        """
+        Helper function to call Azure OpenAI with automatic retries on RateLimitError.
+        """
+        return self.client.chat.completions.create(
+            model=self.deployment,
+            messages=new_conversation,
+            max_tokens=800,
+            temperature=0.1,
+            top_p=0.95,
+            frequency_penalty=0,
+            presence_penalty=0,
+            stop=None,
+            stream=False
+        )
     def generate_reply_texts(self, question, existing_conversation, type):
         """
         Generate a reply based on the question and the type of search (text-based or vector-based).
@@ -85,7 +104,6 @@ class RetrievalGeneration:
                                         {key: value for key, value in message.items() if key in ["role", "content"]}
                                         for message in existing_conversation
                                     ])
-
         try:
             # Depending on the 'type' parameter, retrieve relevant documents from the context retrieval system
             if type == 'text':
@@ -111,20 +129,28 @@ class RetrievalGeneration:
             "content": question + "\n Context : " + content_from_doc +
             building_specs.main(question)
         })
+
         print(new_conversation)
 
+
+        try:
+            completion = self._create_completion(new_conversation)
+        except Exception as e:
+            print(f"[Error] Failed to generate completion: {e}")
+            return new_conversation  # Return partial conversation if completion fails
+
         # Generate the assistant's reply using the OpenAI model based on the updated conversation
-        completion = self.client.chat.completions.create(
-            model=self.deployment,
-            messages=new_conversation,  # Provide the conversation history as context
-            max_tokens=800,  # Limit the maximum number of tokens in the reply
-            temperature=0.1,  # Set the temperature to control randomness of the output
-            top_p=0.95,  # Set the cumulative probability for sampling
-            frequency_penalty=0,  # No penalty for frequent tokens
-            presence_penalty=0,  # No penalty for repeating content
-            stop=None,  # No explicit stop sequence
-            stream=False  # Do not stream the response
-        )
+        # completion = self.client.chat.completions.create(
+        #     model=self.deployment,
+        #     messages=new_conversation,  # Provide the conversation history as context
+        #     max_tokens=800,  # Limit the maximum number of tokens in the reply
+        #     temperature=0.1,  # Set the temperature to control randomness of the output
+        #     top_p=0.95,  # Set the cumulative probability for sampling
+        #     frequency_penalty=0,  # No penalty for frequent tokens
+        #     presence_penalty=0,  # No penalty for repeating content
+        #     stop=None,  # No explicit stop sequence
+        #     stream=False  # Do not stream the response
+        # )
 
         # Update the conversation with the assistant's reply
         new_conversation[-1]['content'] = question  # Reset the last 'user' message content to just the question

@@ -4,6 +4,10 @@ import os
 import copy
 from main_retrieval_generation import RetrievalGeneration
 import time
+from dotenv import load_dotenv  # For loading environment variables from .env file
+
+# Load environment variables from the .env file
+load_dotenv()
 
 
 class RedisQueueManager:
@@ -132,7 +136,12 @@ class RedisQueueManager:
             user_message = existing_conversation[-1]['content']
 
             try:
+                start_time = time.time()
                 responses = self.language_model.generate_reply_texts(user_message, messages, type="text")
+                end_time = time.time()
+                latency = end_time - start_time
+                
+                print(f"Language Model response time: {latency:.4f} seconds")
 
                 if not responses or not isinstance(responses, list):
                     print(f"Error: No valid response generated for thread '{thread_name}'.")
@@ -175,4 +184,6 @@ class RedisQueueManager:
 
 if __name__ == "__main__":
     manager = RedisQueueManager()
+    deployment = os.getenv("LANGUAGE_MODEL_DEPLOYMENT_NAME")
+    print(f"[INFO] Language Model deployed: {deployment}")
     manager.event_listener()
