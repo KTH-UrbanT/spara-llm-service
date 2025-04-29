@@ -6,7 +6,7 @@ import os  # For environment variables
 import backoff
 from openai import AzureOpenAI, RateLimitError   # Correctly import error classes  # For interacting with OpenAI's API (Azure version)
 from dotenv import load_dotenv  # For loading environment variables from .env file
-
+import building_specs
 # Load environment variables from the .env file
 load_dotenv()
 
@@ -126,13 +126,19 @@ class RetrievalGeneration:
         # Append the user's question along with the context from the retrieved documents to the conversation
         new_conversation.append({
             "role": "user",
-            "content": question + "\n Context : " + content_from_doc
+            "content": question + "\n Context : " + content_from_doc +
+            building_specs.main(question)
         })
+
+        print(new_conversation)
+
+
         try:
             completion = self._create_completion(new_conversation)
         except Exception as e:
             print(f"[Error] Failed to generate completion: {e}")
             return new_conversation  # Return partial conversation if completion fails
+
         # Generate the assistant's reply using the OpenAI model based on the updated conversation
         # completion = self.client.chat.completions.create(
         #     model=self.deployment,
