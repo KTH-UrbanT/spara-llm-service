@@ -1,5 +1,6 @@
 import re
 import pandas as pd
+import requests
 class Spec:
     def __init__(self, address, el_calc, varme_calc, basebent, stairs, energy_class, primary_heat):
         self.address = address
@@ -34,19 +35,14 @@ def search_for_address(prompt, buildings):
     address = pattern.findall(prompt)
 
     if address:
+        req = "http://localhost:8000/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}"
+        result = requests.get(req)
+        print(result.text)
         print(address[0])
         return next((spec for spec in buildings if getattr(spec, "address", None).lower() == address[0].lower()), None)
     else:
         print("No address found.")
     return None
-
-    
-
-    
-        
-        
-
-
 
 
 def main(prompt):
