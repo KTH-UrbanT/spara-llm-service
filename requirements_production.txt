@@ -9,3 +9,4 @@ redis
 python-dotenv
 jq
 backoff
+pandas
