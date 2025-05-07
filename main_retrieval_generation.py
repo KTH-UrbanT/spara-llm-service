@@ -52,6 +52,7 @@ class RetrievalGeneration:
         """
         global context_retreival_obj # Reference the global context_retreival_obj
         self.context_retreival_obj = context_retreival_obj
+        self.buildings = building_specs.Building_specs()
         
         # Load the Azure endpoint, deployment name, and API key from environment variables
         endpoint = os.getenv("AZURE_ENDPOINT")  
@@ -127,7 +128,7 @@ class RetrievalGeneration:
         new_conversation.append({
             "role": "user",
             "content": question + "\n Context : " + content_from_doc +
-            building_specs.main(question)
+            self.buildings.update_address(question)
         })
 
         print(new_conversation)
