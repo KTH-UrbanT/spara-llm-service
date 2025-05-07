@@ -32,7 +32,7 @@ class Building_specs:
         if address and address != self.address:
             host = os.getenv("ODEN_API_host")
             port = os.getenv("ODEN_API_port")
-            req = f"http://{host}:{port}/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}" #change .env
+            req = f"http://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}" #change .env
             result = requests.get(req)
             if result.status_code == 200:
                 spec = Spec(**result.json()[0])
