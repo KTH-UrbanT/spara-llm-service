@@ -1,6 +1,7 @@
 import re
 import requests
 import os
+import logging
 
 class Spec:
     def __init__(self, **kwargs):
@@ -32,14 +33,19 @@ class Building_specs:
         if address and address != self.address:
             host = os.getenv("ODEN_API_host")
             port = os.getenv("ODEN_API_port")
+            logging.debug(address[0])
             req = f"http://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}" #change .env
             result = requests.get(req)
             if result.status_code == 200:
+                logging.info("Status from API: 200")
                 spec = Spec(**result.json()[0])
                 self.address = address
                 self.building = spec
                 print(address[0])
             else:
+                status = result.status_code
+                error = result.reason
+                logging.info(f"API failed with: {status}, {error}")
                 self.building = None
                 self.address = "ingen address info"
         if self.building:
