@@ -7,6 +7,7 @@ class Spec:
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
+        logging.basicConfig(level=logging.INFO)
 
     def __repr__(self):
         return f"<BuildingData byggnadsid={getattr(self, 'byggnadsid', 'N/A')}>"
@@ -30,22 +31,28 @@ class Building_specs:
     def update_address(self, prompt):
         pattern = re.compile(r"\b(?:bor\ på|address\ är|live\ at|live\ in|address\ is|live\ on)\b\W+(\w+(?:\W+\w+){0,1})", re.IGNORECASE)
         address = pattern.findall(prompt)
+        print("updating address...")
         if address and address != self.address:
             host = os.getenv("ODEN_API_host")
             port = os.getenv("ODEN_API_port")
             logging.debug(address[0])
             req = f"http://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}" #change .env
-            result = requests.get(req)
-            if result.status_code == 200:
-                logging.info("Status from API: 200")
-                spec = Spec(**result.json()[0])
-                self.address = address
-                self.building = spec
-                print(address[0])
-            else:
-                status = result.status_code
-                error = result.reason
-                logging.info(f"API failed with: {status}, {error}")
+            try:
+                result = requests.get(req, timeout=5)
+                if result.status_code == 200:
+                    logging.info("Status from API: 200")
+                    spec = Spec(**result.json()[0])
+                    self.address = address
+                    self.building = spec
+                    print(address[0])
+                else:
+                    status = result.status_code
+                    error = result.reason
+                    logging.info(f"API failed with: {status}, {error}")
+                    self.building = None
+                    self.address = "ingen address info"
+            except requests.exceptions.RequestException as e:
+                logging.info(f"API exception: {e}")
                 self.building = None
                 self.address = "ingen address info"
         if self.building:
