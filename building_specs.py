@@ -36,6 +36,7 @@ class Building_specs:
             host = os.getenv("ODEN_API_host")
             port = os.getenv("ODEN_API_port")
             logging.debug(address[0])
+            print("new address found")
             req = f"http://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}" #change .env
             try:
                 result = requests.get(req, timeout=5)
@@ -45,12 +46,14 @@ class Building_specs:
                     self.address = address
                     self.building = spec
                     print(address[0])
+                    print(spec.__str__)
                 else:
                     status = result.status_code
                     error = result.reason
                     logging.info(f"API failed with: {status}, {error}")
                     self.building = None
                     self.address = "ingen address info"
+                    print("ingen address info")
             except requests.exceptions.RequestException as e:
                 logging.info(f"API exception: {e}")
                 self.building = None
