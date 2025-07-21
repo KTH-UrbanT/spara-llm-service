@@ -140,4 +140,3 @@ Run the following command in the terminal
    ```bash
    python redis_pub_sub.py
    ```
-
