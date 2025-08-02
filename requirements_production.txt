@@ -10,3 +10,4 @@ python-dotenv
 jq
 backoff
 pandas
+pyodbc

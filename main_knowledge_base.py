@@ -1,103 +1,162 @@
-import json 
-from knowledge_base.knowledge_base import *
-from knowledge_base.azure_blob import Azure_Blob
-from knowledge_base.vector_database import VectorDataBase
-
+import json
 import argparse
-import os 
-
+import os
+import logging
+from pathlib import Path
 from dotenv import load_dotenv
+
+from src.knowledge_base.knowledge_base import Directory
+from src.knowledge_base.azure_blob import Azure_Blob
+from src.knowledge_base.vector_database import VectorDataBase
 
 load_dotenv()
 
-def main(main_config : dict) : 
-    """
-    The main function that orchestrates the process of updating the knowledge base by 
-    downloading files from Azure Blob, processing them, and updating the vector database.
-    
-    Parameters:
-    - main_config: A dictionary containing configuration details (e.g., Azure Blob settings, 
-                    vector database settings, etc.).
-    """
-    required_keys = ["indexing_policy", "vector_embedding_policy", "temp_folder_download"]
+# Configure logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
-    for key in required_keys:
-        if key not in main_config:
-            # Update the exception message for consistency with the test
-            raise KeyError(f"Missing required key in main_config: {key}")
-        
-    # Initialize Azure Blob storage connection object with configuration from main_config        
-    azure_blob_obj = Azure_Blob(account_url = os.environ.get('account_url') , container_name_blob = os.environ.get('container_name_blob'))
-    
-    # Setup the connection to Azure Blob Storage
-    azure_container_client = azure_blob_obj.setup_blob_connection()
-    
-    # Get the list of files available in the Azure Blob container
-    azure_files_list = azure_blob_obj.get_document_list(azure_container_client)
-    
-    # Initialize vector database object with configuration from main_config
-    vector_database_obj = VectorDataBase(indexing_policy = main_config['indexing_policy'] , 
-                                     vector_embedding_policy = main_config['vector_embedding_policy'] , 
-                                     database_name = os.environ.get('database_name') , 
-                                     container_name = os.environ.get('container_name'))
-    
-    # Setup the connection to the vector database
-    vector_database_obj.setup_connection()
-    
-    # Retrieve the list of documents currently present in the vector database
-    documents_present = vector_database_obj.get_document_source()
-    
-    # Initialize directory object to manage document processing
-    directory_obj = Directory(vector_search = vector_database_obj.vector_search)
-    
-    # Identify which files from the Azure Blob container are not present in the knowledge base
-    knowledge_base_update_files = directory_obj.identify_documents_not_present(knowledge_base_data = documents_present , azure_file_list_names = azure_files_list)
-    
-    # Process each file that needs to be added to the knowledge base
-    for i in knowledge_base_update_files : 
-        # Download the file from Azure Blob Storage to the local machine
-        azure_blob_obj.download_file_local(azure_container_client , main_config['temp_folder_download'] , i)
-        
-        # Check if the file is 'links_for_scrape.xlsx' for special processing
-        if i == 'links_for_scrape.xlsx' : 
-            # If the file is 'links_for_scrape.xlsx', process it for URLs
-            id_list , excel_file = directory_obj.reading_URLS_for_scrape(main_config['temp_folder_download'] , 'links_for_scrape.xlsx')
-            
-            # Define the local file path for saving the modified file
-            directory_path = Path.joinpath(Path().resolve() , main_config['temp_folder_download'])
-            file_path = Path.joinpath(directory_path , 'links_for_scrape.xlsx')
-            
-            # Save the modified Excel file locally
-            excel_file.to_excel(file_path , index=False)
-            
-            # Upload the modified file back to Azure Blob Storage
-            azure_blob_obj.upload_file_local(azure_container_client , 'links_for_scrape.xlsx' , main_config['temp_folder_download'])
-            
-            # Remove the local file after uploading it back to Azure Blob Storage
-            os.remove(file_path)
-        else: 
-            # For other files, process them and update the knowledge base
-            azure_blob_obj.download_file_local(azure_container_client , main_config['temp_folder_download']  , i)
-            id_list = directory_obj.reading_file(main_config['temp_folder_download']  , i)
-            
-        print('Knowledge Base updated for ' + i)
-        
-    print('Any new data in knowledge base bas been updated')
+class KnowledgeBaseUpdater:
+    def __init__(self, config: dict):
+        self.config = config
+        self._validate_config()
+
+        self.temp_folder = config["temp_folder_download"]
+        self.local_data_folder = config.get("local_data_folder")
+
+        self.azure_blob = Azure_Blob(
+            account_url=os.environ.get("account_url"),
+            container_name_blob=os.environ.get("container_name_blob")
+        )
+
+        self.vector_db = VectorDataBase(
+            indexing_policy=config["indexing_policy"],
+            vector_embedding_policy=config["vector_embedding_policy"],
+            database_name=os.environ.get("database_name"),
+            container_name=os.environ.get("container_name")
+        )
+
+        try:
+            self.vector_db.setup_connection()
+            logger.info("Vector database connection established successfully.")
+        except Exception as e:
+            logger.error(f"Failed to set up Vector DB connection: {e}")
+            raise RuntimeError(f"Failed to set up Vector DB connection: {e}")
+
+        if not hasattr(self.vector_db, "vector_search"):
+            logger.error("VectorDataBase instance has no attribute 'vector_search' after setup.")
+            raise AttributeError("VectorDataBase instance has no attribute 'vector_search' after setup.")
+
+        self.directory = Directory(vector_search=self.vector_db.vector_search)
+
+    def _validate_config(self):
+        required = ["indexing_policy", "vector_embedding_policy", "temp_folder_download"]
+        for key in required:
+            if key not in self.config:
+                logger.error(f"Missing required key in main_config: {key}")
+                raise KeyError(f"Missing required key in main_config: {key}")
+
+    def update_knowledge_base(self):
+        blob_client = self.azure_blob.setup_blob_connection()
+        azure_files_list = self.azure_blob.get_document_list(blob_client)
+
+        if self.local_data_folder:
+            if not os.path.isdir(self.local_data_folder):
+                logger.error(f"'local_data_folder' does not exist: {self.local_data_folder}")
+                raise ValueError(f"'local_data_folder' does not exist: {self.local_data_folder}")
+
+            logger.info(f"Uploading files from {self.local_data_folder} to Azure Blob...")
+
+            files_original = [
+                f for f in os.listdir(self.local_data_folder)
+                if os.path.isfile(os.path.join(self.local_data_folder, f))
+            ]
+            files_to_upload = [f for f in files_original if f not in azure_files_list]
+
+            if not files_to_upload:
+                logger.info(f"No new files found in local folder '{self.local_data_folder}'. Nothing to upload.")
+            else:
+                logger.info(f"Uploading {len(files_to_upload)} files to Azure Blob Storage...")
+
+            for file_name in files_to_upload:
+                try:
+                    self.azure_blob.upload_file_local(blob_client, file_name, self.local_data_folder)
+                    logger.info(f"Uploaded: {file_name}")
+                except Exception as e:
+                    logger.error(f"Failed to upload {file_name}: {e}")
+
+            # Update azure_files_list with newly uploaded files
+            azure_files_list.extend(files_to_upload)
+
+        try:
+            documents_present = self.vector_db.get_document_source()
+        except Exception as e:
+            logger.error(f"Error fetching document sources from vector DB: {e}")
+            documents_present = []
+
+        files_to_update = self.directory.identify_documents_not_present(
+            knowledge_base_data=documents_present,
+            azure_file_list_names=azure_files_list
+        )
+
+        if not files_to_update:
+            logger.info("No files need updating in the knowledge base.")
+        else:
+            logger.info(f"Files to update in knowledge base: {files_to_update}")
+
+        for file_name in files_to_update:
+            try:
+                self.azure_blob.download_file_local(blob_client, self.temp_folder, file_name)
+                logger.info(f"Downloaded {file_name} to {self.temp_folder}")
+            except Exception as e:
+                logger.error(f"Failed to download {file_name}: {e}")
+                continue
+
+            try:
+                if file_name == 'links_for_scrape.xlsx':
+                    id_list, excel_file = self.directory.reading_URLS_for_scrape(self.temp_folder, file_name)
+
+                    file_path = Path(self.temp_folder) / file_name
+                    excel_file.to_excel(file_path, index=False)
+
+                    self.azure_blob.upload_file_local(blob_client, file_name, self.temp_folder)
+                    logger.info(f"Re-uploaded processed file {file_name}")
+                    os.remove(file_path)
+                    logger.info(f"Removed temporary file {file_path}")
+                else:
+                    # No double download, just read once after download
+                    id_list = self.directory.reading_file(self.temp_folder, file_name)
+
+                logger.info(f"Knowledge Base updated for {file_name}")
+            except Exception as e:
+                logger.error(f"Error processing file {file_name}: {e}")
+
+        logger.info("Any new data in knowledge base has been updated.")
+
+
+def load_config(path: str) -> dict:
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading configuration file: {e}")
+        raise RuntimeError(f"Error loading configuration file: {e}")
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the main script with a configuration file.")
+    parser = argparse.ArgumentParser(description="Run knowledge base updater.")
     parser.add_argument(
         "--config",
         type=str,
         required=True,
-        help="Path to the configuration file (JSON format)."
+        help="Path to the configuration JSON file."
     )
+
     args = parser.parse_args()
-    # Load the configuration file
-    try:
-        main_config = json.load(open(args.config))
-    except Exception as e:
-        print(f"Error loading configuration file: {e}")
-        exit(1)
-    # main_config = json.load(open('main_config.json'))
-    main(main_config)
+    config = load_config(args.config)
+
+    updater = KnowledgeBaseUpdater(config)
+    updater.update_knowledge_base()

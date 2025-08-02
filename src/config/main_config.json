@@ -1,0 +1,22 @@
+{
+    "language_model_path" : "openai_chatbot", 
+    "prompt_path" : "./prompts/prompt.txt" , 
+    "indexing_policy" : {
+        "indexingMode": "consistent",
+        "includedPaths": [{"path": "/*"}],
+        "excludedPaths": [{"path": "/\"_etag\"/"}],
+        "vectorIndexes": [{"path": "/embedding", "type": "quantizedFlat"}]
+    }, 
+    "vector_embedding_policy" : {
+        "vectorEmbeddings": [
+            {
+                "path": "/embedding",
+                "dataType": "float32",
+                "distanceFunction":"cosine",
+                "dimensions": 3072
+            }
+        ]
+    }, 
+    "temp_folder_download" : "temp_folder_download",
+    "local_data_folder": "./json_folder"
+}
