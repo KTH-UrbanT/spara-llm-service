@@ -84,7 +84,7 @@ class RetrievalGeneration:
             stop=None,
             stream=False
         )
-    def generate_reply_texts(self, question, existing_conversation, type):
+    def generate_reply_texts(self, question, existing_conversation, session_id_int,type):
         """
         Generate a reply based on the question and the type of search (text-based or vector-based).
 
@@ -128,8 +128,9 @@ class RetrievalGeneration:
         new_conversation.append({
             "role": "user",
             "content": question + "\n Context : " + content_from_doc +
-            self.buildings.update_address(question)
-        })
+               (self.buildings.update_address(question) if (session_id_int % 2 == 0) else "")
+            })
+
 
         print(new_conversation)
 

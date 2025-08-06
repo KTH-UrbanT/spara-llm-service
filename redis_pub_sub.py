@@ -93,7 +93,7 @@ class RedisQueueManager:
         else:
             print("No threads found to delete.")
 
-    def process_thread(self, thread_name):
+    def process_thread(self, thread_name, session_id_int):
         """
         Processes a thread by generating a reply based on the latest user message
         and the previous conversation context.
@@ -137,7 +137,7 @@ class RedisQueueManager:
 
             try:
                 start_time = time.time()
-                responses = self.language_model.generate_reply_texts(user_message, messages, type="text")
+                responses = self.language_model.generate_reply_texts(user_message, messages, session_id_int, type="text")
                 end_time = time.time()
                 latency = end_time - start_time
                 
@@ -178,8 +178,11 @@ class RedisQueueManager:
         for message in pubsub.listen():
             if message["type"] == "message":
                 event_data = json.loads(message["data"])
+                print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+                print(event_data)
                 thread_name = event_data.get("thread_name")
-                self.process_thread(thread_name)
+                session_id_int = event_data.get("session_id_int")
+                self.process_thread(thread_name, session_id_int)
 
 
 if __name__ == "__main__":
