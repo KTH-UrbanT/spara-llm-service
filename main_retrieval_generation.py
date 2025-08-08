@@ -139,18 +139,6 @@ class RetrievalGeneration:
             print(f"[Error] Failed to generate completion: {e}")
             return new_conversation  # Return partial conversation if completion fails
 
-        # Generate the assistant's reply using the OpenAI model based on the updated conversation
-        # completion = self.client.chat.completions.create(
-        #     model=self.deployment,
-        #     messages=new_conversation,  # Provide the conversation history as context
-        #     max_tokens=800,  # Limit the maximum number of tokens in the reply
-        #     temperature=0.1,  # Set the temperature to control randomness of the output
-        #     top_p=0.95,  # Set the cumulative probability for sampling
-        #     frequency_penalty=0,  # No penalty for frequent tokens
-        #     presence_penalty=0,  # No penalty for repeating content
-        #     stop=None,  # No explicit stop sequence
-        #     stream=False  # Do not stream the response
-        # )
 
         # Update the conversation with the assistant's reply
         new_conversation[-1]['content'] = question  # Reset the last 'user' message content to just the question
