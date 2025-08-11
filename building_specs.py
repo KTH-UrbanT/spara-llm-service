@@ -66,8 +66,7 @@ def main(prompt):
     #spec1 = Spec("AddressGatan 5", "F1N2R3", "60KWh", 1998)
     #spec2 = Spec("blåkulla 3b", "F1N2R3", "80KWh", 1912)
     #spec3 = Spec("Vårvägen 77", "F1N2R3", "70KWh", 2003)
-    print(df)
     spec = search_for_address(prompt, buildings)
-    #print(spec)
+    print(spec)
     return spec.__str__()
 

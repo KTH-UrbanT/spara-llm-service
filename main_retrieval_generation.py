@@ -130,7 +130,7 @@ class RetrievalGeneration:
             building_specs.main(question)
         })
 
-        print(new_conversation)
+        print(new_conversation[-1])
 
 
         try:
