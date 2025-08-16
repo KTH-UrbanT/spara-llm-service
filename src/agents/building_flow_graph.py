@@ -1,142 +1,534 @@
+# src/agents/building_flow_graph.py
 from langgraph.graph import StateGraph, END
-from typing import TypedDict, Optional, Dict, Any
+from typing import TypedDict, List, Any, Dict
+from src.agents.parse_intent_agent import ParseIntentAgent
+from src.agents.generic_sql_layer import SQL_Mapper_Layer
+from src.database.vector_client import VectorClient, VectorClientConfig
+from src.agents.openai_agent import OpenAIResponseAgent
+from src.agents.specialized_sql_layer import SpecializedSQLLayer
+import re
+import os
+import json
 
-# Agents
+# -----------------------------
+# Define the Graph State Schema
+# -----------------------------
 
-# Logic modules
-from src.logic.address_match_check import check_address_match
-from src.logic.sim_flag_check import simulation_needed
-from src.logic.cost_estimation_logic import estimate_cost
-from src.logic.green_loan_logic import suggest_green_loans
+parse_intent_agent = ParseIntentAgent()
+sql_mapper_layer = SQL_Mapper_Layer()
+try:
+    specialized_layer = SpecializedSQLLayer()
+    _SPECIALIZED_INIT_ERROR = None
+except Exception as e:
+    specialized_layer = None
+    _SPECIALIZED_INIT_ERROR = f"SpecializedSQLLayer init failed: {e}"
 
-# Initialize agents and clients
-from src.agents.instances import (
-    parse_intent_agent,
-    sql_client,
-    vector_query_agent,
-    simulation_agent,
-    openai_response_agent,
-)
+# Initialize VectorClient using its config
+_vector_cfg = VectorClientConfig()
+vector_database = VectorClient(_vector_cfg)
 
-# --- State Definition ---
-class BuildingState(TypedDict, total=False):
-    messages: list[Dict[str, str]]
-    metadata: list[Dict[str, Any]]
+# LLM summarizer (Azure OpenAI)
+llm_summarizer = OpenAIResponseAgent()
+
+
+class GraphState(TypedDict, total=False):
     thread_id: str
+    last_message: str
+    messages: List[Dict[str, Any]]
+    metadata: Dict[str, Any]
+    session_state: Dict[str, Any]
+    context: Dict[str, Any]
+    agent_outputs: List[str]
+    aggregated: str
+    final_response: str
+    agent_answered: str  # 'sql' | 'vector' | 'sql+vector' | 'simulation' | 'other' | 'unknown'
 
-    parsed_intent: str
-    address: Optional[str]
-    building_info: Optional[dict]
-    address_mismatch: Optional[bool]
 
-    sql_result: Optional[dict]
-    localized_sql_result: Optional[dict]
-    vector_result: Optional[str]
+# -----------------------------
+# Utilities
+# -----------------------------
 
-    run_simulation: Optional[bool]
-    simulation_result: Optional[Dict[str, Any]]
-    estimated_cost: Optional[float]
-    green_loan_options: Optional[list]
+def _mark_agent(state: GraphState, agent_type: str, agent_name: str) -> None:
+    """
+    Record participation of an agent in this run.
+    agent_type: one of 'sql', 'vector', 'simulation', 'other'
+    agent_name: e.g., 'generic_sql', 'specialized_sql', 'vector_db'
+    """
+    md = state.setdefault("metadata", {})
+    used = md.setdefault("agents_used", [])
+    used.append({"type": agent_type, "name": agent_name})
 
-    response: Optional[str]
 
-# --- SQL Query Nodes ---
-def sql_query_node(state: BuildingState) -> BuildingState:
-    address = state['metadata'].get("address")
+def _compute_agent_answered(state: GraphState) -> str:
+    """
+    Collapse agents_used into a compact summary label.
+      - 'sql+vector' if both present
+      - 'sql' if any sql present
+      - 'vector' if any vector present
+      - 'simulation' if only simulation present
+      - 'other' if only other present
+      - 'unknown' if nothing was recorded
+    """
+    md = state.get("metadata", {}) or {}
+    used = md.get("agents_used") or []
+    if not used:
+        return "unknown"
+
+    has_sql = any(u.get("type") == "sql" for u in used)
+    has_vec = any(u.get("type") == "vector" for u in used)
+    only_sim = all(u.get("type") == "simulation" for u in used)
+    only_other = all(u.get("type") == "other" for u in used)
+
+    if has_sql and has_vec:
+        return "sql+vector"
+    if has_sql:
+        return "sql"
+    if has_vec:
+        return "vector"
+    if only_sim:
+        return "simulation"
+    if only_other:
+        return "other"
+    return "unknown"
+
+
+# -----------------------------
+# Node Functions
+# -----------------------------
+
+def _ensure_building_id_from_address(state: GraphState) -> None:
+    """
+    If we have an address but no building_id, use the generic SQL layer
+    to resolve building_id and stash it in state.metadata.
+    Silent no-op on failure; caller handles messaging.
+    """
+    md = state.setdefault("metadata", {})
+    if md.get("building_id"):
+        return
+    address = md.get("address")
     if not address:
-        address = _extract_or_fallback_address(state)
-        state["address"] = address
+        return
+    try:
+        result = sql_mapper_layer.execute("building_by_address", {"address": address})
+        if result and result.get("ok") and result.get("data"):
+            data = result["data"]
+            bid = None
+            if isinstance(data, dict):
+                bid = data.get("building_id") or data.get("ID") or data.get("id")
+            elif isinstance(data, list) and data and isinstance(data[0], dict):
+                d0 = data[0]
+                bid = d0.get("building_id") or d0.get("ID") or d0.get("id")
+            if bid:
+                md["building_id"] = bid
+    except Exception as e:
+        # Don't fail the flow—just surface a debug note
+        state.setdefault("agent_outputs", []).append(f"Building ID resolution failed: {e}")
 
-    building_response = sql_client.building_by_address(address)
-    if building_response.status_code == 200:
-        state["sql_result"] = building_response.json()
-    else:
-        state["sql_result"] = {}
+
+def entry_point_node(state: GraphState) -> GraphState:
+    print("Entered entry_point")
     return state
 
-def localized_sql_query_node(state: BuildingState) -> BuildingState:
-    address = state.get("address")
-    if not address:
-        address = _extract_or_fallback_address(state)
-        state["address"] = address
 
-    building_response = sql_client.building_by_address(address)
-    if building_response.status_code == 200:
-        state["localized_sql_result"] = building_response.json()
-    else:
-        state["localized_sql_result"] = {}
+def understand_context_node(state: GraphState) -> GraphState:
+    print("Running understand_context")
+    updated_state = parse_intent_agent(state)
+    return updated_state
+
+
+def clarification_node(state: GraphState) -> GraphState:
+    print("Clarifying...")
+    original_message = state.get("messages", [])[-1]["content"] if state.get("messages") else ""
+    state["final_response"] = (
+        f"I'm not entirely sure what you meant by: \"{original_message}\". "
+        "Could you please clarify your question or provide more details?"
+    )
     return state
 
-# --- Address Fallback ---
-def _extract_or_fallback_address(state: BuildingState) -> str:
-    # Check metadata
-    for meta in state.get("metadata", []):
-        if meta.get("address"):
-            return meta["address"]
-    # Fallback to username-thread ID lookup
-    return sql_client.get_address_by_username(state.get("thread_id", ""))
 
-# --- Vector DB Query ---
-def vector_query_node(state: BuildingState) -> BuildingState:
-    return vector_query_agent.query(state)
+def maintain_history_node(state: GraphState) -> GraphState:
+    print("Maintaining history")
+    if not state.get("last_message") and state.get("messages"):
+        state["last_message"] = state["messages"][-1].get("content", "")
+    history = state.get("session_state", {}).get("history", [])
+    history.append(state.get("last_message", ""))
+    state.setdefault("session_state", {})["history"] = history
+    return state
 
-# --- Simulation Logic ---
-def simulation_run_node(state: BuildingState) -> BuildingState:
-    return simulation_agent.run(state)
 
-# --- Final response generator ---
-def generate_response_node(state: BuildingState) -> BuildingState:
-    return openai_response_agent.generate(state)
+def route_after_ambiguity(state: GraphState) -> str:
+    print("Routing based on ambiguity")
+    return "clarification" if state.get("context", {}).get("ambiguous") else "maintain_history"
 
-# --- Graph Builder ---
+
+# After history, skip address gate for vector queries
+def route_post_history(state: GraphState) -> str:
+    print("Routing after history")
+    intent = (state.get("context", {}) or {}).get("intent", "").lower()
+    if intent in {"query vector database", "vector_search"}:
+        return "decision"
+    return "check_address"
+
+
+def check_address_node(state: GraphState) -> str:
+    print("Checking for address...")
+    metadata = state.setdefault("metadata", {})
+    last_message = state.get("last_message", "") or ""
+
+    if metadata.get("address"):
+        return "address_found"
+
+    pattern = re.compile(
+        r"\b(?:bor\s+på|adressen?\s+är|address\s+is|live\s+at|live\s+in)\b\s*[:\-]?\s*"
+        r"([A-Za-zÅÄÖåäö0-9 ,.\-/]{3,120}?)"
+        r"(?=(?:[.?!]\s|$))",
+        re.IGNORECASE,
+    )
+    match = pattern.search(last_message)
+    if match:
+        addr = match.group(1).strip(" ,.-/")
+        if addr:
+            metadata["address"] = addr
+            return "address_found"
+
+    return "request_address"
+
+
+def address_found_node(state: GraphState) -> GraphState:
+    print("Address found, proceeding.")
+    return state
+
+
+def request_address_node(state: GraphState) -> GraphState:
+    print("Requesting address from user.")
+    state["final_response"] = "Can you please provide the building address?"
+    return state
+
+
+def decision_node(state: GraphState) -> str:
+    print("Deciding routing based on intent")
+    intent = (state.get("context", {}) or {}).get("intent", "").lower()
+    return {
+        "query generic database": "generic_sql_agent",
+        "query specific database": "specialized_sql_agent",
+        "query vector database": "vector_db_agent",
+        "simulations": "simulation_agent",
+        # backward-compat keys:
+        "generic_sql": "generic_sql_agent",
+        "vector_search": "vector_db_agent",
+        "simulation": "simulation_agent",
+    }.get(intent, "other_agent")
+
+
+def _describe_payload_for_aggregation(data: Any) -> str:
+    if data is None:
+        return "No data returned."
+    if isinstance(data, dict):
+        lines = [f"{k}: {data[k]}" for k in sorted(data.keys())]
+        return "\n".join(lines)
+    if isinstance(data, list):
+        return "\n".join([str(x) for x in data[:5]])
+    return str(data)
+
+
+# -----------------------------
+# Agent Nodes
+# -----------------------------
+def generic_sql_agent_node(state: GraphState) -> GraphState:
+    op, kwargs = sql_mapper_layer.route(state)
+    result = sql_mapper_layer.execute(op, kwargs)
+
+    # If resolved by address, extract building_id then fetch topic
+    if op == "building_by_address" and result.get("ok") and result.get("data"):
+        data = result["data"]
+        building_id = None
+        if isinstance(data, dict):
+            building_id = data.get("building_id") or data.get("ID") or data.get("id")
+        elif isinstance(data, list) and data and isinstance(data[0], dict):
+            d0 = data[0]
+            building_id = d0.get("building_id") or d0.get("ID") or d0.get("id")
+
+        if building_id:
+            state.setdefault("metadata", {})["building_id"] = building_id
+            topic_op, topic_kwargs = sql_mapper_layer._route_with_building_id(
+                sql_mapper_layer._classify_topic(
+                    (state.get("last_message") or "").lower(),
+                    [e.lower() for e in (state.get("context", {}).get("entities") or [])],
+                ),
+                building_id,
+            )
+            result = sql_mapper_layer.execute(topic_op, topic_kwargs)
+
+    if result.get("ok"):
+        state.setdefault("agent_outputs", []).append(
+            _describe_payload_for_aggregation(result.get("data"))
+        )
+        # record participation
+        _mark_agent(state, "sql", "generic_sql")
+        return state
+
+    msg = (result.get("message") or "").lower()
+    if "missing_address" in msg:
+        state["final_response"] = "Can you please provide the building address?"
+        return state
+
+    state.setdefault("agent_outputs", []).append(
+        f"Generic SQL lookup failed: {result.get('message')}"
+    )
+    return state
+
+
+def specialized_sql_agent_node(state: GraphState) -> GraphState:
+    # Check that the layer initialized
+    if specialized_layer is None:
+        state.setdefault("agent_outputs", []).append(_SPECIALIZED_INIT_ERROR or "Specialized layer unavailable.")
+        return state
+
+    try:
+        # Try to populate building_id if we only have address
+        _ensure_building_id_from_address(state)
+
+        op, kwargs = specialized_layer.route(state)
+        result = specialized_layer.execute(op, kwargs)
+
+        if result.get("ok"):
+            # Uniform aggregation-friendly formatting
+            preview = _describe_payload_for_aggregation(result.get("data"))
+            state.setdefault("agent_outputs", []).append(f"Specialized SQL:\n{preview}")
+            # record participation
+            _mark_agent(state, "sql", "specialized_sql")
+        else:
+            state.setdefault("agent_outputs", []).append(f"Specialized SQL error: {result.get('message')}")
+            # (not marking participation on error)
+    except Exception as e:
+        state.setdefault("agent_outputs", []).append(f"Specialized SQL exception: {e}")
+        # (not marking participation on exception)
+
+    return state
+
+
+def vector_db_agent_node(state: GraphState) -> GraphState:
+    try:
+        query = state.get("last_message") or ""
+        ctx = state.get("context", {}) or {}
+        ents = ctx.get("entities") or []
+        ent_str = ", ".join([str(e) for e in ents]) if ents else ""
+
+        q = f"{query}\nEntities: {ent_str}" if ent_str else query
+        results = vector_database.query(q)
+
+        if not results:
+            state.setdefault("agent_outputs", []).append("Vector DB: no relevant passages found.")
+            # record vector agent attempt as the path still handles vector summarization
+            _mark_agent(state, "vector", "vector_db")
+            return state
+
+        lines, sources, snippets = [], [], []
+        for i, r in enumerate(results[:5], 1):
+            text = (r.get("page_content") or "").strip()
+            meta = r.get("metadata") or {}
+            src = meta.get("source") or meta.get("url") or meta.get("document_id") or meta.get("doc_id") or meta.get("id")
+
+            # Debug/preview block for aggregator
+            preview = text.replace("\n", " ")
+            if len(preview) > 300:
+                preview = preview[:300] + "…"
+            prefix = f"[{i}]"
+            if src:
+                prefix += f" <{src}>"
+                sources.append(src)
+            lines.append(f"{prefix} {preview}")
+
+            # Save full text + source for LLM summarizer
+            snippets.append({"text": text, "source": src})
+
+        # Deduplicate sources in order
+        seen = set()
+        dedup_sources = []
+        for s in sources:
+            if s and s not in seen:
+                dedup_sources.append(s)
+                seen.add(s)
+
+        md = state.setdefault("metadata", {})
+        md["vector_sources"] = dedup_sources
+        md["vector_snippets"] = snippets
+
+        state.setdefault("agent_outputs", []).append("Vector results:\n" + "\n".join(lines))
+        # record participation
+        _mark_agent(state, "vector", "vector_db")
+        return state
+
+    except Exception as e:
+        state.setdefault("agent_outputs", []).append(f"Vector DB error: {e}")
+        # record attempt even on error (optional, remove if you prefer only-success)
+        _mark_agent(state, "vector", "vector_db")
+        return state
+
+
+def simulation_agent_node(state: GraphState) -> GraphState:
+    state.setdefault("agent_outputs", []).append("Simulation result")
+    _mark_agent(state, "simulation", "simulation_agent")
+    return state
+
+
+def other_agent_node(state: GraphState) -> GraphState:
+    state.setdefault("agent_outputs", []).append("Fallback agent result")
+    _mark_agent(state, "other", "other_agent")
+    return state
+
+
+# -----------------------------
+# Aggregation and Output Nodes
+# -----------------------------
+def aggregator_node(state: GraphState) -> GraphState:
+    outputs = state.get("agent_outputs", [])
+    state["aggregated"] = "\n".join(outputs) if outputs else "No results found."
+    # optional: stash a tiny debug tag in metadata
+    state.setdefault("metadata", {}).setdefault("debug", {})["agent_answered"] = _compute_agent_answered(state)
+    return state
+
+
+def _build_vector_context_block(state: GraphState) -> str:
+    md = state.get("metadata", {}) or {}
+    snippets = md.get("vector_snippets") or []
+    if not snippets:
+        return ""
+    lines = []
+    for i, sn in enumerate(snippets[:5], 1):
+        src = sn.get("source")
+        label = os.path.basename(src) if isinstance(src, str) else (str(src) if src else "")
+        lines.append(f"[{i}] {sn.get('text','').strip()}\nSOURCE: {label}")
+    return "CONTEXT PASSAGES:\n" + "\n\n".join(lines)
+
+
+def llm_summarizer_node(state: GraphState) -> GraphState:
+    # compute and stash a one-word agent summary for downstream consumers
+    state["agent_answered"] = _compute_agent_answered(state)
+
+    ctx = state.get("context", {}) or {}
+    intent = (ctx.get("intent") or "").lower()
+
+    # Use LLM for vector answers with retrieved passages as context
+    if intent in {"query vector database", "vector_search"}:
+        try:
+            context_block = _build_vector_context_block(state)
+            base_msgs = list(state.get("messages", []))
+            if context_block:
+                base_msgs = base_msgs + [{"role": "assistant", "content": context_block}]
+
+            answer = llm_summarizer.generate_response(
+                last_message=state.get("last_message", ""),
+                message_list=base_msgs
+            )
+            if isinstance(answer, str) and answer.strip():
+                state["final_response"] = answer.strip()
+                return state
+        except Exception as e:
+            state.setdefault("agent_outputs", []).append(f"LLM summarize error: {e}")
+
+    # Default: concise user-friendly summary for non-vector intents
+    aggregated = state.get("aggregated", "").strip()
+    if not aggregated:
+        state["final_response"] = "No results to summarize."
+        return state
+
+    # If it looks like key:value pairs and short, compress into a single line
+    lines = [ln for ln in aggregated.splitlines() if ln.strip()]
+    if all(":" in ln for ln in lines) and len(lines) <= 6:
+        kv = []
+        for ln in lines:
+            k, v = ln.split(":", 1)
+            kv.append(f"{k.strip()} = {v.strip()}")
+        state["final_response"] = " • ".join(kv)
+    else:
+        state["final_response"] = f"Summary of: {aggregated}"
+    return state
+
+
+# -----------------------------
+# Graph Builder
+# -----------------------------
 def build_building_flow_graph():
-    graph = StateGraph(BuildingState)
+    builder = StateGraph(GraphState)
 
-    # --- Nodes ---
-    graph.add_node("ParseIntent", parse_intent_agent)
-#    graph.add_node("CheckAddress", check_address_match)
-    graph.add_node("SQLQuery", sql_query_node)
-    graph.add_node("LocalizedSQLQuery", localized_sql_query_node)
-    graph.add_node("VectorQuery", vector_query_node)
-    graph.add_node("SimNeeded", simulation_needed)
-    graph.add_node("RunSimulation", simulation_run_node)
-    graph.add_node("EstimateCost", estimate_cost)
-    graph.add_node("SuggestGreenLoans", suggest_green_loans)
-    graph.add_node("GenerateResponse", generate_response_node)
+    # Add nodes
+    builder.add_node("entry_point", entry_point_node)
+    builder.add_node("understand_context", understand_context_node)
+    builder.add_node("clarification", clarification_node)
+    builder.add_node("maintain_history", maintain_history_node)
+    builder.add_node("check_address", lambda state: state)  # identity node; router handles branching
+    builder.add_node("request_address", request_address_node)
+    builder.add_node("address_found", address_found_node)
+    builder.add_node("decision", lambda x: x)  # identity node; router handles branching
+    builder.add_node("generic_sql_agent", generic_sql_agent_node)
+    builder.add_node("specialized_sql_agent", specialized_sql_agent_node)
+    builder.add_node("vector_db_agent", vector_db_agent_node)
+    builder.add_node("simulation_agent", simulation_agent_node)
+    builder.add_node("other_agent", other_agent_node)
+    builder.add_node("aggregator", aggregator_node)
+    builder.add_node("llm_summarizer", llm_summarizer_node)
 
-    # --- Flow ---
-    graph.set_entry_point("ParseIntent")
-    # graph.add_edge("ParseIntent", "CheckAddress")
+    # Graph entry
+    builder.set_entry_point("entry_point")
 
-    # graph.add_conditional_edges(
-    #     "CheckAddress",
-    #     lambda state: state.get("parsed_intent", "unknown"),
-    #     {
-    #         "simulation": "SimNeeded",
-    #         "query_generic": "SQLQuery",
-    #         "query_local": "LocalizedSQLQuery",
-    #         "vector": "VectorQuery",
-    #         "unknown": "GenerateResponse"
-    #     }
-    # )
-
-    graph.add_conditional_edges(
-        "SimNeeded",
-        lambda state: state.get("run_simulation", False),
+    # Flow
+    builder.add_edge("entry_point", "understand_context")
+    builder.add_conditional_edges(
+        "understand_context",
+        route_after_ambiguity,
         {
-            True: "RunSimulation",
-            False: "GenerateResponse"
-        }
+            "clarification": "clarification",
+            "maintain_history": "maintain_history",
+        },
+    )
+    builder.add_edge("clarification", "maintain_history")
+
+    # After history, vector queries go straight to decision; others check address
+    builder.add_conditional_edges(
+        "maintain_history",
+        route_post_history,
+        {
+            "decision": "decision",
+            "check_address": "check_address",
+        },
     )
 
-    graph.add_edge("RunSimulation", "EstimateCost")
-    graph.add_edge("EstimateCost", "SuggestGreenLoans")
-    graph.add_edge("SuggestGreenLoans", "GenerateResponse")
+    builder.add_conditional_edges(
+        "check_address",
+        check_address_node,
+        {
+            "address_found": "address_found",
+            "request_address": "request_address",
+        },
+    )
 
-    graph.add_edge("SQLQuery", "GenerateResponse")
-    graph.add_edge("LocalizedSQLQuery", "GenerateResponse")
-    graph.add_edge("VectorQuery", "GenerateResponse")
+    builder.add_edge("address_found", "decision")
+    builder.add_conditional_edges(
+        "decision",
+        decision_node,
+        {
+            "generic_sql_agent": "generic_sql_agent",
+            "specialized_sql_agent": "specialized_sql_agent",
+            "vector_db_agent": "vector_db_agent",
+            "simulation_agent": "simulation_agent",
+            "other_agent": "other_agent",
+        },
+    )
 
-    graph.set_finish_point("GenerateResponse")
+    for agent in [
+        "generic_sql_agent",
+        "specialized_sql_agent",
+        "vector_db_agent",
+        "simulation_agent",
+        "other_agent",
+    ]:
+        builder.add_edge(agent, "aggregator")
 
-    return graph.compile()
+    builder.add_edge("aggregator", "llm_summarizer")
+    builder.add_edge("llm_summarizer", END)
+
+    # Exit early if we request address from user
+    builder.add_edge("request_address", END)
+
+    return builder.compile()

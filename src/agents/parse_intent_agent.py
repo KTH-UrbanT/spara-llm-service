@@ -2,6 +2,7 @@ import os
 import logging
 import multiprocessing
 import sys
+import json
 from typing import Dict, Any
 from dotenv import load_dotenv
 from azure.core.credentials import AzureKeyCredential
@@ -82,29 +83,54 @@ class ParseIntentAgent(BaseAgent):
         )
 
         p.start()
-        p.join(timeout=10)
+        p.join(timeout=100)
 
         if p.is_alive():
             p.terminate()
             p.join()
             logger.warning("Intent classification timed out.")
-            state["parsed_intent"] = "unknown"
+            state["context"] = {
+                "intent": "unknown",
+                "entities": [],
+                "ambiguous": False,
+            }
         else:
             result = return_dict.get("result")
             if result:
                 logger.info(f"LLM classification result: {result}")
                 parsed = self._parse_response(result)
-                state["parsed_intent"] = parsed.get("intent", "unknown")
+                state["context"] = parsed
             else:
                 logger.error(f"ParseIntentAgent error: {return_dict.get('error')}")
-                state["parsed_intent"] = "unknown"
+                state["context"] = {
+                    "intent": "unknown",
+                    "entities": [],
+                    "ambiguous": False,
+                }
 
         return state
 
-    def _parse_response(self, text: str) -> Dict[str, str]:
-        """Parses LLM response in the format: intent: <...>"""
-        for line in text.splitlines():
-            line = line.strip().lower()
-            if line.startswith("intent:"):
-                return {"intent": line.split("intent:")[1].strip()}
-        return {"intent": "unknown"}
+
+    def _parse_response(self, text: str) -> Dict[str, Any]:
+        """
+        Parses LLM response in JSON format:
+        {
+        "intent": "<intent>",
+        "entities": [<entity1>, <entity2>, ...],
+        "ambiguous": true/false
+        }
+        """
+        try:
+            parsed = json.loads(text)
+            return {
+                "intent": parsed.get("intent", "unknown"),
+                "entities": parsed.get("entities", []),
+                "ambiguous": parsed.get("ambiguous", False)
+            }
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON from model response: {e}")
+            return {
+                "intent": "unknown",
+                "entities": [],
+                "ambiguous": False
+            }

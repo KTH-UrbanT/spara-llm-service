@@ -1,10 +1,8 @@
-
-
 import os
 import logging
 import time
 from typing import List, Dict, Optional, Union
-from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
+from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -70,6 +68,22 @@ class OpenAIResponseAgent:
             logger.error(f"Failed to initialize Azure OpenAI client: {e}")
             raise RuntimeError("Failed to initialize OpenAI client.")
 
+    def _is_o4_family(self) -> bool:
+        """Treat o3/o4 deployments with the new param names/limits."""
+        name = (self.deployment or "").lower()
+        return ("o4" in name) or ("o3" in name)
+
+    def _build_messages(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]):
+        messages = [{"role": "system", "content": self.prompt_template}]
+        for msg in message_list:
+            if 'role' in msg and 'content' in msg:
+                messages.append({'role': msg['role'], 'content': msg['content']})
+            else:
+                logger.warning(f"Skipping malformed message: {msg}")
+        if not messages or messages[-1].get('content') != last_message or messages[-1].get('role') != 'user':
+            messages.append({"role": "user", "content": last_message})
+        return messages
+
     def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
 
@@ -77,32 +91,45 @@ class OpenAIResponseAgent:
             logger.warning("Invalid inputs to generate_response. Expecting string and list.")
             return None
 
-        messages = [{"role": "system", "content": self.prompt_template}]
-        for msg in message_list:
-            if 'role' in msg and 'content' in msg:
-                messages.append({'role': msg['role'], 'content': msg['content']})
-            else:
-                logger.warning(f"Skipping malformed message: {msg}")
+        messages = self._build_messages(last_message, message_list)
 
-        if not messages or messages[-1].get('content') != last_message or messages[-1].get('role') != 'user':
-            messages.append({"role": "user", "content": last_message})
+        # Base params shared by both families
+        params = {
+            "model": self.deployment,
+            "messages": messages,
+            "stream": False,
+        }
+
+        # Configure per family
+        if self._is_o4_family():
+            # o3/o4: use max_completion_tokens; keep it simple
+            params["max_completion_tokens"] = 800
+            # params["temperature"] = 0.2
+            # Most o4 deployments ignore or reject legacy sampling knobs; do not send top_p/frequency/presence
+        else:
+            # Legacy GPT-4/35 style: use max_tokens and classic sampling params
+            params["max_tokens"] = 800
+            params["temperature"] = 0.2
+            params["top_p"] = 0.23
+            params["frequency_penalty"] = 0
+            params["presence_penalty"] = 0
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.deployment,
-                messages=messages,
-                max_tokens=800,
-                temperature=0.2,
-                top_p=0.23,
-                frequency_penalty=0,
-                presence_penalty=0,
-                stop=None,
-                stream=False
-            )
-            response_content = response.choices[0].message.content
-            end_time = time.time()
-            logger.info(f"Response generated in {end_time - start_time:.2f} seconds.")
-            return response_content
+            response = self.client.chat.completions.create(**params)
+        except BadRequestError as e:
+            # Auto-recover common param mismatch: swap max_tokens -> max_completion_tokens
+            msg = str(e)
+            if "max_tokens" in msg and "max_completion_tokens" in msg:
+                logger.warning("Retrying with max_completion_tokens for o4/o3 model.")
+                params.pop("max_tokens", None)
+                params["max_completion_tokens"] = 800
+                # Remove legacy sampling params that may cause 400 on o4/o3
+                for k in ("top_p", "frequency_penalty", "presence_penalty"):
+                    params.pop(k, None)
+                response = self.client.chat.completions.create(**params)
+            else:
+                logger.error(f"BadRequestError: {e}", exc_info=True)
+                return f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}"
         except APIConnectionError as e:
             logger.error(f"Connection error: {e}", exc_info=True)
             return "Error: Cannot connect to AI service."
@@ -116,3 +143,11 @@ class OpenAIResponseAgent:
             logger.error(f"Unexpected error: {e}", exc_info=True)
             return "Error: An unexpected issue occurred."
 
+        try:
+            response_content = response.choices[0].message.content
+        except Exception:
+            response_content = None
+
+        end_time = time.time()
+        logger.info(f"Response generated in {end_time - start_time:.2f} seconds.")
+        return response_content or "No content returned from the model."
