@@ -6,3 +6,5 @@ data/
 .env
 .venv/*
 dump.rdb
+results.csv
+df_results.csv
