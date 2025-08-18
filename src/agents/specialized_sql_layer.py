@@ -4,7 +4,8 @@ import re
 import json
 import time
 import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union , Sequence
+import random
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -92,6 +93,7 @@ class SpecializedSQLLayer:
     """
 
     DEFAULT_PROMPT_RELATIVE_PATH = os.path.join("..", "prompts", "specialized_sql_prompt.txt")
+    
 
     def __init__(
         self,
@@ -127,6 +129,7 @@ class SpecializedSQLLayer:
             "All child tables reference buildings.building_id.",
             "Primary building key: buildings.building_id.",
         ]
+        self.max_retries = int(os.getenv("AZURE_OAI_MAX_RETRIES", "5"))
 
     # -------------------------
     # Initialization utilities
@@ -143,7 +146,28 @@ class SpecializedSQLLayer:
 
         with open(full_path, "r", encoding="utf-8") as f:
             return f.read()
-
+    def _chat_with_retries(self, messages: Sequence[Dict[str, Any]], **kwargs):
+        for attempt in range(self.max_retries):
+            try:
+                return self.client.chat.completions.create(
+                    model=self.deployment,
+                    messages=messages,
+                    **kwargs,
+                )
+            except (RateLimitError, APIStatusError) as e:
+                # Only backoff on 429/5xx
+                status = getattr(e, "status_code", None) or getattr(e, "status", None)
+                if isinstance(e, RateLimitError) or status in (429, 500, 502, 503, 504):
+                    retry_after = 0
+                    resp = getattr(e, "response", None)
+                    if resp:
+                        # Azure usually sets Retry-After (seconds)
+                        retry_after = int(resp.headers.get("retry-after", "0") or "0")
+                    # exponential backoff with jitter, while respecting Retry-After
+                    backoff = max(retry_after, min(2 ** attempt, 30)) + random.random()
+                    time.sleep(backoff)
+                    continue
+                raise  # non-rate-limit error: bubble up
     def _initialize_openai_client(self) -> None:
         """
         Reads env vars and creates AzureOpenAI client.
@@ -309,13 +333,20 @@ class SpecializedSQLLayer:
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ]
 
-        completion = self.client.chat.completions.create(
-            model=self.deployment,
-            messages=messages,
+        # completion = self.client.chat.completions.create(
+        #     model=self.deployment,
+        #     messages=messages,
+        #     temperature=0.1,
+        #     top_p=0.2,
+        #     max_tokens=500,
+        # )
+        completion = self._chat_with_retries(
+            messages,
             temperature=0.1,
             top_p=0.2,
-            max_tokens=500,
+            max_tokens=300,   # see next section
         )
+
         content = completion.choices[0].message.content or ""
 
         # Expect JSON; if it's wrapped in markdown, extract code block.
