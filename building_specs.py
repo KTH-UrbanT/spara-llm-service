@@ -2,6 +2,7 @@ import re
 import requests
 import os
 import logging
+import time
 
 class Spec:
     def __init__(self, **kwargs):
@@ -33,36 +34,66 @@ class Building_specs:
     
     def update_address(self, prompt):
         pattern = re.compile(r"\b(?:bor\ på|address\ är|live\ at|live\ in|address\ is|live\ on)\b\W+(\w+(?:\W+\w+){0,1})", re.IGNORECASE)
-        address = pattern.findall(prompt)
+        address_matches = pattern.findall(prompt)
         print("updating address...")
-        if address and address != self.address:
-            host = os.getenv("ODEN_API_host")
-            port = os.getenv("ODEN_API_port")
-            self.logger.debug(address[0])
-            print("new address found")
-            req = f"https://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}" #change .env
+        if not address_matches or address_matches[0] == self.address:
+            return self.address
+
+        def get_address_variant(address, offset):
+            match = re.match(r"(.+?)(\d+)([A-Za-z]*)$", address)
+            if not match:
+                return address
+            street, number, letter = match.groups()
             try:
-                result = requests.get(req, timeout=5)
+                new_number = int(number) + offset
+                return f"{street}{new_number}{letter}"
+            except ValueError:
+                return address
+
+        base_address = address_matches[0]
+        host = os.getenv("ODEN_API_host")
+        port = os.getenv("ODEN_API_port")
+        attempts = [base_address, get_address_variant(base_address, 2), get_address_variant(base_address, -2)]
+
+        for addr in attempts:
+            req = f"https://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={addr}"
+            try:
+                result = requests.get(req, timeout=10)
+                print(f"API request for address: {addr}, status: {result.status_code}")
                 if result.status_code == 200:
-                    self.logger.info("Status from API: 200")
-                    spec = Spec(**result.json()[0])
-                    self.address = address
-                    self.building = spec
-                    print(address[0])
-                    print(spec.__str__)
+                    data = result.json()
+                    if isinstance(data, list) and data:
+                        spec = Spec(**data[0])
+                        self.address = addr
+                        self.building = spec
+                        print(self.address)
+                        print(spec.__str__())
+                        return self.building.__str__()
+                    else:
+                        print("API returned empty or invalid data:", data)
+                        self.logger.info("API returned empty or invalid data")
+                        self.building = None
+                        self.address = "ingen address info"
+                elif result.status_code == 404:
+                    print(f"Address {addr} not found, trying next variant...")
+                    time.sleep(0.75)
+                    continue
                 else:
                     status = result.status_code
                     error = result.reason
+                    print(f"API failed with: {status}, {error}")
                     self.logger.info(f"API failed with: {status}, {error}")
                     self.building = None
                     self.address = "ingen address info"
-                    print("ingen address info")
+                    break
             except requests.exceptions.RequestException as e:
+                print(f"API exception: {e}")
                 self.logger.info(f"API exception: {e}")
                 self.building = None
                 self.address = "ingen address info"
-        if self.building:
-            return self.building.__str__()
+                break
+
+        print("No matching address found after variants.")
         return self.address
 
             
@@ -73,21 +104,53 @@ class Building_specs:
     address: str 
 
 
-
+'''
 def search_for_address(prompt, buildings):
     pattern = re.compile(r"\b(?:bor\ på|address\ är|live\ at|live\ in|address\ is)\b\W+(\w+(?:\W+\w+){0,1})", re.IGNORECASE)
-    address = pattern.findall(prompt)
+    address_matches = pattern.findall(prompt)
 
-    if address:
-        req = f"http://:8001/buildings/single_filter?filter_name=epc_idadr&filter_value={address[0]}"
-        result = requests.get(req)
-        print(result.text)
-        print(address[0])
-        return result.text
-    else:
+    if not address_matches:
         print("No address found.")
-    return None
+        return None
 
+    base_address = address_matches[0]
+    print(f"Trying address: {base_address}")
+
+    def get_address_variant(address, offset):
+        # Assumes address format: "StreetName Number[Letter]"
+        match = re.match(r"(.+?)(\d+)([A-Za-z]*)$", address)
+        if not match:
+            return address  # fallback if format is unexpected
+        street, number, letter = match.groups()
+        try:
+            new_number = int(number) + offset
+            return f"{street}{new_number}{letter}"
+        except ValueError:
+            return address
+
+    attempts = [base_address, get_address_variant(base_address, 2), get_address_variant(base_address, -2)]
+    for addr in attempts:
+        req = f"http://:8001/buildings/single_filter?filter_name=epc_idadr&filter_value={addr}"
+        try:
+            result = requests.get(req, timeout=7)
+            print(f"API request for address: {addr}, status: {result.status_code}")
+            if result.status_code == 200:
+                print(result.text)
+                print(addr)
+                return result.text
+            elif result.status_code == 404:
+                print(f"Address {addr} not found, trying next variant...")
+                time.sleep(0.5)  # brief pause between retries
+            else:
+                print(f"API error: {result.status_code} {result.reason}")
+                break
+        except requests.exceptions.RequestException as e:
+            print(f"API exception: {e}")
+            break
+
+    print("No matching address found after variants.")
+    return None
+'''
 
 def main(prompt):
     #df = pd.read_csv("buildings.csv", sep=";", usecols=["IdAdr", "El_calc", "EgiVarme_calc", "EgenAntalKallarplan", "EgenAntalPlan", "EgenAntalTrapphus", "EgiEnergiklass2020_calc", "HuvudsakligUppvarmning_calc"], skipinitialspace=True)

@@ -178,8 +178,6 @@ class RedisQueueManager:
         for message in pubsub.listen():
             if message["type"] == "message":
                 event_data = json.loads(message["data"])
-                print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-                print(event_data)
                 thread_name = event_data.get("thread_name")
                 session_id_int = event_data.get("session_id_int")
                 self.process_thread(thread_name, session_id_int)
