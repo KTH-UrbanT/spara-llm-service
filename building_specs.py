@@ -33,12 +33,27 @@ class Building_specs:
         logging.basicConfig(level=logging.INFO)
     
     def update_address(self, prompt):
-        pattern = re.compile(r"\b(?:bor\ på|address\ är|live\ at|live\ in|address\ is|live\ on)\b\W+(\w+(?:\W+\w+){0,1})", re.IGNORECASE)
+        pattern = re.compile(r"\b(?:bor på|address är|live at|live in|address is|live on)\b\W+(\w+(?:\W+\w+){0,1})", re.IGNORECASE)
         address_matches = pattern.findall(prompt)
         print("updating address...")
-        if not address_matches or address_matches[0] == self.address:
-            return self.address
 
+        # 1. If regex does not match and there already is a spec, return self.building.__str__()
+        if not address_matches:
+            if self.building:
+                return self.building.__str__()
+            else:
+                return self.address
+
+        found_address = address_matches[0]
+
+        # 2. If regex matches and self.address matches the found address, return self.building.__str__()
+        if found_address == self.address:
+            if self.building:
+                return self.building.__str__()
+            else:
+                return self.address
+
+        # 3. If regex matches, address doesn't match current, try to fetch new spec
         def get_address_variant(address, offset):
             match = re.match(r"(.+?)(\d+)([A-Za-z]*)$", address)
             if not match:
@@ -50,10 +65,9 @@ class Building_specs:
             except ValueError:
                 return address
 
-        base_address = address_matches[0]
         host = os.getenv("ODEN_API_host")
         port = os.getenv("ODEN_API_port")
-        attempts = [base_address, get_address_variant(base_address, 2), get_address_variant(base_address, -2)]
+        attempts = [found_address, get_address_variant(found_address, 2), get_address_variant(found_address, -2)]
 
         for addr in attempts:
             req = f"https://{host}:{port}/api/v1/buildings/single_filter?filter_name=epc_idadr&filter_value={addr}"
@@ -66,14 +80,13 @@ class Building_specs:
                         spec = Spec(**data[0])
                         self.address = addr
                         self.building = spec
-                        print(self.address)
-                        print(spec.__str__())
+                        self.logger.info(self.address)
+                        self.logger.debug(spec.__str__())
+                        # 3. Success: return new spec
                         return self.building.__str__()
                     else:
                         print("API returned empty or invalid data:", data)
                         self.logger.info("API returned empty or invalid data")
-                        self.building = None
-                        self.address = "ingen address info"
                 elif result.status_code == 404:
                     print(f"Address {addr} not found, trying next variant...")
                     time.sleep(0.75)
@@ -83,16 +96,15 @@ class Building_specs:
                     error = result.reason
                     print(f"API failed with: {status}, {error}")
                     self.logger.info(f"API failed with: {status}, {error}")
-                    self.building = None
-                    self.address = "ingen address info"
                     break
             except requests.exceptions.RequestException as e:
                 print(f"API exception: {e}")
                 self.logger.info(f"API exception: {e}")
-                self.building = None
-                self.address = "ingen address info"
                 break
 
+        # 4. If all attempts fail, set to "ingen address info" and return it
+        self.building = None
+        self.address = "ingen address info"
         print("No matching address found after variants.")
         return self.address
 
@@ -106,7 +118,6 @@ class Building_specs:
 
 '''
 def search_for_address(prompt, buildings):
-    pattern = re.compile(r"\b(?:bor\ på|address\ är|live\ at|live\ in|address\ is)\b\W+(\w+(?:\W+\w+){0,1})", re.IGNORECASE)
     address_matches = pattern.findall(prompt)
 
     if not address_matches:
@@ -118,7 +129,6 @@ def search_for_address(prompt, buildings):
 
     def get_address_variant(address, offset):
         # Assumes address format: "StreetName Number[Letter]"
-        match = re.match(r"(.+?)(\d+)([A-Za-z]*)$", address)
         if not match:
             return address  # fallback if format is unexpected
         street, number, letter = match.groups()

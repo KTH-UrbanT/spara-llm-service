@@ -127,7 +127,7 @@ class RetrievalGeneration:
         # Append the user's question along with the context from the retrieved documents to the conversation
         new_conversation.append({
             "role": "user",
-            "content": question + "\n Context : " + content_from_doc +
+            "content": question + "\n Context : " + content_from_doc + "\n ODEN data: " +
                (self.buildings.update_address(question) if (session_id_int % 2 == 0) else "")
             })
 
