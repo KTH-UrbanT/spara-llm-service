@@ -1,0 +1,832 @@
+[
+    {
+      "schema": "dbo",
+      "table": "buildingaddress",
+      "col_ordinal": 1,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "buildingaddress",
+      "col_ordinal": 2,
+      "column": "building_name",
+      "data_type": "text",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildingaddress",
+      "col_ordinal": 3,
+      "column": "address",
+      "data_type": "text",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 1,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 2,
+      "column": "numberOfApartments",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 3,
+      "column": "numberOfTenullts",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 4,
+      "column": "netAreaResidential",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 5,
+      "column": "buildingName",
+      "data_type": "text",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 6,
+      "column": "netAreaNonResidential",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 7,
+      "column": "netAreaHeated",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 8,
+      "column": "declaredEnergyClass",
+      "data_type": "text",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "buildings",
+      "col_ordinal": 9,
+      "column": "EnergyClassKwhM2",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 1,
+      "column": "id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 2,
+      "column": "electricity_used_for_property",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 3,
+      "column": "electricity_used_for_property_heating",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 4,
+      "column": "electricity_used_for_taphotwater",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 5,
+      "column": "electricity_used_for_apartments",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 6,
+      "column": "electricity_used_for_tenullts",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 7,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "electricity_enduses",
+      "col_ordinal": 8,
+      "column": "electricity_used_for_charging_station",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 1,
+      "column": "id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 2,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 3,
+      "column": "district_heating",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 4,
+      "column": "ground_source_heatpump_with_exhaust_air_recovery",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 5,
+      "column": "ground_source_heatpump_without_exahaust_air_recovery",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 6,
+      "column": "exhaust_air_recovery",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 7,
+      "column": "solar_thermal_panels",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 8,
+      "column": "district_cooling_production",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 9,
+      "column": "boiler_reserve",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 10,
+      "column": "cooling_production",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "hvac_systems",
+      "col_ordinal": 11,
+      "column": "hvac_systems_installed_in_tenullts",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 1,
+      "column": "uuid",
+      "data_type": "uuid",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 2,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 3,
+      "column": "year",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 4,
+      "column": "month",
+      "data_type": "text",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 5,
+      "column": "electricity_use_property",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 6,
+      "column": "electricity_use_charging_station",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 7,
+      "column": "electricity_use_lanudry_room",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 8,
+      "column": "electricity_use_water_heating_and_tap_hot_water",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 9,
+      "column": "electricity_use_apartments",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 10,
+      "column": "electricity_produced_pv",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 11,
+      "column": "electricity_excess_pv",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 12,
+      "column": "hot_water_produced_solar_thermal",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 13,
+      "column": "electricity_purchased",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 14,
+      "column": "district_heating_purchased",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 15,
+      "column": "district_cooling_purchased",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "meterings",
+      "col_ordinal": 16,
+      "column": "electricity_sold",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 1,
+      "column": "id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 2,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 3,
+      "column": "indoor_temperature_sep_may",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 4,
+      "column": "hotwater_consumption_m3",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 5,
+      "column": "cold_water_consumption_m3",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 6,
+      "column": "scop_seasonal_coefficient_of_performance",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 7,
+      "column": "hotwater_source_for_towel_heater",
+      "data_type": "boolean",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "normalization_values",
+      "col_ordinal": 8,
+      "column": "floor_heating_in_number_of_apartments",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 1,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 2,
+      "column": "year",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 3,
+      "column": "deduction_household_heat_electricity",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 4,
+      "column": "deduction_household_heat_district_heating",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 5,
+      "column": "normal_household_eui",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 6,
+      "column": "tap_hotwater_m3",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 7,
+      "column": "heating_constant_kwh_m3",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 8,
+      "column": "energy_for_thw",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 9,
+      "column": "deduction_thw_district_heating",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 10,
+      "column": "total_property_energy_electricity",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 11,
+      "column": "deduction_pv",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 12,
+      "column": "deduction_electricity_indoor_temp",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 13,
+      "column": "energy_performance",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 14,
+      "column": "created_at",
+      "data_type": "timestamp without time zone",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 15,
+      "column": "updated_at",
+      "data_type": "timestamp without time zone",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 16,
+      "column": "deduction_thw_electricity",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 17,
+      "column": "primary_energy_district_cooling",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 18,
+      "column": "primary_energy_district_heating",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 19,
+      "column": "primary_energy_electricity",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 20,
+      "column": "total_deduction",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 21,
+      "column": "household_electricity_for_building_heat",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 22,
+      "column": "difference_household_heat_eui",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 23,
+      "column": "deduction_district_heating_indoor_temp",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "results",
+      "col_ordinal": 24,
+      "column": "deducted_property_district_heating_use",
+      "data_type": "double precision",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "users",
+      "col_ordinal": 1,
+      "column": "user_id",
+      "data_type": "integer",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": true
+    },
+    {
+      "schema": "dbo",
+      "table": "users",
+      "col_ordinal": 2,
+      "column": "email",
+      "data_type": "text",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "users",
+      "col_ordinal": 3,
+      "column": "password",
+      "data_type": "text",
+      "nullable": "NO",
+      "default_definition": null,
+      "is_primary_key": false
+    },
+    {
+      "schema": "dbo",
+      "table": "users",
+      "col_ordinal": 4,
+      "column": "building_id",
+      "data_type": "integer",
+      "nullable": "YES",
+      "default_definition": null,
+      "is_primary_key": false
+    }
+  ]

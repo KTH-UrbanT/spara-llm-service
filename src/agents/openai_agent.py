@@ -75,39 +75,32 @@ class OpenAIResponseAgent:
 
     def _build_messages(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]):
         messages = [{"role": "system", "content": self.prompt_template}]
-        for msg in message_list:
-            if 'role' in msg and 'content' in msg:
-                messages.append({'role': msg['role'], 'content': msg['content']})
+        for msg in (message_list or []):
+            role = msg.get("role")
+            content = msg.get("content")
+            if isinstance(role, str) and isinstance(content, str):
+                messages.append({"role": role, "content": content})
             else:
-                logger.warning(f"Skipping malformed message: {msg}")
-        if not messages or messages[-1].get('content') != last_message or messages[-1].get('role') != 'user':
+                logger.warning(f"Skipping malformed message: {msg!r}")
+        # ensure we have a proper user turn at the end
+        if not messages or messages[-1]["role"] != "user" or messages[-1]["content"] != last_message:
             messages.append({"role": "user", "content": last_message})
         return messages
 
     def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
 
-        if not isinstance(last_message, str) or not isinstance(message_list, list):
-            logger.warning("Invalid inputs to generate_response. Expecting string and list.")
-            return None
+        # be forgiving about types
+        if not isinstance(last_message, str):
+            last_message = "" if last_message is None else str(last_message)
+        if not isinstance(message_list, list):
+            message_list = []
 
         messages = self._build_messages(last_message, message_list)
-
-        # Base params shared by both families
-        params = {
-            "model": self.deployment,
-            "messages": messages,
-            "stream": False,
-        }
-
-        # Configure per family
+        params = {"model": self.deployment, "messages": messages, "stream": False}
         if self._is_o4_family():
-            # o3/o4: use max_completion_tokens; keep it simple
-            params["max_completion_tokens"] = 800
-            # params["temperature"] = 0.2
-            # Most o4 deployments ignore or reject legacy sampling knobs; do not send top_p/frequency/presence
+            params["max_completion_tokens"] = 4000
         else:
-            # Legacy GPT-4/35 style: use max_tokens and classic sampling params
             params["max_tokens"] = 800
             params["temperature"] = 0.2
             params["top_p"] = 0.23
@@ -144,6 +137,7 @@ class OpenAIResponseAgent:
             return "Error: An unexpected issue occurred."
 
         try:
+            
             response_content = response.choices[0].message.content
         except Exception:
             response_content = None

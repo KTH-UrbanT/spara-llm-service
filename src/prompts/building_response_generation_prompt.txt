@@ -13,3 +13,5 @@ Context:
 Generate a response:
 
 if the address of the building is not provided, ask for the address. 
+
+epc_egienergiklass is the energ class of the building.

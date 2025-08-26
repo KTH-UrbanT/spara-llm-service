@@ -17,6 +17,7 @@ def _normalize_response(
     intent: Optional[str] = None,
     agents_used: Optional[List[Dict[str, Any]]] = None,
     vector_sources: Optional[List[Any]] = None,
+    metadata : Dict
 ) -> Dict[str, Any]:
     """
     Ensure a consistent return schema across all routes.
@@ -28,7 +29,7 @@ def _normalize_response(
         "intent": intent,                               # None when not applicable
         "agents_used": agents_used or [],               # [] when not applicable
         "vector_sources": vector_sources or [],         # [] when not applicable
-    }
+    } , metadata
 
 
 class AgentRouter:
@@ -55,6 +56,7 @@ class AgentRouter:
                 classification=classified,
                 agent_answered="uncertain",
                 intent=None,
+                metadata = metadata
             )
 
         if classified == "generic":
@@ -64,11 +66,12 @@ class AgentRouter:
                 classification=classified,
                 agent_answered="generic",
                 intent=None,
+                metadata = metadata
             )
 
         elif classified == "building_specific":
             # BuildingAgent already returns normalized diagnostics (intent, agent_answered, etc.)
-            out = self.building.handle_building_query(last_message, messages, metadata, thread_id)
+            out , metadata_updated  = self.building.handle_building_query(last_message, messages, metadata, thread_id)
             # Ensure any missing keys are filled so schema stays consistent
             return _normalize_response(
                 content=out.get("content", "No output was generated."),
@@ -77,6 +80,7 @@ class AgentRouter:
                 intent=out.get("intent"),
                 agents_used=out.get("agents_used"),
                 vector_sources=out.get("vector_sources"),
+                metadata=metadata_updated
             )
 
         elif classified == "cluster":
@@ -88,6 +92,7 @@ class AgentRouter:
                 classification=classified,
                 agent_answered="cluster",
                 intent=None,
+                metadata = metadata
             )
 
         elif classified == "conversational":
@@ -97,6 +102,7 @@ class AgentRouter:
                 classification=classified,
                 agent_answered="conversationalist",
                 intent=None,
+                metadata = metadata
             )
 
         # Fallback
@@ -105,4 +111,5 @@ class AgentRouter:
             classification=str(classified),
             agent_answered="unknown",
             intent=None,
+            metadata = metadata
         )

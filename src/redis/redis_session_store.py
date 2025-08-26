@@ -13,4 +13,15 @@ def get_session_state(thread_id: str) -> dict:
 
 def update_session_state(thread_id: str, state: dict):
     key = f"session:{thread_id}"
-    r.set(key, json.dumps(state), ex=3600)  # expires after 1 hour (optional)
+    raw = r.get(key)
+    try:
+        existing = json.loads(raw) if raw else []
+    except Exception:
+        existing = []
+
+    if not isinstance(existing, list):
+        existing = [existing] if existing else []
+
+    existing.append(state)
+    r.set(key, json.dumps(existing))  # expires after 1 hour (optional)
+

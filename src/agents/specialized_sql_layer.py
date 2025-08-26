@@ -1,421 +1,375 @@
+"""
+Specialized SQL Layer — simplified & always-executes via hammarby_data.
+
+Environment (minimal):
+- OPENAI_API_TYPE: "azure" | "openai" (default: "openai")
+- OPENAI_API_KEY:  API key for the selected provider
+- AZURE_ENDPOINT:  required when OPENAI_API_TYPE=azure (e.g., https://myres.openai.azure.com)
+
+Optional:
+- OPENAI_API_VERSION: Azure API version (default: 2025-01-01-preview)
+- AZURE_DEPLOYMENT:  Azure *deployment name* (default: "gpt-4o-mini")
+- OPENAI_MODEL:      OpenAI model name (default: "gpt-4o-mini")
+- SCHEMA_JSON_PATH:  (diagnostics only)
+- SPEC_SQL_PROMPT_PATH: path to specialized_sql_prompt.txt; if missing, fallback prompt below is used.
+
+Behavior:
+- route(state) -> ("answer_query", {"question": <str>, "building_id": <str|None>})
+- execute("answer_query", ...) :
+    1) Ask model for ONE SQL statement (read or write).
+    2) ALWAYS call src.database.hammarby_data.query_executor(sql).
+       - SELECT/CTE -> pandas.DataFrame -> data: list[dict]
+       - INSERT/UPDATE/DELETE -> returns a short string message -> message: str
+       - None -> error
+    3) Return dict with ok, sql, and data/message.
+"""
+
+from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
+from typing import Any, Dict, Tuple
 import json
-import time
-import logging
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union , Sequence
-import random
+from collections import defaultdict
 
-import pandas as pd
-from dotenv import load_dotenv
-from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
+# OpenAI clients (1.x SDK)
+try:
+    from openai import OpenAI, AzureOpenAI  # type: ignore
+except Exception:  # pragma: no cover
+    OpenAI = object  # type: ignore
+    AzureOpenAI = object  # type: ignore
 
-load_dotenv()
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+DEFAULT_PROMPT = (
+    "You are the SQL brain for the Hammarby energy/building dataset.\n\n"
+    "GOAL\n"
+    "- Given a natural-language question and optional metadata (like building_id), "
+    "produce exactly ONE SQL statement that answers or performs the requested operation.\n\n"
+    "RULES\n"
+    "- Return ONLY the SQL statement. No backticks, no comments, no JSON, no explanations.\n"
+    "- You MAY generate reads (SELECT/CTE) or writes (INSERT/UPDATE/DELETE). "
+    "Use writes only when the user intent clearly requires a change.\n"
+    "- Prefer safe, minimal-impact writes. Never drop or truncate tables unless the user explicitly demands it.\n"
+    "- For large reads, include a reasonable limit (e.g., LIMIT 100 for Postgres or TOP 100 for SQL Server) "
+    "unless the user asks for all rows.\n"
+    "- Use the schema and naming conventions consistent with the project (e.g., dbo.<table> if applicable).\n"
+    "- If a building_id is provided in metadata, use it to scope the query when relevant.\n"
+    "- If the request is ambiguous, choose a reasonable interpretation (e.g., 'latest' -> ORDER BY time DESC + limit).\n"
+    "- Do not invent nonexistent tables or columns.\n\n"
+    "OUTPUT\n"
+    "- ONE and only ONE SQL statement as plain text.\n"
 )
 
-# Try to import a default query executor (your DB connector).
-# You can also inject a callable in __init__(query_executor=...).
-_DEFAULT_EXECUTOR = None
-try:
-    # Adjust these imports to match your actual connector module path
-    from src.database.hammarby_data import query_executor as _DEFAULT_EXECUTOR  # type: ignore
-except Exception:
-    _DEFAULT_EXECUTOR = None
-
-
-def _df_to_records(df: Optional[pd.DataFrame]) -> Optional[List[Dict[str, Any]]]:
-    if df is None:
-        return None
-    try:
-        # Ensure native Python types for JSON serializability
-        return json.loads(df.to_json(orient="records"))
-    except Exception:
-        return df.to_dict(orient="records")
-
-
-def _sanitize_literal(value: str, pattern: str) -> str:
-    r"""
-    Return a safely quoted SQL literal if it matches the allowed pattern,
-    otherwise raise ValueError.
-
-    pattern examples:
-      - r'^[A-Za-z0-9_-]{1,64}$' for building_id
-      - r'^\d{4}-\d{2}-\d{2}$' for YYYY-MM-DD
-    """
-    if value is None:
-        raise ValueError("Missing required value.")
-    if not re.match(pattern, str(value)):
-        raise ValueError(f"Value '{value}' failed safety check.")
-    return f"'{value}'"
-
-
-def _only_selects(sql: str) -> bool:
-    """
-    Enforce the final SQL is a single SELECT (no mutations, no multi-statement).
-    Also forbid referencing system catalogs (except INFORMATION_SCHEMA in discovery stage,
-    which we don't run in the final execution anyway).
-    """
-    s = sql.strip().strip(";")
-    # Must start with SELECT
-    if not re.match(r"(?is)^\s*select\b", s):
-        return False
-    # Disallow dangerous keywords
-    forbidden = r"(?is)\b(insert|update|delete|merge|drop|alter|create|exec|execute|;|--|/\*)"
-    if re.search(forbidden, s):
-        return False
-    # Disallow system tables in final execution
-    if re.search(r"(?is)\b(sys\.|msdb\.|master\.|tempdb\.|xp_)\b", s):
-        return False
-    return True
+@dataclass
+class _Conf:
+    api_type: str
+    endpoint: str | None
+    api_key: str
+    model_or_deployment: str
+    api_version: str | None
+    is_azure: bool
 
 
 class SpecializedSQLLayer:
-    """
-    Builds SAFE read-only T-SQL using an LLM (gpt-35-turbo via Azure OpenAI),
-    executes it via the provided `query_executor(query: str) -> Optional[pd.DataFrame]`,
-    and returns normalized results.
+    def __init__(self, *, execute_query: bool = True) -> None:
+        # execute_query is ignored (we always execute), kept for compatibility with your test harness
+        self._conf = self._load_conf()
+        self._client = self._init_client(self._conf)
+        self._system_prompt = self._load_prompt()
+        self.schema_json = os.getenv("SCHEMA_JSON_PATH", "src/config/schema.json")
+        self._schema_str = self._load_and_format_schema(self.schema_json, max_chars=8000)
+        print(self._schema_str)
 
-    Public API (kept close to your generic layer style):
-        - route(state) -> Tuple[str, Dict[str, Any]]
-        - execute(op, kwargs) -> Dict[str, Any]
+    # ---------- Config & Client ----------
+    def _load_and_format_schema(self, path: str, max_chars: int = 8000) -> str:
+        """
+        Load schema.json (array of {schema, table, column, data_type, ...}) and
+        condense to a compact prompt string like:
+        dbo.buildings(building_id int PK, buildingName text, ...)
+        dbo.meterings(uuid uuid PK, building_id int, year int, ...)
+        Duplicates are removed; columns are ordered by col_ordinal when available.
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+        except Exception as e:
+            return f"(schema not available: {e})"
 
-    Typical usage in your agent node:
-        op, kwargs = specialized_layer.route(state)
-        result = specialized_layer.execute(op, kwargs)
-        if result["ok"]:
-            # use result["data"]
-    """
+        # Group columns by (schema, table)
+        tables: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for r in rows if isinstance(rows, list) else []:
+            sch = str(r.get("schema") or "dbo")
+            tbl = str(r.get("table") or "unknown")
+            # Deduplicate duplicate rows (appearing in your file) by (column, data_type)
+            col = str(r.get("column") or "")
+            if not col:
+                continue
+            col_key = (col, str(r.get("data_type") or ""))
+            # Keep latest occurrence by replacing same (col, dtype); we also track ordinal
+            existing = { (c.get("column"), c.get("data_type")): i for i, c in enumerate(tables[(sch, tbl)]) }
+            idx = existing.get(col_key)
+            if idx is None:
+                tables[(sch, tbl)].append(r)
+            else:
+                tables[(sch, tbl)][idx] = r
 
-    DEFAULT_PROMPT_RELATIVE_PATH = os.path.join("..", "prompts", "specialized_sql_prompt.txt")
-    
+        # Build lines like: dbo.table(col type [PK], ...)
+        lines: list[str] = []
+        for (sch, tbl), cols in sorted(tables.items()):
+            # Order by col_ordinal if present, else by column name
+            def _ord(x):
+                try:
+                    return int(x.get("col_ordinal") or 10**6)
+                except Exception:
+                    return 10**6
+            cols_sorted = sorted(cols, key=lambda x: (_ord(x), str(x.get("column"))))
 
-    def __init__(
-        self,
-        prompt_path: Optional[str] = None,
-        query_executor: Optional[Callable[[str], Optional[pd.DataFrame]]] = None,
-    ) -> None:
-        # Load prompt
-        self.prompt_template = self._load_prompt(prompt_path)
+            parts = []
+            for c in cols_sorted:
+                name = str(c.get("column"))
+                dtype = str(c.get("data_type") or "").replace(" without time zone", "")
+                pk = c.get("is_primary_key") is True
+                piece = f"{name} {dtype}" if dtype else name
+                if pk:
+                    piece += " PK"
+                parts.append(piece)
 
-        # Configure DB executor
-        self.query_executor = query_executor or _DEFAULT_EXECUTOR
-        if not callable(self.query_executor):
-            raise ValueError(
-                "No valid query_executor supplied and no default could be imported. "
-                "Pass query_executor=... that accepts a SQL string and returns a pandas DataFrame (for SELECT)."
+            line = f"{sch}.{tbl}(" + ", ".join(parts) + ")"
+            lines.append(line)
+
+        text = "\n".join(lines)
+        if len(text) > max_chars:
+            # Truncate softly to avoid token bloat
+            text = text[:max_chars].rsplit("\n", 1)[0] + "\n... (schema truncated)"
+        return text or "(schema empty)"
+
+    def _load_conf(self) -> _Conf:
+        api_type = os.getenv("OPENAI_API_TYPE", "openai").strip().lower()
+        if api_type not in {"azure", "openai"}:
+            raise ValueError(f"OPENAI_API_TYPE must be 'azure' or 'openai' (got {api_type!r})")
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is required.")
+
+        if api_type == "azure":
+            endpoint = os.getenv("AZURE_ENDPOINT")
+            if not endpoint:
+                raise RuntimeError("AZURE_ENDPOINT is required when OPENAI_API_TYPE=azure.")
+            api_version = os.getenv("OPENAI_API_VERSION", "2025-01-01-preview")
+            deployment = os.getenv("AZURE_DEPLOYMENT", "gpt-4o-mini")
+            return _Conf(
+                api_type=api_type,
+                endpoint=endpoint,
+                api_key=api_key,
+                model_or_deployment=deployment,
+                api_version=api_version,
+                is_azure=True,
             )
 
-        # Initialize Azure OpenAI
-        self._initialize_openai_client()
-
-        # Known/allowed schema context (kept minimal and safe)
-        # You can expand with more domain hints as needed.
-        self.allowed_tables = [
-            "dbo.buildings",
-            "dbo.users",
-            "dbo.electricity_enduses",
-            "dbo.hvac_systems",
-            "dbo.normalization_values",
-            "dbo.meterings",
-            "dbo.results",
-        ]
-        self.fk_notes = [
-            "All child tables reference buildings.building_id.",
-            "Primary building key: buildings.building_id.",
-        ]
-        self.max_retries = int(os.getenv("AZURE_OAI_MAX_RETRIES", "5"))
-
-    # -------------------------
-    # Initialization utilities
-    # -------------------------
-    def _load_prompt(self, path: Optional[str]) -> str:
-        if path is None:
-            script_dir = os.path.dirname(__file__)
-            full_path = os.path.join(script_dir, self.DEFAULT_PROMPT_RELATIVE_PATH)
-        else:
-            full_path = path
-
-        if not os.path.exists(full_path):
-            raise ValueError(f"Prompt file not found at: {full_path}")
-
-        with open(full_path, "r", encoding="utf-8") as f:
-            return f.read()
-    def _chat_with_retries(self, messages: Sequence[Dict[str, Any]], **kwargs):
-        for attempt in range(self.max_retries):
-            try:
-                return self.client.chat.completions.create(
-                    model=self.deployment,
-                    messages=messages,
-                    **kwargs,
-                )
-            except (RateLimitError, APIStatusError) as e:
-                # Only backoff on 429/5xx
-                status = getattr(e, "status_code", None) or getattr(e, "status", None)
-                if isinstance(e, RateLimitError) or status in (429, 500, 502, 503, 504):
-                    retry_after = 0
-                    resp = getattr(e, "response", None)
-                    if resp:
-                        # Azure usually sets Retry-After (seconds)
-                        retry_after = int(resp.headers.get("retry-after", "0") or "0")
-                    # exponential backoff with jitter, while respecting Retry-After
-                    backoff = max(retry_after, min(2 ** attempt, 30)) + random.random()
-                    time.sleep(backoff)
-                    continue
-                raise  # non-rate-limit error: bubble up
-    def _initialize_openai_client(self) -> None:
-        """
-        Reads env vars and creates AzureOpenAI client.
-        Falls back to GENERIC_* envs if SPECIALIZED_* are not set.
-        """
-        endpoint = os.getenv("AZURE_ENDPOINT")
-        api_key = os.getenv("OPENAI_API_KEY")
-
-        deployment = (
-            os.getenv("SPECIALIZED_SQL_DEPLOYMENT_NAME")
-            or os.getenv("GENERIC_MODEL_DEPLOYMENT_NAME")
-        )
-        api_version = (
-            os.getenv("SPECIALIZED_SQL_API_VERSION")
-            or os.getenv("GENERIC_MODEL_API_VERSION")
-        )
-
-        missing = []
-        if not endpoint:
-            missing.append("AZURE_ENDPOINT")
-        if not api_key:
-            missing.append("OPENAI_API_KEY")
-        if not deployment:
-            missing.append("SPECIALIZED_SQL_DEPLOYMENT_NAME (or GENERIC_MODEL_DEPLOYMENT_NAME)")
-        if not api_version:
-            missing.append("SPECIALIZED_SQL_API_VERSION (or GENERIC_MODEL_API_VERSION)")
-        if missing:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-
-        self.deployment = deployment
-        self.client = AzureOpenAI(
-            azure_endpoint=endpoint,
+        # OpenAI (non-Azure)
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        return _Conf(
+            api_type=api_type,
+            endpoint=None,
             api_key=api_key,
-            api_version=api_version,
+            model_or_deployment=model,
+            api_version=None,
+            is_azure=False,
         )
-        logger.info(f"Specialized SQL model: {self.deployment} (API {api_version})")
 
-    # -------------------------
-    # Public interface
-    # -------------------------
+    def _init_client(self, conf: _Conf):
+        if conf.is_azure:
+            try:
+                return AzureOpenAI(
+                    azure_endpoint=conf.endpoint,
+                    api_key=conf.api_key,
+                    api_version=conf.api_version,
+                )
+            except Exception as e:  # pragma: no cover
+                raise RuntimeError(
+                    "Failed to initialize AzureOpenAI client. "
+                    "Check AZURE_ENDPOINT / OPENAI_API_KEY / OPENAI_API_VERSION."
+                ) from e
+        else:
+            try:
+                return OpenAI(api_key=conf.api_key)
+            except Exception as e:  # pragma: no cover
+                raise RuntimeError("Failed to initialize OpenAI client. Check OPENAI_API_KEY.") from e
+
+    def _load_prompt(self) -> str:
+        path = os.getenv("SPEC_SQL_PROMPT_PATH")
+        if not path:
+            # default to a file named specialized_sql_prompt.txt next to this module
+            here = os.path.dirname(__file__)
+            path = os.path.join("./src/prompts/specialized_sql_prompt.txt")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                txt = f.read().strip()
+                return txt if txt else DEFAULT_PROMPT
+        except Exception:
+            return DEFAULT_PROMPT
+        
+
+
+    # ---------- Routing ----------
+
     def route(self, state: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        """
-        Prepare an 'operation' and kwargs. The op is a single verb since the LLM
-        will decide the exact SQL under constraints.
-        """
-        last_message: str = state.get("last_message", "") or ""
-        ctx = state.get("context", {}) or {}
-        ents = ctx.get("entities") or []
-        md = state.get("metadata", {}) or {}
+        last_message = (state or {}).get("last_message") or ""
+        metadata = (state or {}).get("metadata") or {}
+        building_id = metadata.get("building_id")
+        address = metadata.get("address")  # <-- NEW
 
-        return "llm_sql", {
-            "question": last_message,
-            "entities": ents,
-            "address": md.get("address"),
-            "building_id": md.get("building_id"),
+        kwargs = {
+            "question": str(last_message),
+            "building_id": None if building_id is None else str(building_id),
+            "address": None if address is None else str(address),   # <-- NEW
         }
+        return "answer_query", kwargs
+
+    # ---------- Execution ----------
 
     def execute(self, op: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute the requested op. Currently supports only 'llm_sql'.
-        Returns a normalized dict: { ok, data, message }.
-        """
-        if op != "llm_sql":
-            return {"ok": False, "data": None, "message": f"Unsupported op '{op}'."}
+        if op != "answer_query":
+            return {"ok": False, "message": f"Unknown operation: {op}"}
 
-        try:
-            start = time.time()
-            plan = self._synthesize_sql_plan(
-                question=str(kwargs.get("question") or ""),
-                entities=kwargs.get("entities") or [],
-                building_id=kwargs.get("building_id"),
-                address=kwargs.get("address"),
-            )
-            logger.debug(f"LLM plan: {json.dumps(plan, ensure_ascii=False)}")
+        # inside SpecializedSQLLayer.execute(...)
+        question = kwargs.get("question", "")
+        building_id = kwargs.get("building_id")
+        address = kwargs.get("address")
 
-            # Basic validation
-            sql_template: str = (plan.get("sql") or "").strip()
-            expects_single_row: bool = bool(plan.get("expects_single_row", False))
+        meta_lines = []
+        if building_id is not None:
+            meta_lines.append(f"building_id={building_id}")
+        if address is not None:
+            meta_lines.append(f"address={address!r}")
+        metadata_block = " | ".join(meta_lines) if meta_lines else "none"
 
-            if not sql_template:
-                return {"ok": False, "data": None, "message": "LLM did not return SQL."}
-
-            # Substitute placeholders safely
-            final_sql = self._render_sql(sql_template, plan, kwargs)
-
-            # Final safety checks
-            if not _only_selects(final_sql):
-                return {"ok": False, "data": None, "message": "Unsafe SQL rejected."}
-
-            # Execute
-            df = self.query_executor(final_sql)
-            data = _df_to_records(df)
-
-            if data is None:
-                return {"ok": False, "data": None, "message": "Query executed but returned no data or failed."}
-
-            # Optionally collapse to single row
-            if expects_single_row and isinstance(data, list):
-                data = data[0] if data else None
-
-            elapsed = time.time() - start
-            logger.info(f"Specialized SQL executed in {elapsed:.2f}s")
-            return {"ok": True, "data": data, "message": "ok"}
-
-        except (APIConnectionError, RateLimitError, APIStatusError) as e:
-            logger.error(f"Azure OpenAI error: {e}", exc_info=True)
-            return {"ok": False, "data": None, "message": f"llm_error: {e}"}
-        except ValueError as e:
-            # Likely from sanitization or missing values
-            return {"ok": False, "data": None, "message": f"input_error: {e}"}
-        except Exception as e:
-            logger.exception("Unexpected error in execute")
-            return {"ok": False, "data": None, "message": f"unexpected_error: {e}"}
-
-    # -------------------------
-    # Core LLM flows
-    # -------------------------
-    def _synthesize_sql_plan(
-        self,
-        question: str,
-        entities: List[Union[str, Dict[str, Any]]],
-        building_id: Optional[str],
-        address: Optional[str],
-    ) -> Dict[str, Any]:
-        """
-        Calls the Azure OpenAI chat completion with a structured system prompt
-        and a JSON instruction. Returns a dict with fields:
-           - sql: str (contains {{BUILDING_ID}} / {{DATE_FROM}} / {{DATE_TO}} placeholders if relevant)
-           - expects_single_row: bool
-           - rationale: str
-           - placeholders: { "BUILDING_ID": "required|optional", "DATE_FROM": "...", ...}
-        """
-        schema_payload = {
-            "allowed_tables": self.allowed_tables,
-            "foreign_keys": self.fk_notes,
-            # Small domain hints (SAFE). Expand as your DB grows.
-            "domain_hints": [
-                "Common building-scoped key: building_id",
-                "results often contains energy KPIs like energy class and yearly kWh aggregates",
-                "hvac_systems may contain heating/ventilation system info",
-                "meterings may contain time-series kWh with timestamps",
-            ],
-        }
-
-        user_payload = {
-            "question": question,
-            "entities": entities,
-            "known_values": {
-                "building_id": building_id,
-                "address": address,
-            },
-            "schema": schema_payload,
-            "constraints": {
-                "read_only": True,
-                "dialect": "T-SQL (SQL Server)",
-                "max_rows": 200,
-                "require_building_scope_if_relevant": True,
-            },
-        }
-
-        messages = [
-            {"role": "system", "content": self.prompt_template},
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-        ]
-
-        # completion = self.client.chat.completions.create(
-        #     model=self.deployment,
-        #     messages=messages,
-        #     temperature=0.1,
-        #     top_p=0.2,
-        #     max_tokens=500,
-        # )
-        completion = self._chat_with_retries(
-            messages,
-            temperature=0.1,
-            top_p=0.2,
-            max_tokens=300,   # see next section
+        combined_system = (
+            self._system_prompt.strip()
+            + "\n\nSCHEMA:\n"
+            + (self._schema_str or "(schema not available)")
+            + "\n\nMETADATA:\n"
+            + metadata_block
         )
 
-        content = completion.choices[0].message.content or ""
+        messages = [
+            {"role": "system", "content": combined_system},
+            {"role": "user", "content": str(question)},
+        ]
 
-        # Expect JSON; if it's wrapped in markdown, extract code block.
-        content_stripped = content.strip()
-        if "```" in content_stripped:
-            # Try to extract first json or sql-json block
-            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content_stripped, flags=re.S | re.M)
-            if m:
-                content_stripped = m.group(1)
+
+        # Ask the model for ONE SQL statement
+        try:
+            resp = self._client.chat.completions.create(
+                model=self._conf.model_or_deployment,
+                messages=messages,
+                temperature=0.0,
+                top_p=1.0,
+                max_tokens=600,
+            )
+        except Exception as e:
+            msg = str(e)
+            if self._conf.is_azure and any(t in msg for t in ["401", "Unauthorized", "authorization"]):
+                msg += (
+                    "\nHint: Azure mode detected. Verify OPENAI_API_KEY is your Azure key, "
+                    f"AZURE_ENDPOINT='{self._conf.endpoint}', and that AZURE_DEPLOYMENT="
+                    f"'{self._conf.model_or_deployment}' exists."
+                )
+            return {"ok": False, "message": f"Model error: {msg}"}
 
         try:
-            plan = json.loads(content_stripped)
+            content = resp.choices[0].message.content  # type: ignore[attr-defined]
         except Exception:
-            # Fallback: try to locate "sql": "..." manually
-            sql_match = re.search(r'"sql"\s*:\s*"([^"]+)"', content_stripped, flags=re.S)
-            plan = {}
-            if sql_match:
-                plan["sql"] = sql_match.group(1)
+            content = str(resp)
 
-        if not isinstance(plan, dict):
-            plan = {}
+        sql = self._extract_sql(content)
+        if not sql:
+            return {"ok": False, "message": "Model did not return SQL."}
 
-        # Ensure minimal keys
-        plan.setdefault("expects_single_row", False)
-        plan.setdefault("rationale", "")
-        plan.setdefault("placeholders", {})
+        # ALWAYS execute via hammarby_data
+        try:
+            db = self._safe_import_hammarby()
+        except Exception as e:
+            return {"ok": False, "message": f"Import error: {e}", "sql": sql}
 
-        return plan
+        try:
+            result = db.query_executor(sql)  # SELECT -> DataFrame; writes -> str; errors -> None
+        except Exception as e:
+            return {"ok": False, "message": f"DB error: {e}", "sql": sql}
 
-    def _render_sql(self, sql_template: str, plan: Dict[str, Any], kwargs: Dict[str, Any]) -> str:
+        # Normalize result
+        try:
+            import pandas as pd  # type: ignore
+        except Exception:
+            pd = None  # type: ignore
+
+        if result is None:
+            return {"ok": False, "message": "DB returned no result.", "sql": sql}
+
+        # If it's a pandas DataFrame (read query)
+        if (pd is not None) and hasattr(result, "to_dict"):
+            try:
+                data = result.to_dict(orient="records")  # type: ignore
+                return {"ok": True, "data": data, "sql": sql}
+            except Exception:
+                pass  # fall through if not a real DF
+
+        # If it's a string (write queries return a message)
+        if isinstance(result, str):
+            return {"ok": True, "message": result, "sql": sql}
+
+        # Fallback: try to coerce iterables of rows
+        try:
+            data = list(result)  # may raise
+            return {"ok": True, "data": data, "sql": sql}
+        except Exception:
+            # As a last resort, just stringify it
+            return {"ok": True, "message": str(result), "sql": sql}
+
+    # ---------- Helpers ----------
+
+    @staticmethod
+    def _safe_import_hammarby():
+        # Lazy import so the module can be used without DB in other contexts.
+        try:
+            from src.database import hammarby_data as db  # type: ignore
+        except Exception as e:
+            raise ImportError(
+                "Could not import src.database.hammarby_data. "
+                "Ensure your PYTHONPATH/repo layout matches and the module exists."
+            ) from e
+        if not hasattr(db, "query_executor"):
+            raise ImportError("hammarby_data module missing query_executor(sql) function.")
+        return db
+
+    @staticmethod
+    def _extract_sql(text: str) -> str:
         """
-        Replace placeholders like {{BUILDING_ID}}, {{DATE_FROM}}, {{DATE_TO}},
-        applying strict validation for literals.
+        Extract ONE SQL statement from model output.
+        - Prefer fenced ```sql ... ``` or ``` ... ``` blocks.
+        - Else, take the first semicolon-terminated statement or the whole trimmed text.
+        - Strip any leading/trailing backticks.
         """
-        rendered = sql_template
+        if not text:
+            return ""
 
-        # Building ID
-        if "{{BUILDING_ID}}" in rendered:
-            building_id = kwargs.get("building_id")
-            if not building_id:
-                raise ValueError("Missing building_id for building-scoped query.")
-            safe_bid = _sanitize_literal(str(building_id), r"^[A-Za-z0-9_-]{1,64}$")
-            rendered = rendered.replace("{{BUILDING_ID}}", safe_bid)
+        # 1) ```sql ... ``` fenced
+        m = re.search(r"```sql\\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+        if m:
+            return m.group(1).strip()
 
-        # Optional dates
-        if "{{DATE_FROM}}" in rendered:
-            df_val = plan.get("defaults", {}).get("DATE_FROM") or kwargs.get("date_from")
-            if not df_val:
-                # If not provided, let the prompt default handle it; but if placeholder is present we must fill
-                raise ValueError("DATE_FROM required but not provided.")
-            safe_df = _sanitize_literal(str(df_val), r"^\d{4}-\d{2}-\d{2}$")
-            rendered = rendered.replace("{{DATE_FROM}}", safe_df)
+        # 2) ``` ... ``` fenced
+        m = re.search(r"```\\s*(.*?)```", text, flags=re.DOTALL)
+        if m:
+            return m.group(1).strip()
 
-        if "{{DATE_TO}}" in rendered:
-            dt_val = plan.get("defaults", {}).get("DATE_TO") or kwargs.get("date_to")
-            if not dt_val:
-                raise ValueError("DATE_TO required but not provided.")
-            safe_dt = _sanitize_literal(str(dt_val), r"^\d{4}-\d{2}-\d{2}$")
-            rendered = rendered.replace("{{DATE_TO}}", safe_dt)
+        # 3) First semicolon-terminated statement
+        m = re.search(r";", text)
+        if m:
+            first_stmt = text[: m.end()].strip()
+            # Avoid capturing stray backticks
+            return first_stmt.strip("`").strip()
 
-        # Enforce TOP limiter if not present
-        if re.search(r"(?is)\bselect\b\s+(?!top\s+\d+)", rendered):
-            # Insert TOP 200 after SELECT
-            rendered = re.sub(r"(?is)^\s*select\b", "SELECT TOP 200", rendered, count=1)
-
-        # Remove trailing semicolons to avoid multi-statement hazards from the LLM
-        rendered = rendered.strip().rstrip(";")
-
-        return rendered
-
-
-
+        # 4) Fallback: whole text
+        return text.strip("`").strip()
