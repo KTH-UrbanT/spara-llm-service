@@ -52,6 +52,7 @@ class RetrievalGeneration:
         """
         global context_retreival_obj # Reference the global context_retreival_obj
         self.context_retreival_obj = context_retreival_obj
+        self.buildings = building_specs.Building_specs()
         
         # Load the Azure endpoint, deployment name, and API key from environment variables
         endpoint = os.getenv("AZURE_ENDPOINT")  
@@ -83,7 +84,7 @@ class RetrievalGeneration:
             stop=None,
             stream=False
         )
-    def generate_reply_texts(self, question, existing_conversation, type):
+    def generate_reply_texts(self, question, existing_conversation, session_id_int,type):
         """
         Generate a reply based on the question and the type of search (text-based or vector-based).
 
@@ -126,9 +127,10 @@ class RetrievalGeneration:
         # Append the user's question along with the context from the retrieved documents to the conversation
         new_conversation.append({
             "role": "user",
-            "content": question + "\n Context : " + content_from_doc +
-            building_specs.main(question)
-        })
+            "content": question + "\n Context : " + content_from_doc + "\n ODEN data: " +
+               (self.buildings.update_address(question) if (session_id_int % 2 == 0) else "")
+            })
+
 
         print(new_conversation)
 
