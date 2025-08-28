@@ -330,9 +330,9 @@ def understand_context_node(state: GraphState) -> GraphState:
     # Preserve effective_query for address-only followups (logic kept as requested)
     if ctx["parsed_intent"] == "" and  ctx.get("address") != "":
         message_list = state.get("messages", [])
-        if len(message_list) >= 2:
+        if len(message_list) >= 3:
             try:
-                ctx["intent_list"], ctx["parsed_intent"] = message_list[-2]['intent_list'], message_list[-3]['parsed_intent']
+                ctx["intent_list"], ctx["parsed_intent"] = message_list[-2]['intent_list'], message_list[-2]['parsed_intent']
                 print("[understand_context] restored intent from -3 message", flush=True)
             except Exception as e:
                 print(f"[understand_context] restore intent failed: {e}", flush=True)

@@ -61,7 +61,7 @@ class RedisQueueManager:
 
     def get_thread_messages(self, thread_id):
         """Return the entire message history for a given thread."""
-        return [json.loads(msg) for msg in self.redis.lrange(f"thread:{thread_id}", 0, -1)]
+        return [json.loads(msg) for msg in self.redis.lrange(f"thread:{thread_id}:messages", 0, -1)]
 
     def add_message_to_thread(self, thread_id, role, content):
         """Add a message with full metadata to the thread's Redis list."""
@@ -101,69 +101,149 @@ class RedisQueueManager:
             except Exception as e:
                 print(f"❌ Error parsing pubsub message: {e}")
 
+    # def process_thread_event(self, thread_id):
+    #     """Process an individual thread's latest user message and respond."""
+    #     try:
+    #         thread_key = f"thread:{thread_id}"
+    #         messages = self.get_thread_messages(thread_id)
+    #         if not messages:
+    #             print(f"⚠️ No messages found for thread {thread_id}.")
+    #             return
+    #         last_message = messages[-1]
+    #         if last_message.get("role") != "user":
+    #             print(f"ℹ️ Last message in thread {thread_id} not from user. Ignoring.")
+    #             return
+
+    #         print(f"📨 Routing message from thread {thread_id} via agent_router...")
+    #         try :
+    #             raw_metadata = self.redis.hgetall(thread_key)
+
+    #             metadata = {}
+
+    #             for k, v in raw_metadata.items():
+    #                 try:
+    #                     # Try to decode JSON strings back to Python objects
+    #                     metadata[k] = json.loads(v)
+    #                 except (json.JSONDecodeError, TypeError):
+    #                     # If not JSON, keep as string
+    #                     metadata[k] = v                
+    #         except : 
+    #             metadata = {}    
+    #         start_time = time.time()
+    #         #print(messages, last_message['content'] , metadata , thread_id)
+    #         response  , metadata = self.agent_router.route_message(messages, last_message['content'] , metadata , thread_id)
+
+    #         if not response:
+    #             print(f"⚠️ No response from agent for thread {thread_id}.")
+    #             return
+    #         # print(response)
+    #         response['timestamp'] = time.time()
+    #         response['added_to_database'] = 0
+    #         # print(response)
+    #         print(metadata)
+    #         # assistant_message = {
+    #         #     "role": "assistant",
+    #         #     "timestamp": time.time(),
+    #         #     "added_to_database": 0,
+    #         #     "content": response.get("content", ""),
+    #         #     "classification": response.get("classification", ""),
+    #         #     "agent_answered": response.get("agent_answered", "")
+    #         # }
+    #         # metadata = response.get("metadata", {})
+    #         if metadata!= {} : 
+    #             if len(metadata['address'])!= 0 or len(metadata['simulation_results'])!= 0 : 
+    #                 encoded_metadata = {}
+
+    #                 for k, v in metadata.items():
+    #                     # If value is a list or dict, json.dumps it
+    #                     if isinstance(v, (list, dict)):
+    #                         encoded_metadata[k] = json.dumps(v)
+    #                     else:
+    #                         encoded_metadata[k] = str(v)
+
+    #                 # Store all fields at once
+    #                 self.redis.hset(thread_key, mapping=encoded_metadata)
+
+    #         end_time = time.time()
+    #         print(f"The question was answered in {end_time - start_time} seconds")
+    #         self.redis.rpush(thread_key, json.dumps(response))
+    #         self.redis.publish(self.pubsub_channel, json.dumps({"thread_name": thread_id}))
+    #         print(f"✅ Response added to thread {thread_id} and event published.")
+    #     except Exception as e:
+    #         print(f"❌ Error processing thread {thread_id}: {e}")
     def process_thread_event(self, thread_id):
         """Process an individual thread's latest user message and respond."""
         try:
-            thread_key = f"thread:{thread_id}"
-            messages = self.get_thread_messages(thread_id)
+            import json, time  # ensure imported here or at module top
+
+            meta_key = f"thread:{thread_id}:meta"        # hash for metadata
+            msg_key  = f"thread:{thread_id}:messages"    # list for messages
+
+            messages = self.get_thread_messages(thread_id)  # make sure this reads from msg_key
             if not messages:
                 print(f"⚠️ No messages found for thread {thread_id}.")
                 return
+
             last_message = messages[-1]
             if last_message.get("role") != "user":
                 print(f"ℹ️ Last message in thread {thread_id} not from user. Ignoring.")
                 return
 
             print(f"📨 Routing message from thread {thread_id} via agent_router...")
-            try :
-                raw_metadata = self.redis.hgetall(thread_key)
 
-                decoded_metadata = {}
-
+            # ---- Read metadata (hash) safely
+            try:
+                raw_metadata = self.redis.hgetall(meta_key)
+                metadata = {}
                 for k, v in raw_metadata.items():
                     try:
-                        # Try to decode JSON strings back to Python objects
-                        decoded_metadata[k] = json.loads(v)
+                        metadata[k] = json.loads(v)
                     except (json.JSONDecodeError, TypeError):
-                        # If not JSON, keep as string
-                        decoded_metadata[k] = v                
-            except : 
-                metadata = {}    
+                        metadata[k] = v
+            except Exception as e:
+                print(f"ℹ️ Could not read metadata for {thread_id}: {e}")
+                metadata = {}
+
             start_time = time.time()
-            #print(messages, last_message['content'] , metadata , thread_id)
-            response = self.agent_router.route_message(messages, last_message['content'] , metadata , thread_id)
+
+            response, metadata = self.agent_router.route_message(
+                messages, last_message['content'], metadata, thread_id
+            )
 
             if not response:
                 print(f"⚠️ No response from agent for thread {thread_id}.")
                 return
-            print(response)
-            assistant_message = {
-                "role": "assistant",
-                "timestamp": time.time(),
-                "added_to_database": 0,
-                "content": response.get("content", ""),
-                "classification": response.get("classification", ""),
-                "agent_answered": response.get("agent_answered", "")
-            }
-            metadata = response.get("metadata", {})
-            if metadata!= {} : 
-                if len(metadata['building_information'])!= 0 or len(metadata['simulation_results'])!= 0 : 
-                    encoded_metadata = {}
 
-                    for k, v in metadata.items():
-                        # If value is a list or dict, json.dumps it
-                        if isinstance(v, (list, dict)):
-                            encoded_metadata[k] = json.dumps(v)
-                        else:
-                            encoded_metadata[k] = str(v)
+            response['timestamp'] = time.time()
+            response['added_to_database'] = 0
 
-                    # Store all fields at once
-                    self.redis.hset(thread_key, mapping=encoded_metadata)
+            # ---- Write metadata back (only if something meaningful)
+            if metadata:
+                addr = metadata.get('address')
+                sims = metadata.get('simulation_results')
+                if (isinstance(addr, (list, dict)) and addr) or \
+                   (isinstance(sims, (list, dict)) and sims) or \
+                   (isinstance(addr, str) and addr.strip()) or \
+                   (isinstance(sims, str) and sims.strip()):
+                    encoded_metadata = {
+                        k: (json.dumps(v) if isinstance(v, (list, dict)) else str(v))
+                        for k, v in metadata.items()
+                    }
+                    self.redis.hset(meta_key, mapping=encoded_metadata)
+
+            # ---- Append assistant response to the thread message list
+            self.redis.rpush(msg_key, json.dumps(response))
+
+            # ---- Publish event (payload clarified)
+            self.redis.publish(self.pubsub_channel, json.dumps({
+                "thread_id": thread_id,
+                "messages_key": msg_key,
+                "meta_key": meta_key
+            }))
 
             end_time = time.time()
-            print(f"The question was answered in {end_time - start_time} seconds")
-            self.redis.rpush(thread_key, json.dumps(assistant_message))
-            self.redis.publish(self.pubsub_channel, json.dumps({"thread_name": thread_id}))
             print(f"✅ Response added to thread {thread_id} and event published.")
+            print(f"⏱️ The question was answered in {end_time - start_time:.3f} seconds")
+
         except Exception as e:
             print(f"❌ Error processing thread {thread_id}: {e}")

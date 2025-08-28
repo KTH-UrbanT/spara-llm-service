@@ -41,14 +41,15 @@ class BuildingAgent:
         }
         self.graph = build_building_flow_graph()
         try:
+            print(initial_state)
             final_state = self.graph.invoke(initial_state)
         except Exception as e:
             return {
                 "content": f"An error occurred while handling your building-related request: {e}",
                 "agent_answered": "unknown",
                 "classification": "building_specific",
-                "intent": None,
-                "agents_used": [],
+                "parsed_intent": None,
+                "agent_answered": [],
                 "vector_sources": [],
             } , metadata
 
@@ -86,9 +87,8 @@ class BuildingAgent:
 
         return {
             "content": response,
-            "agent_answered": agent_answered,          # 'sql' | 'vector' | 'sql+vector' | 'simulation' | 'other' | 'unknown'
             "classification": "building_specific",     # router-level classification
             "parsed_intent": parsed_intent,   # parsed intent label
             'intent_list' : intent_list , 
-            "agents_used": agents_used        # helpful for hybrid/vector QA
+            "agent_answered": agents_used        # helpful for hybrid/vector QA
         } , md
