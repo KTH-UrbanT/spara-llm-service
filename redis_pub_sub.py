@@ -2,7 +2,7 @@ import redis
 import json
 import os
 import copy
-from main_retrieval_generation import RetrievalGeneration
+from main_retrieval_generation_pinecone import RetrievalGeneration
 import time
 from dotenv import load_dotenv  # For loading environment variables from .env file
 

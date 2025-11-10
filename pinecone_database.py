@@ -2,7 +2,6 @@
 import os
 import sys
 import time
-import math
 import hashlib
 import random
 import string
@@ -52,8 +51,8 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 # Pinecone
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY") or os.environ.get("pinecone_api")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "doc-embeddings")
-PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "docs")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "spara-embeddings")
+PINECONE_NAMESPACE = os.getenv("PINECONE_NAMESPACE", "spara")
 PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")          # aws | gcp
 PINECONE_REGION = os.getenv("PINECONE_REGION", "us-east-1")  # e.g. us-east-1
 
@@ -70,8 +69,7 @@ def rand_id(n=16) -> str:
     return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(n))
 
 def sha_id(*parts: str) -> str:
-    h = hashlib.md5("::".join(parts).encode("utf-8")).hexdigest()
-    return h
+    return hashlib.md5("::".join(parts).encode("utf-8")).hexdigest()
 
 def batched(it: Iterable[Any], n: int):
     batch = []
@@ -114,7 +112,7 @@ class PineconeVectorSearch:
         self.region = region
         self.embeddings = embeddings
 
-        # Detect embedding dimension
+        # Detect embedding dimension from a probe
         probe = self.embeddings.embed_query("dimension probe")
         self.dimension = len(probe)
 
@@ -125,7 +123,6 @@ class PineconeVectorSearch:
         self.index = self.pc.Index(self.index_name)
 
     def _ensure_index(self):
-        # Pinecone client v3/v4 supports list_indexes(); we check by name
         existing = {ix["name"] for ix in self.pc.list_indexes().get("indexes", [])}
         if self.index_name not in existing:
             print(f"[INFO] Creating Pinecone index '{self.index_name}' ({self.cloud}/{self.region}) dim={self.dimension}")
@@ -141,9 +138,6 @@ class PineconeVectorSearch:
                 if desc.get("status", {}).get("ready"):
                     break
                 time.sleep(1)
-        else:
-            # Optionally you can verify the dimension matches; here we assume it does or you manage it out-of-band.
-            pass
 
     def add_documents(self, documents: List[Document]) -> List[str]:
         if not documents:
@@ -159,7 +153,7 @@ class PineconeVectorSearch:
             base = f"{src}::{i}::{len(t)}"
             ids.append(sha_id(base))
 
-        # Embed in batches
+        # Embed in batches with retries
         vectors_all: List[List[float]] = []
         for batch in batched(texts, BATCH_SIZE):
             for attempt in range(5):
@@ -174,13 +168,20 @@ class PineconeVectorSearch:
             else:
                 raise RuntimeError("Failed to embed a batch after multiple retries")
 
-        # Upsert in batches
+        # Upsert in batches with retries
         upserted = 0
-        for i, up_batch_idx in enumerate(range(0, len(ids), UPSERT_BATCH_SIZE)):
+        for up_batch_idx in range(0, len(ids), UPSERT_BATCH_SIZE):
             j = up_batch_idx + UPSERT_BATCH_SIZE
             batch_ids = ids[up_batch_idx:j]
             batch_vecs = vectors_all[up_batch_idx:j]
-            batch_meta = metas[up_batch_idx:j]
+            batch_docs = documents[up_batch_idx:j]
+
+            # prepare metadata with full document text
+            batch_meta = []
+            for d in batch_docs:
+                meta = dict(d.metadata or {})
+                meta["text"] = d.page_content or ""
+                batch_meta.append(meta)
 
             payload = [
                 {"id": batch_ids[k], "values": batch_vecs[k], "metadata": batch_meta[k]}
@@ -223,7 +224,7 @@ class DocumentStore:
 class Directory(DocumentStore):
     """
     Manages directories containing documents:
-    - Reads local files via loader map
+    - Reads local files via loader map (updated to match your working path)
     - Splits text into chunks
     - Sends to vector store (Pinecone) via .add_documents()
     - Can scrape URLs from an Excel file and ingest them too
@@ -263,18 +264,15 @@ class Directory(DocumentStore):
         soup = BeautifulSoup(html, 'html.parser')
         return soup.get_text(strip=True)
 
-    def _split_and_upsert(self, loaded_docs: List[Document]) -> List[str]:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-        docs = splitter.split_documents(loaded_docs)
-        return self.vector_search.add_documents(documents=docs)
-
+    # ---------- UPDATED: use your exact reading path ----------
     def reading_file(self, directory_name: str, filename: str, delete_after: bool = DELETE_AFTER_INGEST) -> List[str]:
         directory_path = Path.joinpath(Path().resolve(), directory_name)
         file_path = Path.joinpath(directory_path, filename)
         filetype = filename.split('.')[-1].lower()
 
         if filetype not in self.supported_types:
-            print('File type is not supported. Supported: ' + ', '.join(self.supported_types.keys()) + f'. Got: {filetype}')
+            print('File type is not supported. Supported file types are ' + ', '.join(self.supported_types.keys()) +
+                  '. The file type of the document is ' + filetype)
             return []
 
         try:
@@ -285,39 +283,47 @@ class Directory(DocumentStore):
                     self.document_list.append(
                         DocumentStore(id=rand_id(), content=data[i].page_content, metadata=data[i].metadata, type=filetype)
                     )
-                ids = self._split_and_upsert(data)
-
             elif filetype == 'json':
                 loader = JSONLoader(file_path=str(file_path), jq_schema='.', text_content=False)
-                data = loader.load()
+                # data = loader.load()
                 self.document_list.append(
                     DocumentStore(id=rand_id(), content=data[0].page_content, metadata=data[0].metadata, type=filetype)
                 )
-                ids = self._split_and_upsert(data)
-
             else:
                 LoaderCls = self.supported_types[filetype]
                 loader = LoaderCls(str(file_path))
                 data = loader.load()
-                # many loaders return a list; we track only the first for DocumentStore
+
                 self.document_list.append(
                     DocumentStore(id=rand_id(), content=data[0].page_content, metadata=data[0].metadata, type=filetype)
                 )
-                ids = self._split_and_upsert(data)
 
-            print(f'File {filename} has been read and upserted.')
+            print('File ' + filename + ' has been read.')
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+            docs = text_splitter.split_documents(data)
+            print(len(docs))
+            # Add stable source metadata if missing (helps dedupe + ID stability)
+            for d in docs:
+                d.metadata = d.metadata or {}
+                d.metadata.setdefault("source", str(file_path))
+
+            document_id_list = self.vector_search.add_documents(documents=docs)
+            print('File ' + filename + ' has been updated into knowledge base.')
+
             if delete_after:
                 try:
                     os.remove(file_path)
                     print(f'File {filename} deleted from local directory.')
                 except Exception as e:
                     print(f'[WARN] Could not delete {filename}: {e}')
-            return ids
+
+            return document_id_list
 
         except Exception as e:
             print(f'[ERROR] reading_file failed for {filename}: {e}')
             return []
 
+    # ---------- UPDATED: use your exact scraping path ----------
     def reading_URLS_for_scrape(self, directory_name: str, filename: str):
         directory_path = Path.joinpath(Path().resolve(), directory_name)
         file_path = Path.joinpath(directory_path, filename)
@@ -326,37 +332,41 @@ class Directory(DocumentStore):
         url_links = dataframe[(dataframe['Scraping Status'] == 0) & (dataframe['Type'] == 'url')].reset_index(drop=True)['Link']
         html_links = dataframe[(dataframe['Scraping Status'] == 0) & (dataframe['Type'] != 'url')].reset_index(drop=True)['Link']
 
-        print('Number of URLs to be scraped:', len(url_links), '| Number of HTML links:', len(html_links))
+        print('Number of URLs to be scraped is ' + str(len(url_links)) +
+              '. Number of HTML links to be scraped is ' + str(len(html_links)))
 
-        document_id_list = []
+        document_id_list: List[str] = []
 
-        # HTML links (pre-rendered/static HTML)
         for each in html_links:
             html_content = self.fetch_html(each)
             if html_content:
+                print("HTML content fetched successfully!")
                 text_content = self.parse_html(html_content)
                 data = Document(page_content=text_content, metadata={"source": each})
-                print('Scraping for HTML link', each, 'is done')
+                print('Scraping for HTML link ' + str(each) + ' is done')
                 self.document_list.append(DocumentStore(id=rand_id(), content=data.page_content, metadata=data.metadata, type='html'))
-                ids = self._split_and_upsert([data])
-                document_id_list.extend(ids)
+                splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+                docs = splitter.split_documents([data])
+                document_id_list.extend(self.vector_search.add_documents(documents=docs))
             else:
-                print("Failed to fetch HTML content for:", each)
+                print("Failed to fetch HTML content.")
 
-        # URL links (treated the same way here)
         for each in url_links:
             html_content = self.fetch_html(each)
             if html_content:
+                print("URL content fetched successfully!")
                 text_content = self.parse_html(html_content)
                 data = Document(page_content=text_content, metadata={"source": each})
-                print('Scraping for URL', each, 'is done')
+                print('Scraping for URL ' + str(each) + ' is done')
                 self.document_list.append(DocumentStore(id=rand_id(), content=data.page_content, metadata=data.metadata, type='url'))
-                ids = self._split_and_upsert([data])
-                document_id_list.extend(ids)
+                splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+                docs = splitter.split_documents([data])
+                document_id_list.extend(self.vector_search.add_documents(documents=docs))
             else:
-                print("Failed to fetch URL content for:", each)
+                print("Failed to fetch URL content.")
 
-        print('File', filename, 'has been processed and ingested.')
+        print('File ' + filename + ' has been read.')
+        print('File ' + filename + ' has been updated into knowledge base.')
         dataframe['Scraping Status'] = 1
         return document_id_list, dataframe
 

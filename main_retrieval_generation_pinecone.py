@@ -8,6 +8,9 @@ from openai import AzureOpenAI, RateLimitError   # For interacting with OpenAI's
 from dotenv import load_dotenv  # For loading environment variables from .env file
 import building_specs
 import copy  # For creating deep copies of objects
+import pandas as pd
+
+data = pd.read_csv("buildings.csv", sep=";", usecols=["IdAdr", "El_calc", "EgiVarme_calc", "EgenAntalKallarplan", "EgenAntalPlan", "EgenAntalTrapphus", "EgiEnergiklass2020_calc", "HuvudsakligUppvarmning_calc"], skipinitialspace=True)
 from typing import List, Tuple, Optional, Union
 
 # Load environment variables from the .env file
@@ -211,7 +214,7 @@ class RetrievalGeneration:
                 + (content_from_doc or "")
                 + sources_block
                 + "\n\n"
-                + (building_specs.main(question) or "")
+                + str(data)
             )
         })
 
