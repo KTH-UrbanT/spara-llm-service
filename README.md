@@ -1,4 +1,8 @@
+# Setting Up LLM Service Packages Along with DefaultAzureCredential in Visual Studio Code
 
+We need DefaultAzureCredential as we connect with Azure services for Vector Database for LLM service.
+
+---
 
 ## Step 1: Install Required Python Packages and Azure SDKs
 
@@ -8,7 +12,7 @@
 
    ### Windows
    1. Open Command Prompt or PowerShell.
-   2. Navigate to your directory where you did git clone. 
+   2. Navigate to your project directory.
    3. Create a virtual environment:
       ```bash
       python -m venv .env
@@ -20,7 +24,7 @@
 
    ### macOS
    1. Open the Terminal.
-   2. Navigate to your directory where you did git clone.
+   2. Navigate to your project directory.
    3. Create a virtual environment:
       ```bash
       python3 -m venv .env
@@ -30,14 +34,44 @@
       source .env/bin/activate
       ```
 
-3. Run the following command to install the necessary packages for the language service:
+3. Run the following command to install the necessary packages for the language service, including the `DefaultAzureCredential` class:
 
    ```bash
    pip install -r requirements.txt
    ```
 
+4. Verify the installation of `azure-identity`:
+
+   ```bash
+   pip show azure-identity
+   ```
+
+   This should display package details if installed successfully.
+
 ---
 
+## Step 2: Configure Azure Authentication
+
+The `DefaultAzureCredential` class works by automatically detecting authentication methods based on the environment. It supports several authentication options, such as Azure CLI, managed identity, and environment variables.
+
+### Option 1: Use Azure CLI for Authentication
+
+1. Install the Azure CLI if it's not already installed:
+   Follow the [Azure CLI installation guide](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
+
+2. Log in to your Azure account:
+
+   ```bash
+   az login
+   ```
+
+3. Set the correct subscription (if you have multiple subscriptions):
+
+   ```bash
+   az account set --subscription "YourSubscriptionID"
+   ```
+
+---
 
 ## Step 3: Set Up Redis Server
 
@@ -101,19 +135,6 @@
 
 
 ## Step 4: Start Up Redis Server
-
-### currently we are running only using pinecone. 
-
-Get the updated env file from notion. 
-
-Run the following command in the terminal 
-   ```bash
-   python redis_pub_sub_pinecone.py
-   ```
-
-### DONOT RUN THE ORIGINAL SERVICE
-
-Get the updated env file from notion. 
 
 Run the following command in the terminal 
    ```bash
