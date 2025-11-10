@@ -3,7 +3,7 @@ import json
 from unittest.mock import patch, MagicMock
 import pytest
 
-from main_retrieval_generation_pinecone import *
+from main_retrieval_generation import *
 
 DUMMY_SYSTEM_MSG = {"role": "system", "content": "You are a test assistant."}
 DUMMY_USER_QUESTION = "Hello, can you hear me?"

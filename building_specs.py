@@ -34,7 +34,7 @@ def search_for_address(prompt, buildings):
     address = pattern.findall(prompt)
 
     if address:
-        # print(address[0])
+        print(address[0])
         return next((spec for spec in buildings if getattr(spec, "address", None).lower() == address[0].lower()), None)
     else:
         print("No address found.")
@@ -66,7 +66,7 @@ def main(prompt):
     #spec1 = Spec("AddressGatan 5", "F1N2R3", "60KWh", 1998)
     #spec2 = Spec("blåkulla 3b", "F1N2R3", "80KWh", 1912)
     #spec3 = Spec("Vårvägen 77", "F1N2R3", "70KWh", 2003)
-    # print(df)
+    print(df)
     spec = search_for_address(prompt, buildings)
     #print(spec)
     return spec.__str__()

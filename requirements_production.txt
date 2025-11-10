@@ -11,4 +11,3 @@ jq
 backoff
 pandas
 pytest
-pinecone
