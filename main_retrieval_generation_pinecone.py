@@ -11,6 +11,7 @@ import copy  # For creating deep copies of objects
 import pandas as pd
 
 data = pd.read_csv("buildings.csv", sep=";", usecols=["IdAdr", "El_calc", "EgiVarme_calc", "EgenAntalKallarplan", "EgenAntalPlan", "EgenAntalTrapphus", "EgiEnergiklass2020_calc", "HuvudsakligUppvarmning_calc"], skipinitialspace=True)
+data_json = data.to_dict(orient="records")
 from typing import List, Tuple, Optional, Union
 
 # Load environment variables from the .env file
@@ -204,7 +205,7 @@ class RetrievalGeneration:
         sources_block = ""
         if srcs:
             sources_block = "\n\nSources:\n- " + "\n- ".join(srcs)
-
+        
         # Append the user's question along with the retrieved context and domain-specific addendum
         new_conversation.append({
             "role": "user",
@@ -214,7 +215,7 @@ class RetrievalGeneration:
                 + (content_from_doc or "")
                 + sources_block
                 + "\n\n"
-                + str(data)
+                + str(data_json)
             )
         })
 
