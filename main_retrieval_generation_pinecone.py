@@ -11,7 +11,6 @@ import copy  # For creating deep copies of objects
 import pandas as pd
 
 data = pd.read_csv("buildings.csv", sep=";", usecols=["IdAdr", "El_calc", "EgiVarme_calc", "EgenAntalKallarplan", "EgenAntalPlan", "EgenAntalTrapphus", "EgiEnergiklass2020_calc", "HuvudsakligUppvarmning_calc"], skipinitialspace=True)
-data_json = data.to_dict(orient="records")
 from typing import List, Tuple, Optional, Union
 
 # Load environment variables from the .env file
@@ -146,7 +145,22 @@ class RetrievalGeneration:
             stop=None,
             stream=False
         )
-
+    def find_building_rows_for_question(self , question: str, df: pd.DataFrame):
+        """
+        Very simple address detection:
+        - For each IdAdr, if it appears as a substring in the question (case-insensitive),
+          include that row.
+        - This assumes users usually type the full address ("Annebodavägen 39").
+        """
+        q_lower = question.lower()
+        matches = []
+    
+        for _, row in df.iterrows():
+            addr = str(row["IdAdr"])
+            if addr and addr.lower() in q_lower:
+                matches.append(row.to_dict())
+    
+        return matches
     def generate_reply_texts(self, question, existing_conversation, type):
         """
         Generate a reply based on the question and the type of search ('text', 'text_with_score', 'vector', 'hybrid').
@@ -205,7 +219,8 @@ class RetrievalGeneration:
         sources_block = ""
         if srcs:
             sources_block = "\n\nSources:\n- " + "\n- ".join(srcs)
-        
+        matched_rows = self.find_building_rows_for_question(question, data)
+        buildings_json = json.dumps(matched_rows, ensure_ascii=False)
         # Append the user's question along with the retrieved context and domain-specific addendum
         new_conversation.append({
             "role": "user",
@@ -214,8 +229,8 @@ class RetrievalGeneration:
                 + "\n\nContext:\n"
                 + (content_from_doc or "")
                 + sources_block
-                + "\n\n"
-                + str(data_json)
+                + "\n\nBUILDINGS_JSON:\n"
+                + buildings_json
             )
         })
 
