@@ -86,6 +86,12 @@ class AgentRouter:
             out['role'] = 'assistant'
             out['classification']=classified
             return out , metadata_updated
+            # {
+            #     'role' : 'assistant' , 
+            #     'content' :'response_text' , 
+            #     'classification' : classified  , 
+            #     'agent_answered' : "building_specific"
+            # } , metadata
             # Ensure any missing keys are filled so schema stays consistent
             # return _normalize_response(
             #     content=out.get("content", "No output was generated."),
@@ -108,7 +114,7 @@ class AgentRouter:
             response_text = self.conversationallist.handle_conversational_input(last_message, messages)
             return {
                 'role' : 'assistant' , 
-                'content' :response_text , 
+                'content' :response_text, 
                 'classification' : classified  , 
                 'agent_answered' : "conversationalist"
             } , metadata

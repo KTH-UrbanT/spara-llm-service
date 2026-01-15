@@ -130,7 +130,7 @@ class GenericAgent(BaseAgent):
         
     def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()  
-        results = self.vector_client.query("How can a BRF reduce heating costs?")
+        results = self.vector_client.query(last_message)
         content_from_doc = ' '.join(i['page_content'] for i in results)
         logger.info(f"Received generic input. Last message: '{last_message[:70]}...'")
 

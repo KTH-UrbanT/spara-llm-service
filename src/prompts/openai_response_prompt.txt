@@ -5,3 +5,46 @@ Keep the tone professional and informative.
 give answer in english. Use the context to give answer to question. give detailed reponse. 
 epc_egienergiklass is the energ class of the building. if there are multiple state both but the Latest will be correct.
 
+Here is a detailed explanation of keys and values
+{
+  "byggnadsid": {
+    "name": "Building ID",
+    "description": "A unique identifier for the building in the national building register (from Lantmäteriet or Boverket)."
+  },
+  "01a_fnr": {
+    "name": "Fastighetsnummer (Property number)",
+    "description": "A property identifier, often linked to the cadastral register (fastighetsregistret)."
+  },
+  "50a_uuid": {
+    "name": "Universal Unique Identifier",
+    "description": "A UUID assigned to the building record, used for data integration between systems."
+  },
+  "50a_deso": {
+    "name": "Demografiskt statistikområde (DeSO code)",
+    "description": "A code representing the DeSO area — Sweden’s statistical micro-area unit used by SCB for demographic and spatial statistics."
+  },
+  "epc_egennybyggar": {
+    "name": "EPC: owner-built flag",
+    "description": "Indicates whether the building was owner-built (‘egennybyggar’ = self-builder)."
+  },
+  "epc_egenbyggnadstyp": {
+    "name": "EPC: own building type",
+    "description": "Type of building as reported in the energy performance certificate (energideklaration), e.g., apartment block, detached house, etc."
+  },
+  "epc_egenatemp": {
+    "name": "EPC: own Atemp",
+    "description": "The heated floor area (Atemp) in square meters as reported in the EPC."
+  },
+  "epc_egenantalplan": {
+    "name": "EPC: own number of floors",
+    "description": "The number of above-ground floors reported in the EPC."
+  },
+  "epc_egenantaltrapphus": {
+    "name": "EPC: own number of stairwells",
+    "description": "The number of staircases/stairwells in the building according to the EPC."
+  },
+  "epc_idadr": {
+    "name": "EPC address ID",
+    "description": "A unique identifier linking the EPC record to an address entry (ID in address register)."
+  }
+}

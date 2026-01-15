@@ -31,17 +31,21 @@ def classify(state: RouterState) -> RouterState:
     return state
 
 def handle_generic(state: RouterState) -> RouterState:
-    result = generic.handle_generic_input(state['last_message'], state['messages'])
+    # result = generic.handle_generic_input(state['last_message'], state['messages'])
     state['agent_response'] = {
-        "content": result,
+        "content": 'result',
         "classification": "generic",
         "agent_answered": "generic"
     }
     return state
 
 def handle_building(state: RouterState) -> RouterState:
-    result = building.handle_building_query(state['last_message'], state['messages'], state['metadata'], state['thread_id'])
-    state['agent_response'] = result
+    # result = building.handle_building_query(state['last_message'], state['messages'], state['metadata'], state['thread_id'])
+    state['agent_response'] = {
+        "content": 'result',
+        "classification": "building",
+        "agent_answered": "building_specific"
+    }
     return state
 
 def handle_cluster(state: RouterState) -> RouterState:
@@ -50,9 +54,9 @@ def handle_cluster(state: RouterState) -> RouterState:
     return state
 
 def handle_conversational(state: RouterState) -> RouterState:
-    result = conversationalist.handle_conversational_input(state['last_message'], state['messages'])
+    # result = conversationalist.handle_conversational_input(state['last_message'], state['messages'])
     state['agent_response'] = {
-        "content": result,
+        "content": 'result',
         "classification": "conversational",
         "agent_answered": "conversationalist"
     }
@@ -93,7 +97,7 @@ def build_router_graph():
     return builder.compile()
 
 
-class AgentRouter:
+class AgentRouterLang:
     def __init__(self):
         # Build the LangGraph graph at init
         self.graph = build_router_graph()
@@ -113,4 +117,4 @@ class AgentRouter:
         result = self.graph.invoke(state)
 
         # Return the agent's response (preserving original return format)
-        return result["agent_response"]
+        return result["agent_response"] , metadata

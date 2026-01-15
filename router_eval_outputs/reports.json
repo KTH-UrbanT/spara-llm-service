@@ -1,0 +1,34 @@
+{
+  "basic": {
+    "generic": {
+      "name": "basic-generic",
+      "accuracy": 0.0,
+      "latency_mean_ms": 3254.949524003896,
+      "latency_median_ms": 2472.7317499928176,
+      "latency_p95_ms": 8641.502659997785
+    },
+    "conversational": {
+      "name": "basic-conv",
+      "accuracy": 0.0,
+      "latency_mean_ms": 8264.84012899804,
+      "latency_median_ms": 8304.824199993163,
+      "latency_p95_ms": 13499.794359979569
+    }
+  },
+  "langgraph": {
+    "generic": {
+      "name": "langgraph-generic",
+      "accuracy": 0.0,
+      "latency_mean_ms": 8025.544344999944,
+      "latency_median_ms": 7044.662200001767,
+      "latency_p95_ms": 13550.864530037505
+    },
+    "conversational": {
+      "name": "langgraph-conv",
+      "accuracy": 0.0,
+      "latency_mean_ms": 8816.663795002387,
+      "latency_median_ms": 8161.607249989174,
+      "latency_p95_ms": 13708.98260998656
+    }
+  }
+}

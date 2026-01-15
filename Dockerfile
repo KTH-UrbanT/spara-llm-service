@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir -r requirements_production.txt || true
 # Copy environment variables
 COPY .env /llm-service/
 
-CMD ["python", "redis_pub_sub.py"]
+CMD ["python", "generation.py"]

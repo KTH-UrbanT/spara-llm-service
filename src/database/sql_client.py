@@ -1,7 +1,7 @@
 # sql_client.py
 from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
-
+import pandas as pd
 Row = Dict[str, Any]
 Filter = Tuple[str, str, Union[str, List[str]]]
 
@@ -79,6 +79,8 @@ class SQLClient:
         )
         if token:
             self.session.headers.update({"Authorization": f"Bearer {token}"})
+        self.data = pd.read_csv('./src/data/buildings_augmented.csv')
+        print(self.data.shape)
 
     # 1) Get building by ID (UUID) -> single row
     def building_by_uuid(self, building_uuid: str) -> Optional[Row]:
@@ -104,19 +106,21 @@ class SQLClient:
         offset: int = 0,
         ordering: Optional[str] = None,
     ) -> List[Row]:
-        tiers: List[str] = ["eq", "istartswith", "icontains"]
-        for op in tiers:
-            rows = self.buildings_by_single_filter(
-                field="epc_idadr",
-                op=op,
-                value=address,
-                limit=limit,
-                offset=offset,
-                ordering=ordering,
-            )
-            if rows:
-                return rows
-        return []
+        # tiers: List[str] = ["eq", "istartswith", "icontains"]
+        # for op in tiers:
+        #     rows = self.buildings_by_single_filter(
+        #         field="epc_idadr",
+        #         op=op,
+        #         value=address,
+        #         limit=limit,
+        #         offset=offset,
+        #         ordering=ordering,
+        #     )
+        #     if rows:
+        #         return rows
+        # return []
+        value = self.data[self.data['IdAdrAggregerad']==address].to_json(orient='records')
+        return value
 
     # 3) Get buildings by a single filter (exactly /buildings/single_filter) -> list
     def buildings_by_single_filter(

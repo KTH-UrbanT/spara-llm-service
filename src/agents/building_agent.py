@@ -41,7 +41,7 @@ class BuildingAgent:
         }
         self.graph = build_building_flow_graph()
         try:
-            print(initial_state)
+            #print(initial_state)
             final_state = self.graph.invoke(initial_state)
         except Exception as e:
             return {
@@ -82,8 +82,7 @@ class BuildingAgent:
             agents_used.append('Documents stored in Vector database used')
 
         agent_answered = ((md.get('debug') or {}).get('agent_answered')) or ""  # empty string if missing
-
-
+        print(response)
 
         return {
             "content": response,

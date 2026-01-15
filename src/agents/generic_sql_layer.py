@@ -4,10 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-try:
-    from sql_client import SQLClient
-except Exception:  # pragma: no cover
-    from src.database.sql_client import SQLClient  # type: ignore
+from src.database.sql_client import SQLClient  # type: ignore
 
 Row = Dict[str, Any]
 
