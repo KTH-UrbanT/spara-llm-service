@@ -1,16 +1,17 @@
 FROM python:3.12-slim
 
-# Set working directory
 WORKDIR /llm-service
 
-# Copy all application files
+# Copy only requirements first (better caching)
+COPY requirements_production.txt .
+
+# Install deps (do NOT swallow errors)
+RUN python -m pip install --no-cache-dir -r requirements_production.txt
+
+# Copy the rest of the app
 COPY . .
 
-# Install Python dependencies (if any)
-COPY requirements_production.txt /
-RUN pip install --no-cache-dir -r requirements_production.txt || true
-
-# Copy environment variables
-COPY .env /llm-service/
+# Optional: if you really need .env inside container
+COPY .env /llm-service/.env
 
 CMD ["python", "generation.py"]
