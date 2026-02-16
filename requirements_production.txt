@@ -1,25 +1,39 @@
-# --- Core Orchestration & AI ---
-langchain-core==0.3.21
 langchain==0.3.9
 langchain-community==0.3.9
 langchain-openai==0.2.10
+langchain-text-splitters==0.3.2
+
 langgraph==0.4.9
 langgraph-checkpoint==2.1.0
 langgraph-prebuilt==0.2.2
+langgraph-sdk==0.1.70
 
-# --- Databases & Memory ---
-azure-cosmos==4.9.0
+langsmith==0.1.147
+langdetect==1.0.9
+
+
+pymongo==4.10.1
 azure-storage-blob==12.24.0
 azure-identity==1.19.0
-pymongo==4.10.1
+azure-cosmos==4.9.0
+requests-html==0.10.0
 pinecone==7.3.0
-redis
+pinecone-plugin-assistant==1.8.0
+pinecone-plugin-interface==0.0.7
 psycopg2-binary==2.9.10
+lxml
+pdf2image
+pdfminer
+opencv-python
+unstructured-inference
+lxml_html_clean
+unstructured
+pandas
+python-docx
+nltk
+openpyxl
+jq
+redis
+backoff
 pyodbc
 
-# --- Utilities ---
-python-dotenv
-pandas
-jq
-backoff
-langdetect==1.0.9
