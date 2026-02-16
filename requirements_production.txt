@@ -27,7 +27,6 @@ pdfminer
 opencv-python
 unstructured-inference
 lxml_html_clean
-unstructured
 pandas
 python-docx
 nltk
