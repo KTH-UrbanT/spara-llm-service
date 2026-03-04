@@ -338,6 +338,7 @@ def understand_context_node(state: GraphState) -> GraphState:
                 print(f"[understand_context] restore intent failed: {e}", flush=True)
 
     # Metadata: if address present in parsed input, set both fields
+    print(ctx)
     addr = ctx.get("address")
     if addr:
         md = state.get("metadata") or {}
