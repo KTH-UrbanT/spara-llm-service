@@ -1,0 +1,110 @@
+import pytest
+
+from src.database.sql_client import SQLClient
+
+
+class FakeResponse:
+    def __init__(self, payload, ok=True):
+        self.payload = payload
+        self.ok = ok
+        self.raise_called = False
+
+    def json(self):
+        return self.payload
+
+    def raise_for_status(self):
+        self.raise_called = True
+        if not self.ok:
+            raise RuntimeError("request failed")
+
+
+class FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.headers = {}
+        self.calls = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        return self.responses.pop(0)
+
+
+def test_building_by_uuid_returns_object_for_successful_lookup():
+    session = FakeSession([FakeResponse({"50a_uuid": "uuid-1"})])
+    client = SQLClient(base_url="https://example.com/api", session=session)
+
+    result = client.building_by_uuid("uuid-1")
+
+    assert result == {"50a_uuid": "uuid-1"}
+    assert session.calls[0]["url"] == "https://example.com/api/buildings/uuid-1/"
+
+
+def test_building_by_uuid_returns_none_when_response_is_not_ok():
+    session = FakeSession([FakeResponse({"detail": "not found"}, ok=False)])
+    client = SQLClient(session=session)
+
+    assert client.building_by_uuid("missing") is None
+
+
+def test_building_by_address_tries_progressive_match_tiers():
+    session = FakeSession(
+        [
+            FakeResponse([]),
+            FakeResponse([]),
+            FakeResponse([{"epc_idadr": "Main Street 1"}]),
+        ]
+    )
+    client = SQLClient(session=session)
+
+    result = client.building_by_address("Main Street 1")
+
+    assert result == [{"epc_idadr": "Main Street 1"}]
+    assert [call["params"]["op"] for call in session.calls] == ["eq", "istartswith", "icontains"]
+
+
+def test_buildings_by_single_filter_normalizes_paginated_payload():
+    session = FakeSession([FakeResponse({"results": [{"byggnadsid": "b1"}]})])
+    client = SQLClient(session=session)
+
+    result = client.buildings_by_single_filter("byggnadsid", "eq", "b1", limit=5, offset=2, ordering="-byggnadsid")
+
+    assert result == [{"byggnadsid": "b1"}]
+    assert session.calls[0]["params"] == {
+        "filter_name": "byggnadsid",
+        "filter_value": "b1",
+        "op": "eq",
+        "limit": 5,
+        "offset": 2,
+        "ordering": "-byggnadsid",
+    }
+
+
+def test_buildings_by_double_filter_builds_lookup_params():
+    session = FakeSession([FakeResponse([{"byggnadsid": "b2"}])])
+    client = SQLClient(session=session)
+
+    result = client.buildings_by_double_filter(
+        ("epc_egenbyggnadstyp", "icontains", "residential"),
+        ("50a_uuid", "in", ["a", "b"]),
+    )
+
+    assert result == [{"byggnadsid": "b2"}]
+    assert session.calls[0]["params"] == {
+        "epc_egenbyggnadstyp__icontains": "residential",
+        "50a_uuid__in": "a,b",
+        "limit": 50,
+        "offset": 0,
+    }
+
+
+def test_invalid_fields_and_ops_raise_value_error():
+    client = SQLClient(session=FakeSession([]))
+
+    with pytest.raises(ValueError):
+        client.buildings_by_single_filter("unknown", "eq", "x")
+
+    with pytest.raises(ValueError):
+        client.buildings_by_single_filter("byggnadsid", "bad-op", "x")
+
+    with pytest.raises(ValueError):
+        client.buildings_by_double_filter(("byggnadsid", "bad-op", "x"), ("50a_uuid", "eq", "y"))
