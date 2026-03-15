@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from src.database.sql_client import SQLClient
@@ -7,6 +9,9 @@ pytestmark = pytest.mark.integration
 
 
 def test_oden_building_lookup_byggnadsid_smoke():
+    if not os.getenv("RUN_EXTERNAL_INTEGRATION"):
+        pytest.skip("External integration tests are disabled. Set RUN_EXTERNAL_INTEGRATION=1 to enable.")
+
     client = SQLClient()
 
     rows = client.buildings_by_single_filter(

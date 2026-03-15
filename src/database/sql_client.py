@@ -1,4 +1,5 @@
 # sql_client.py
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 import pandas as pd
@@ -63,13 +64,16 @@ class SQLClient:
 
     def __init__(
         self,
-        base_url: str = "https://oden.abe.kth.se/api/v1",
+        base_url: Optional[str] = None,
         token: Optional[str] = None,
-        timeout: int = 15,
+        timeout: Optional[int] = None,
         session: Optional[requests.Session] = None,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        configured_base_url = base_url or os.getenv("ODEN_BASE_URL", "https://oden.abe.kth.se/api/v1")
+        configured_timeout = timeout if timeout is not None else int(os.getenv("ODEN_TIMEOUT", "15"))
+
+        self.base_url = configured_base_url.rstrip("/")
+        self.timeout = configured_timeout
         self.session = session or requests.Session()
         self.session.headers.update(
             {

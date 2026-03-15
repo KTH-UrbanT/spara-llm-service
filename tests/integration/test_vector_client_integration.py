@@ -7,6 +7,9 @@ pytestmark = pytest.mark.integration
 
 
 def test_vector_client_env_connection_smoke():
+    if not os.getenv("RUN_EXTERNAL_INTEGRATION"):
+        pytest.skip("External integration tests are disabled. Set RUN_EXTERNAL_INTEGRATION=1 to enable.")
+
     dotenv = pytest.importorskip("dotenv")
     dotenv.load_dotenv(override=False)
     pytest.importorskip("pinecone")
@@ -20,6 +23,7 @@ def test_vector_client_env_connection_smoke():
         "OPENAI_API_VERSION",
         "AZURE_ENDPOINT",
         "OPENAI_API_KEY",
+        "PINECONE_API_KEY",
     ]
     missing = [name for name in required_env if not os.getenv(name)]
     if missing:
