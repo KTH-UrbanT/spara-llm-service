@@ -109,6 +109,12 @@ class EvaluatorAgent(BaseAgent):
 
     def _is_temperature_unsupported_error(self, error: Exception) -> bool:
         """Detect model families that reject non-default temperature settings."""
+        # Prefer structured SDK attributes — more reliable than string matching
+        if getattr(error, "param", None) == "temperature":
+            return True
+        if getattr(error, "code", None) == "unsupported_value" and getattr(error, "status_code", None) == 400:
+            return "temperature" in str(error).lower()
+        # Fallback: string matching for edge cases or older SDK versions
         msg = str(error).lower()
         return (
             "temperature" in msg
