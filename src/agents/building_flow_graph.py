@@ -1,6 +1,7 @@
 # src/agents/building_flow_graph.py
 from __future__ import annotations
 import re
+import os
 from typing import Any, Dict, List, Tuple, Optional
 import copy
 import unicodedata
@@ -13,6 +14,7 @@ from src.agents.parse_intent_agent import ParseIntentAgent
 from src.agents.generic_sql_layer import SQL_Mapper_Layer
 from src.database.vector_client import VectorClient, VectorClientConfig
 from src.agents.openai_agent import OpenAIResponseAgent
+from src.agents.evaluator_agent import EvaluatorAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
 from src.database.hammarby_data import query_address
 from typing import Annotated
@@ -41,6 +43,10 @@ print("[init] VectorClient initialized ✓", flush=True)
 # LLM summarizer (Azure OpenAI)
 llm_summarizer = OpenAIResponseAgent()
 print("[init] OpenAIResponseAgent initialized ✓", flush=True)
+
+# LLM evaluator (Azure OpenAI)
+evaluator_agent = EvaluatorAgent()
+print("[init] EvaluatorAgent initialized ✓", flush=True)
 
 # Load list of addresses available in specialized SQL
 _address_list_raw = query_address()  # may be list[str] or list[dict] with an address field
@@ -293,6 +299,26 @@ def _canonicalize_intent_tokens(parsed_intent) -> Tuple[str, List[str]]:
 # Graph state type
 # ================
 GraphState = Annotated[Dict[str, Any], operator.or_]
+
+# Evaluator-related state keys (plain dict keys, no TypedDict schema needed):
+# - eval_verdict: Optional[str] -> "pass" | "fail"
+# - eval_feedback: Optional[str] -> corrective feedback for summarizer retries
+# - eval_retries: int -> number of evaluator-triggered retries so far
+# - eval_scores: Optional[dict] -> {faithfulness_score, completeness_score, issues}
+
+
+def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
+    """Return missing evaluator defaults without overwriting existing values."""
+    updates: Dict[str, Any] = {}
+    if "eval_retries" not in state or state.get("eval_retries") is None:
+        updates["eval_retries"] = 0
+    if "eval_verdict" not in state:
+        updates["eval_verdict"] = None
+    if "eval_feedback" not in state:
+        updates["eval_feedback"] = None
+    if "eval_scores" not in state:
+        updates["eval_scores"] = None
+    return updates
 
 # ================================
 # Context understanding (UPDATED)
@@ -898,6 +924,19 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     print("[llm_summarizer] ENTER", flush=True)
     ctx = state.get("context", {}) or {}
     prompt = 'Question : ' + (state.get("last_message") or "") + 'Context : ' + str(state.get('aggregated_data', {}))
+
+    # If evaluator rejected a prior answer, pass corrective guidance to the summarizer.
+    eval_feedback = state.get("eval_feedback")
+    eval_retries = int(state.get("eval_retries") or 0)
+    if eval_feedback:
+        prompt += (
+            "\n\nPrevious answer was rejected by evaluator. "
+            "Fix these issues in your new answer: "
+            + str(eval_feedback)
+        )
+        # Count retries when we actually perform a corrective summarization pass.
+        eval_retries += 1
+
     try:
         answer = llm_summarizer.generate_response(prompt, message_list=(state.get('messages') or []))
         print("[llm_summarizer] generate_response ✓", flush=True)
@@ -913,7 +952,91 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 
     out = (state.get("step_out") or []) + ["llm_summarizer ✓"]
     print("[llm_summarizer] EXIT", flush=True)
-    return {"final_response": answer, "session_state": sess, "step_out": out}
+    updates = {
+        "final_response": answer,
+        "session_state": sess,
+        "step_out": out,
+        "eval_retries": eval_retries,
+    }
+    updates.update(_ensure_evaluator_state_defaults(state))
+    return updates
+
+
+def evaluate_response_node(state: GraphState) -> GraphState:
+    """Evaluate summarizer output and store structured verdict and retry metadata."""
+    print("[evaluate_response] ENTER", flush=True)
+
+    question = state.get("last_message") or ""
+    aggregated_data = state.get("aggregated_data") or {}
+    answer = state.get("final_response") or ""
+
+    # Ensure evaluator keys are always available.
+    base_updates = _ensure_evaluator_state_defaults(state)
+    retries = int(state.get("eval_retries") or 0)
+
+    result = evaluator_agent.evaluate(
+        question=question,
+        aggregated_data=aggregated_data,
+        answer=answer,
+    )
+
+    threshold = int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6"))
+    faithfulness = result.get("faithfulness_score")
+    completeness = result.get("completeness_score")
+    issues = result.get("issues") if isinstance(result.get("issues"), list) else []
+    feedback = result.get("corrective_feedback") if isinstance(result.get("corrective_feedback"), str) else None
+
+    # Normalize verdict and enforce threshold guardrails if scores are present.
+    verdict = str(result.get("verdict") or "pass").lower().strip()
+    if faithfulness is not None and completeness is not None:
+        try:
+            if int(faithfulness) < threshold or int(completeness) < threshold:
+                verdict = "fail"
+        except Exception:
+            pass
+    if verdict not in {"pass", "fail"}:
+        verdict = "pass"
+
+    scores = {
+        "faithfulness_score": faithfulness,
+        "completeness_score": completeness,
+        "issues": issues,
+    }
+
+    md = state.get("metadata") or {}
+    debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
+    debug = _deep_merge(debug, {
+        "eval_verdict": verdict,
+        "eval_scores": scores,
+        "eval_retries": retries,
+    })
+    if verdict == "fail":
+        debug["eval_warning"] = "Evaluator failed answer quality check."
+
+    print(f"[evaluate_response] verdict={verdict} retries={retries}", flush=True)
+    print("[evaluate_response] EXIT", flush=True)
+    return {
+        **base_updates,
+        "eval_verdict": verdict,
+        "eval_feedback": feedback if verdict == "fail" else None,
+        "eval_scores": scores,
+        "eval_retries": retries,
+        "metadata": _deep_merge(md, {"debug": debug}),
+    }
+
+
+def route_after_evaluation(state: GraphState) -> str:
+    """Route to END on pass or retry cap, otherwise loop back to summarizer once."""
+    verdict = str(state.get("eval_verdict") or "pass").lower().strip()
+    retries = int(state.get("eval_retries") or 0)
+    max_retries = int(os.getenv("EVALUATOR_MAX_RETRIES", "1"))
+
+    if verdict == "pass":
+        return "end"
+
+    if verdict == "fail" and retries < max_retries:
+        return "retry_summarizer"
+    return "end"
 
 # ======================
 # Request address & misc
@@ -964,6 +1087,7 @@ def build_building_flow_graph() -> StateGraph:
     # Aggregation & summary
     builder.add_node("aggregator", aggregator_node)
     builder.add_node("llm_summarizer", llm_summarizer_node)
+    builder.add_node("evaluate_response", evaluate_response_node)
 
     # Address request
     builder.add_node("request_address", request_address_node)
@@ -1006,7 +1130,15 @@ def build_building_flow_graph() -> StateGraph:
     )
 
     builder.add_edge("aggregator", "llm_summarizer")
-    builder.add_edge("llm_summarizer", END)
+    builder.add_edge("llm_summarizer", "evaluate_response")
+    builder.add_conditional_edges(
+        "evaluate_response",
+        route_after_evaluation,
+        {
+            "end": END,
+            "retry_summarizer": "llm_summarizer",
+        },
+    )
 
     # Early exits
     builder.add_edge("clarification", END)

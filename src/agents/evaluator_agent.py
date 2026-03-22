@@ -107,6 +107,18 @@ class EvaluatorAgent(BaseAgent):
             raise ValueError("Evaluator response JSON is not an object")
         return parsed
 
+    def _is_temperature_unsupported_error(self, error: Exception) -> bool:
+        """Detect model families that reject non-default temperature settings."""
+        msg = str(error).lower()
+        return (
+            "temperature" in msg
+            and (
+                "unsupported value" in msg
+                or "does not support" in msg
+                or "default (1)" in msg
+            )
+        )
+
     def evaluate(self, question: str, aggregated_data: Dict[str, Any], answer: str) -> Dict[str, Any]:
         """Run evaluation and return structured verdict dict.
 
@@ -124,11 +136,22 @@ class EvaluatorAgent(BaseAgent):
         ]
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.deployment,
-                messages=messages,
-                temperature=0.0,
-            )
+            params = {
+                "model": self.deployment,
+                "messages": messages,
+                "temperature": 0.0,
+            }
+
+            try:
+                response = self.client.chat.completions.create(**params)
+            except Exception as e:
+                if not self._is_temperature_unsupported_error(e):
+                    raise
+                # Some Azure deployments only allow the default temperature.
+                logger.info("Evaluator model rejected temperature override; retrying without temperature.")
+                params.pop("temperature", None)
+                response = self.client.chat.completions.create(**params)
+
             content = (response.choices[0].message.content or "").strip()
             parsed = self._safe_parse_json(content)
             return parsed
