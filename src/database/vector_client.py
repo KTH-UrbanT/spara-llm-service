@@ -127,7 +127,7 @@ class VectorClient:
                     "metadata": doc['metadata']['source']
                 }
                 for doc in docs
-            ]
+            ] 
         except Exception as e:
             print(f"[VectorClient Error] Failed to retrieve documents: {e}")
             return []

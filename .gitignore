@@ -4,5 +4,6 @@ data/
 *.ipynb
 *.xlsx
 .env
+.csv
 .venv/*
 dump.rdb
