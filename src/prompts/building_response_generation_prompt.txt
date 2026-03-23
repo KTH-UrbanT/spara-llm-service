@@ -14,6 +14,6 @@ Generate a response:
 
 if the address of the building is not provided, ask for the address. 
 
-epc_egienergiklass is the energ class of the building.
+epc_egienergiklass is the energy class of the building.
 
-Always give the byggnadsid for one to determine the building. 
+Always give the byggnadsid for one to determine the building. That helps to determine the building. Always give byggnadsid correctly. 
