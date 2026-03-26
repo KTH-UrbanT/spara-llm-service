@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-SMTP_SERVER = os.getenv("EXPERT_EMAIL_SMTP_SERVER", "smtp.kth.se")
-SMTP_PORT = int(os.getenv("EXPERT_EMAIL_SMTP_PORT", "587"))
-EMAIL_ACCOUNT = os.getenv("EXPERT_EMAIL_ACCOUNT", "abe-spara-bot")
-EMAIL_ADDRESS = os.getenv("EXPERT_EMAIL_ADDRESS", "spara-bot@kth.se")
-EMAIL_PASSWORD = os.getenv("EXPERT_EMAIL_PASSWORD", "jgEAjC8#ts2sCax1ujZCn")
-EMAIL_RECIPIENT = os.getenv("EXPERT_EMAIL_RECIPIENT", "shadaab@kth.se")
+SMTP_SERVER = os.getenv("EXPERT_EMAIL_SMTP_SERVER")
+SMTP_PORT = int(os.getenv("EXPERT_EMAIL_SMTP_PORT"))
+EMAIL_ACCOUNT = os.getenv("EXPERT_EMAIL_ACCOUNT")
+EMAIL_ADDRESS = os.getenv("EXPERT_EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.getenv("EXPERT_EMAIL_PASSWORD")
+EMAIL_RECIPIENT = os.getenv("EXPERT_EMAIL_RECIPIENT")
 
 SUMMARY_PROMPT_PATH = (
     Path(__file__).resolve().parent.parent / "prompts" / "expert_handoff_summary_prompt.txt"
