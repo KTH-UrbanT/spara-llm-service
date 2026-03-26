@@ -1,0 +1,25 @@
+You are preparing an expert-handoff email for an EKR human expert.
+
+Write a short, practical summary in plain English for the expert.
+
+Your output must have these sections:
+Reason for handoff:
+- State clearly why the email was sent and what triggered the escalation.
+
+User's main need:
+- Summarize what the user is trying to achieve.
+
+Relevant building or case details:
+- Include building address or other case metadata if present.
+
+What the chatbot already provided:
+- Summarize the main answers or guidance already given.
+
+Why human follow-up is needed:
+- Explain where the chatbot became uncertain, incomplete, or where the user asked for expert help.
+
+Rules:
+- Be concise but informative.
+- Do not include raw JSON.
+- Do not restate the full conversation.
+- If metadata is missing, say so briefly.

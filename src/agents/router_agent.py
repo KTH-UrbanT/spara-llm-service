@@ -176,6 +176,81 @@ class RouterAgent(BaseAgent):
             logger.error(f"Error reading prompt file {path}: {e}")
             raise IOError(f"Could not read prompt file {path}: {e}")
 
+    def wants_expert_handoff(self, message: str) -> bool:
+        if not message:
+            return False
+
+        lowered = message.lower()
+        explicit_phrases = [
+            "send this to an expert",
+            "talk to an expert",
+            "contact an expert",
+            "send to ekr",
+            "email ekr",
+            "email this conversation",
+            "send this conversation",
+            "have an expert look at this",
+            "someone should look at this",
+            "can an expert help",
+        ]
+        implicit_phrases = [
+            "this is too hard",
+            "this is complicated",
+            "i need more help",
+            "i need human help",
+            "i need an expert",
+            "i want an expert",
+            "can someone help me",
+            "i want to talk to someone",
+            "this should be handled by an expert",
+        ]
+
+        return any(phrase in lowered for phrase in explicit_phrases + implicit_phrases)
+
+    def is_confirmation(self, message: str) -> bool:
+        if not message:
+            return False
+
+        normalized = message.strip().lower()
+        positive_responses = [
+            "yes",
+            "y",
+            "yes please",
+            "please do",
+            "go ahead",
+            "send it",
+            "send it please",
+            "do it",
+            "ok",
+            "okay",
+            "sure",
+            "confirm",
+            "send the email",
+            "please send the email",
+            "yes send the email",
+        ]
+        return any(phrase in normalized for phrase in positive_responses)
+
+    def is_rejection(self, message: str) -> bool:
+        if not message:
+            return False
+
+        normalized = message.strip().lower()
+        negative_responses = [
+            "no",
+            "n",
+            "no thanks",
+            "no thank you",
+            "don't",
+            "do not",
+            "cancel",
+            "not now",
+            "never mind",
+            "don't send",
+            "do not send",
+        ]
+        return any(phrase in normalized for phrase in negative_responses)
+
 
     def classify_question(self, message: str, previous_classification: Optional[str] = None) -> str:
         """

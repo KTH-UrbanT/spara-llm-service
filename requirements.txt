@@ -41,3 +41,5 @@ pyodbc
 notebook
 pytest
 ipykernel
+
+email_validator==2.2.0

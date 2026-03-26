@@ -103,6 +103,7 @@ def test_process_thread_event_routes_latest_user_message_and_persists_metadata()
     assert channel == "thread_events"
     assert json.loads(payload) == {
         "thread_id": "thread-1",
+        "thread_name": "thread-1",
         "messages_key": "thread:thread-1:messages",
         "meta_key": "thread:thread-1:meta",
     }

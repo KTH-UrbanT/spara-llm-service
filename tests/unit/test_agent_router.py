@@ -49,6 +49,21 @@ class StubConversationalAgent:
         return "conversation answer"
 
 
+class StubDraftReportService:
+    last_call = None
+
+    @staticmethod
+    def generate_draft_report_response(thread_id, messages, metadata):
+        StubDraftReportService.last_call = (thread_id, messages, metadata)
+        return {
+            "role": "assistant",
+            "content": "report answer",
+            "classification": "draft_energy_report",
+            "agent_answered": "draft_energy_report",
+            "downloadable_report": {"report_id": "rep-1"},
+        }
+
+
 def import_agent_router_module():
     stub_module("src.agents.router_agent", RouterAgent=StubRouterAgent)
     stub_module("src.agents.building_agent", BuildingAgent=StubBuildingAgent)
@@ -56,6 +71,10 @@ def import_agent_router_module():
     stub_module("src.agents.generic_agent", GenericAgent=StubGenericAgent)
     stub_module("src.agents.aggregator_agent", AggregatorAgent=object)
     stub_module("src.agents.conversationalist_agent", ConversationalAgent=StubConversationalAgent)
+    stub_module(
+        "src.services.draft_report_service",
+        generate_draft_report_response=StubDraftReportService.generate_draft_report_response,
+    )
     return fresh_import("src.pipeline.agent_router")
 
 
@@ -94,11 +113,9 @@ def test_asks_for_confirmation_when_switching_from_building_to_generic():
         thread_id="thread-2",
     )
 
-    assert response == {
-        "role": "assistant",
-        "content": "Would you like building-specific advice or generic advice?",
-        "classification": "generic",
-    }
+    assert response["content"] == "Would you like building-specific advice or generic advice?"
+    assert response["classification"] == "generic"
+    assert response["agent_answered"] == "uncertain"
     assert metadata == {"existing": 1}
 
 
@@ -158,6 +175,30 @@ def test_routes_conversational_requests():
     assert response["agent_answered"] == "conversationalist"
     assert response["role"] == "assistant"
     assert metadata == {"session": "x"}
+
+
+def test_routes_draft_report_requests():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "draft_energy_report"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "prepare a draft report"}],
+        last_message="prepare a draft report",
+        metadata={"address": "Main Street 1"},
+        thread_id="thread-7",
+    )
+
+    assert response["content"] == "report answer"
+    assert response["classification"] == "draft_energy_report"
+    assert response["agent_answered"] == "draft_energy_report"
+    assert response["downloadable_report"] == {"report_id": "rep-1"}
+    assert metadata == {"address": "Main Street 1"}
+    assert StubDraftReportService.last_call == (
+        "thread-7",
+        [{"role": "user", "content": "prepare a draft report"}],
+        {"address": "Main Street 1"},
+    )
 
 
 def test_unknown_classification_falls_back_cleanly():

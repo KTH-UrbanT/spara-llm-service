@@ -217,19 +217,13 @@ class RedisQueueManager:
             response['timestamp'] = time.time()
             response['added_to_database'] = 0
 
-            # ---- Write metadata back (only if something meaningful)
+            # ---- Write metadata back so cross-turn state like expert handoff confirmation persists
             if metadata:
-                addr = metadata.get('address')
-                sims = metadata.get('simulation_results')
-                if (isinstance(addr, (list, dict)) and addr) or \
-                   (isinstance(sims, (list, dict)) and sims) or \
-                   (isinstance(addr, str) and addr.strip()) or \
-                   (isinstance(sims, str) and sims.strip()):
-                    encoded_metadata = {
-                        k: (json.dumps(v) if isinstance(v, (list, dict)) else str(v))
-                        for k, v in metadata.items()
-                    }
-                    self.redis.hset(meta_key, mapping=encoded_metadata)
+                encoded_metadata = {
+                    k: (json.dumps(v) if isinstance(v, (list, dict, bool)) else str(v))
+                    for k, v in metadata.items()
+                }
+                self.redis.hset(meta_key, mapping=encoded_metadata)
 
             # ---- Append assistant response to the thread message list
             self.redis.rpush(msg_key, json.dumps(response))
@@ -237,6 +231,7 @@ class RedisQueueManager:
             # ---- Publish event (payload clarified)
             self.redis.publish(self.pubsub_channel, json.dumps({
                 "thread_id": thread_id,
+                "thread_name": thread_id,
                 "messages_key": msg_key,
                 "meta_key": meta_key
             }))
