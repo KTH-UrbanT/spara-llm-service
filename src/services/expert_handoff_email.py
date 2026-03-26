@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 
 SMTP_SERVER = os.getenv("EXPERT_EMAIL_SMTP_SERVER")
-SMTP_PORT = int(os.getenv("EXPERT_EMAIL_SMTP_PORT", "587"))
+SMTP_PORT = 587
 EMAIL_ACCOUNT = os.getenv("EXPERT_EMAIL_ACCOUNT")
 EMAIL_ADDRESS = os.getenv("EXPERT_EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EXPERT_EMAIL_PASSWORD")
