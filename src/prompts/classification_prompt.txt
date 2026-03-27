@@ -40,9 +40,11 @@ D) cluster  → questions about MULTIPLE buildings, portfolios, or areas.
   • “Compare all BRFs in Södermalm”, “Top 10 worst performers in our portfolio”, “Average for buildings in …”
 
 E) draft_energy_report → requests to generate, create, prepare, or download a draft energy report.
+  • “Create a energy report for my building”
   • “Create a draft energy report for my building”
   • “Generate a report I can download”
   • “Prepare a draft report for this BRF”
+  • “Give me a report on this building”
 
 F) expert_handoff → requests to escalate the conversation to a human expert / EKR.
   • “Can you send this to an expert?”
