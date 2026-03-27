@@ -1,8 +1,6 @@
-import base64
 import json
 import os
 import re
-import textwrap
 import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -246,103 +244,23 @@ def _ensure_appendix(report_markdown: str, building_facts: Dict[str, Any]) -> st
     return report_markdown.rstrip() + appendix
 
 
-def _escape_pdf_text(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-def _build_pdf_bytes(text: str) -> bytes:
-    wrapped_lines: List[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip()
-        if not line:
-            wrapped_lines.append("")
-            continue
-        chunks = textwrap.wrap(line, width=95, replace_whitespace=False, drop_whitespace=False)
-        wrapped_lines.extend(chunks or [""])
-
-    lines_per_page = 48
-    pages = [wrapped_lines[i:i + lines_per_page] for i in range(0, len(wrapped_lines), lines_per_page)] or [[]]
-
-    objects: List[bytes] = []
-    font_obj_num = 3
-    page_object_numbers = []
-    content_object_numbers = []
-
-    next_obj_num = 4
-    for _ in pages:
-        page_object_numbers.append(next_obj_num)
-        next_obj_num += 1
-        content_object_numbers.append(next_obj_num)
-        next_obj_num += 1
-
-    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
-    kids = " ".join(f"{num} 0 R" for num in page_object_numbers)
-    objects.append(f"<< /Type /Pages /Kids [{kids}] /Count {len(page_object_numbers)} >>".encode("latin-1"))
-    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
-
-    for index, page_lines in enumerate(pages):
-        page_obj_num = page_object_numbers[index]
-        content_obj_num = content_object_numbers[index]
-        page_dict = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-            f"/Resources << /Font << /F1 {font_obj_num} 0 R >> >> "
-            f"/Contents {content_obj_num} 0 R >>"
-        )
-        objects.append(page_dict.encode("latin-1"))
-
-        stream_lines = ["BT", "/F1 10 Tf", "50 792 Td", "14 TL"]
-        for line in page_lines:
-            stream_lines.append(f"({_escape_pdf_text(line)}) Tj")
-            stream_lines.append("T*")
-        stream_lines.append("ET")
-        stream_text = "\n".join(stream_lines).encode("latin-1", errors="replace")
-        stream_obj = (
-            f"<< /Length {len(stream_text)} >>\nstream\n".encode("latin-1")
-            + stream_text
-            + b"\nendstream"
-        )
-        objects.append(stream_obj)
-
-    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets = [0]
-    for index, obj in enumerate(objects, start=1):
-        offsets.append(len(pdf))
-        pdf.extend(f"{index} 0 obj\n".encode("latin-1"))
-        pdf.extend(obj)
-        pdf.extend(b"\nendobj\n")
-
-    xref_start = len(pdf)
-    pdf.extend(f"xref\n0 {len(offsets)}\n".encode("latin-1"))
-    pdf.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        pdf.extend(f"{offset:010d} 00000 n \n".encode("latin-1"))
-
-    trailer = (
-        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
-        f"startxref\n{xref_start}\n%%EOF"
-    )
-    pdf.extend(trailer.encode("latin-1"))
-    return bytes(pdf)
-
-
 def _store_report(
     *,
     thread_id: str,
     building_id: str,
-    pdf_bytes: bytes,
+    report_text: str,
 ) -> Dict[str, Any]:
     report_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc)
     expires_at = created_at + timedelta(seconds=REPORT_TTL_SECONDS)
-    file_name = f"{_sanitize_filename_component(building_id)}.pdf"
+    file_name = f"{_sanitize_filename_component(building_id)}.txt"
 
     payload = {
         "report_id": report_id,
         "thread_id": thread_id,
         "file_name": file_name,
-        "mime_type": "application/pdf",
-        "content_base64": base64.b64encode(pdf_bytes).decode("ascii"),
-        "content_encoding": "base64",
+        "mime_type": "text/plain; charset=utf-8",
+        "content": report_text,
         "created_at": created_at.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
@@ -393,15 +311,18 @@ def generate_draft_report_response(
             building_facts=building_facts,
         )
 
-    report_markdown = _ensure_appendix(report_markdown.strip(), building_facts)
-    pdf_bytes = _build_pdf_bytes(report_markdown)
-    artifact = _store_report(thread_id=thread_id, building_id=building_id, pdf_bytes=pdf_bytes)
+    report_text = _ensure_appendix(report_markdown.strip(), building_facts)
+    artifact = _store_report(
+        thread_id=thread_id,
+        building_id=building_id,
+        report_text=report_text,
+    )
 
     return {
         "role": "assistant",
         "content": (
-            f"I created a draft energy report PDF for building `{building_id}` from the full "
-            "stored session context. You can download it below for the next 30 minutes."
+            f"I created a draft energy report text file for building `{building_id}` from the "
+            "full stored session context. You can download it below for the next 30 minutes."
         ),
         "classification": "draft_energy_report",
         "agent_answered": "draft_energy_report",

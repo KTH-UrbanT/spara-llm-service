@@ -123,13 +123,10 @@ class AgentRouter:
             #     'content' : "Would you like building-specific advice or generic advice?" , 
             #     'classification' : classified 
             # } , metadata
-            return _normalize_response(
-                content="Would you like building-specific advice or generic advice?",
-                classification=classified,
-                agent_answered="uncertain",
-                intent=None,
-                metadata=base_metadata
-            )
+            out , metadata_updated  = self.building.handle_building_query(last_message, messages, base_metadata, thread_id)
+            out['role'] = 'assistant'
+            out['classification']=classified
+            return out , metadata_updated
 
         if classified == "generic":
             response_text = self.generic.handle_generic_input(last_message, messages)

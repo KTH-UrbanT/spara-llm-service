@@ -11,6 +11,12 @@ from langgraph.graph import StateGraph, START, END
 # --- Project deps
 from src.agents.parse_intent_agent import ParseIntentAgent
 from src.agents.generic_sql_layer import SQL_Mapper_Layer
+from src.agents.building_response_prompt import (
+    build_building_response_prompt,
+    ensure_building_identifier_in_response,
+    merge_identifier_metadata,
+    select_preferred_identifier,
+)
 from src.database.vector_client import VectorClient, VectorClientConfig
 from src.agents.openai_agent import OpenAIResponseAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
@@ -85,6 +91,15 @@ def _deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[k] = v
     return out
+
+def _latest_session_state(session_state: Any) -> Dict[str, Any]:
+    if isinstance(session_state, dict):
+        return dict(session_state)
+    if isinstance(session_state, list):
+        for item in reversed(session_state):
+            if isinstance(item, dict):
+                return dict(item)
+    return {}
 
 def _normalize_address(addr: Optional[str]) -> Optional[str]:
     if not addr:
@@ -308,6 +323,16 @@ def understand_context_node(state: GraphState) -> GraphState:
     - Update the passed-in state in place and return it.
     """
     print("[understand_context] ENTER", flush=True)
+
+    prior_state = _latest_session_state(state.get("session_state"))
+    prior_metadata = prior_state.get("metadata") if isinstance(prior_state, dict) else {}
+    incoming_metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+    merged_metadata = dict(prior_metadata or {})
+    for key, value in (incoming_metadata or {}).items():
+        if value not in (None, "", [], {}):
+            merged_metadata[key] = value
+    if merged_metadata:
+        state["metadata"] = merge_identifier_metadata(merged_metadata, prior_state)
 
     # Parse on a SAFE subset to avoid in-place mutation of the live state
     parse_input = {
@@ -623,6 +648,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         updates["agent_data_generic"] = result.get("data")
+        updates["metadata"] = merge_identifier_metadata(md, result.get("data"))
         outs.append("generic_sql: ok")
         try:
             n = len(result.get("data") or [])
@@ -683,6 +709,7 @@ def specialized_sql_agent_node(state: GraphState) -> GraphState:
         if result.get("ok"):
             if "data" in result and result["data"] is not None:
                 updates["agent_data_specialized"] = result["data"]
+                updates["metadata"] = merge_identifier_metadata(md, result["data"])
                 outs.append(_describe_payload_for_aggregation(result["data"]))
             elif "message" in result and result["message"]:
                 outs.append(f"Specialized SQL message: {result['message']}")
@@ -723,8 +750,15 @@ def vector_db_agent_node(state: GraphState) -> GraphState:
         count = len(hits or [])
         print(f"[vector_db_agent] hits={count}", flush=True)
         if hits:
-            content_from_doc = ' '.join(i['page_content'] for i in hits)
+            snippets = [str((item or {}).get("page_content", "")).strip() for item in hits]
+            sources = [str((item or {}).get("metadata", "")).strip() for item in hits]
+            content_from_doc = ' '.join(snippet for snippet in snippets if snippet)
             outs.append("Vector hits:\n" + content_from_doc )
+            updates["agent_data_vector"] = {
+                "hits": hits,
+                "sources": [source for source in sources if source],
+                "snippets": [snippet for snippet in snippets if snippet],
+            }
         else:
             outs.append("Vector: No relevant passages found.")
     except Exception as e:
@@ -897,15 +931,45 @@ def aggregator_node(state: GraphState) -> GraphState:
 def llm_summarizer_node(state: GraphState) -> GraphState:
     print("[llm_summarizer] ENTER", flush=True)
     ctx = state.get("context", {}) or {}
-    prompt = 'Question : ' + (state.get("last_message") or "") + 'Context : ' + str(state.get('aggregated_data', {}))
+    metadata = merge_identifier_metadata(
+        state.get("metadata", {}) or {},
+        state.get("aggregated_data"),
+        state.get("agent_data"),
+        state.get("session_state"),
+    )
+    current_address = metadata.get("address") or metadata.get("address_from_user") or ""
+    building_id = (
+        select_preferred_identifier(
+            metadata,
+            state.get("aggregated_data"),
+            state.get("agent_data"),
+            state.get("session_state"),
+        )
+        or "building_id_not_available"
+    )
+    action_description = (
+        " ; ".join(str(item) for item in (ctx.get("intent_list") or []) if str(item).strip())
+        or str(ctx.get("parsed_intent") or "")
+        or "No specific action was recorded."
+    )
+    prompt = build_building_response_prompt(
+        user_input=state.get("last_message") or "",
+        current_address=str(current_address),
+        history=state.get("messages") or [],
+        action_description=action_description,
+        results=state.get("aggregated_data") or state.get("aggregated") or {},
+        metadata=metadata,
+        building_id=building_id,
+    )
     try:
-        answer = llm_summarizer.generate_response(prompt, message_list=(state.get('messages') or []))
+        answer = llm_summarizer.generate_response(prompt, message_list=[])
+        answer = ensure_building_identifier_in_response(answer, building_id)
         print("[llm_summarizer] generate_response ✓", flush=True)
     except Exception as e:
         answer = "Sorry, summarizer error."
         print(f"[llm_summarizer] ERROR: {e}", flush=True)
 
-    sess = {**(state.get("session_state") or {})}
+    sess = _latest_session_state(state.get("session_state"))
     if ctx.get("intent"):
         sess["last_intent"] = ctx.get("intent")
     if ctx.get("intent_list") is not None:

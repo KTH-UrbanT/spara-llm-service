@@ -98,7 +98,7 @@ def test_routes_generic_requests():
     assert StubGenericAgent.last_call == ("hello", [{"role": "user", "content": "hello"}])
 
 
-def test_asks_for_confirmation_when_switching_from_building_to_generic():
+def test_routes_through_building_agent_when_switching_from_building_to_generic():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
     router = module.AgentRouter()
@@ -113,10 +113,20 @@ def test_asks_for_confirmation_when_switching_from_building_to_generic():
         thread_id="thread-2",
     )
 
-    assert response["content"] == "Would you like building-specific advice or generic advice?"
+    assert response["content"] == "building answer"
     assert response["classification"] == "generic"
-    assert response["agent_answered"] == "uncertain"
-    assert metadata == {"existing": 1}
+    assert response["agent_answered"] == "building"
+    assert response["role"] == "assistant"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call == (
+        "and more broadly?",
+        [
+            {"role": "assistant", "classification": "building_specific"},
+            {"role": "user", "content": "and more broadly?"},
+        ],
+        {"existing": 1},
+        "thread-2",
+    )
 
 
 def test_routes_building_specific_requests():

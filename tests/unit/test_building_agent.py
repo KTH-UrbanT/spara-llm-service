@@ -21,13 +21,17 @@ class SessionStoreRecorder:
         cls.calls.append((thread_id, state))
 
 
+class SessionStoreLoader:
+    state = {}
+
+
 def import_building_agent_module():
     SessionStoreRecorder.calls = []
     FakeGraph.received_state = None
     stub_module("src.agents.building_flow_graph", build_building_flow_graph=lambda: FakeGraph())
     stub_module(
         "src.redis.redis_session_store",
-        get_session_state=lambda thread_id: {},
+        get_session_state=lambda thread_id: SessionStoreLoader.state,
         update_session_state=SessionStoreRecorder.update,
     )
     return fresh_import("src.agents.building_agent")
@@ -97,6 +101,29 @@ def test_handle_building_query_falls_back_across_response_fields():
     assert response["content"] == "Fallback response"
     assert response["agent_answered"] == ["Hammarby dataset used"]
     assert metadata == {}
+
+
+def test_handle_building_query_loads_session_state_when_not_provided():
+    module = import_building_agent_module()
+    SessionStoreLoader.state = {"metadata": {"byggnadsid": "01-80-FILOSOFEN2-3"}}
+    FakeGraph.result = {
+        "final_response": "Building ID: 01-80-FILOSOFEN2-3\n\nResponse",
+        "context": {},
+        "metadata": {"byggnadsid": "01-80-FILOSOFEN2-3"},
+        "done_generic_sql": False,
+        "done_specialized_sql": False,
+        "done_vector": False,
+    }
+    FakeGraph.error = None
+
+    module.BuildingAgent().handle_building_query(
+        last_message="question",
+        messages=[],
+        metadata={},
+        thread_id="thread-from-store",
+    )
+
+    assert FakeGraph.received_state["session_state"] == {"metadata": {"byggnadsid": "01-80-FILOSOFEN2-3"}}
 
 
 def test_handle_building_query_returns_error_payload_when_graph_fails():

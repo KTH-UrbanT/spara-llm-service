@@ -93,7 +93,6 @@ class RedisQueueManager:
                 event_data = json.loads(message["data"])
                 thread_id = event_data.get("thread_name")
                 if not thread_id:
-                    print("⚠️ No thread_name in event.")
                     continue
 
                 self.process_thread_event(thread_id)

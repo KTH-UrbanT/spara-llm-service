@@ -30,7 +30,7 @@ class BuildingAgent:
               "vector_sources": Optional[list],   # deduped source identifiers from vector retrieval (if any)
             }
         """
-        session_state = _session_state 
+        session_state = _session_state if _session_state is not None else get_session_state(thread_id)
 
         initial_state = {
             "thread_id": thread_id,
