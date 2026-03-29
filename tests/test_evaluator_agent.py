@@ -115,3 +115,33 @@ def test_evaluator_temperature_unsupported_retries_without_temperature(mock_azur
     second_kwargs = mock_client.chat.completions.create.call_args_list[1].kwargs
     assert first_kwargs.get("temperature") == 0.0
     assert "temperature" not in second_kwargs
+
+
+@patch("src.agents.evaluator_agent.AzureOpenAI")
+def test_evaluator_extended_schema_payload(mock_azure_client_cls, mock_env_vars):
+    mock_client = MagicMock()
+    mock_azure_client_cls.return_value = mock_client
+
+    mock_resp = MagicMock()
+    mock_resp.choices = [
+        MagicMock(
+            message=MagicMock(
+                content=(
+                    '{"verdict":"fail","faithfulness_score":7,"groundedness_score":7,'
+                    '"completeness_score":6,"numeric_fidelity_score":5,'
+                    '"constraint_satisfaction_score":7,"uncertainty_calibration_score":7,'
+                    '"hard_fail":false,"hard_fail_reason":"",'
+                    '"issues":["Numeric value mismatches SQL row"],'
+                    '"corrective_feedback":"Use the exact value from aggregated_data."}'
+                )
+            )
+        )
+    ]
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    agent = EvaluatorAgent()
+    out = agent.evaluate("q", {"a": 1}, "answer")
+
+    assert out["verdict"] == "fail"
+    assert out["numeric_fidelity_score"] == 5
+    assert out["hard_fail"] is False

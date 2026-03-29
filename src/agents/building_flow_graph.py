@@ -304,7 +304,7 @@ GraphState = Annotated[Dict[str, Any], operator.or_]
 # - eval_verdict: Optional[str] -> "pass" | "fail"
 # - eval_feedback: Optional[str] -> corrective feedback for summarizer retries
 # - eval_retries: int -> number of evaluator-triggered retries so far
-# - eval_scores: Optional[dict] -> {faithfulness_score, completeness_score, issues}
+# - eval_scores: Optional[dict] -> score bundle + gating metadata
 
 
 def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
@@ -319,6 +319,153 @@ def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
     if "eval_scores" not in state:
         updates["eval_scores"] = None
     return updates
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _get_evaluator_mode() -> str:
+    """Return evaluator mode from env with compatibility fallbacks.
+
+    Modes:
+    - strict: precision-first thresholds
+    - balanced: moderate thresholds (default)
+    - off: full evaluator bypass
+    """
+    if not _env_bool("EVALUATOR_ENABLED", True):
+        return "off"
+
+    mode = str(os.getenv("EVALUATOR_MODE", "balanced") or "balanced").strip().lower()
+    if mode not in {"strict", "balanced", "off"}:
+        mode = "balanced"
+    return mode
+
+
+def _is_evaluator_bypassed() -> bool:
+    return _get_evaluator_mode() == "off"
+
+
+def _coerce_score(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        score = int(round(float(value)))
+    except Exception:
+        return None
+    if score < 0:
+        return 0
+    if score > 10:
+        return 10
+    return score
+
+
+def _derive_hard_fail_from_issues(issues: List[str]) -> bool:
+    if not issues:
+        return False
+    critical_tokens = (
+        "critical hallucination",
+        "critical unsupported claim",
+        "numeric contradiction",
+        "unmet explicit constraint",
+    )
+    for issue in issues:
+        text = str(issue).lower()
+        if any(token in text for token in critical_tokens):
+            return True
+    return False
+
+
+def _evaluation_profile(mode: str, legacy_threshold: int) -> Dict[str, float]:
+    """Return threshold profile for verdict gating.
+
+    Legacy threshold is preserved as a floor for main per-axis thresholds.
+    """
+    profile = {
+        "strict": {
+            "groundedness_min": 9,
+            "numeric_fidelity_min": 9,
+            "constraint_satisfaction_min": 8,
+            "completeness_min": 8,
+            "composite_min": 8.7,
+            "retry_lower": 7.5,
+        },
+        "balanced": {
+            "groundedness_min": 7,
+            "numeric_fidelity_min": 7,
+            "constraint_satisfaction_min": 7,
+            "completeness_min": 7,
+            "composite_min": 7.2,
+            "retry_lower": 6.0,
+        },
+        "off": {
+            "groundedness_min": 0,
+            "numeric_fidelity_min": 0,
+            "constraint_satisfaction_min": 0,
+            "completeness_min": 0,
+            "composite_min": 0,
+            "retry_lower": 0,
+        },
+    }.get(mode, {})
+
+    floor = max(0, min(10, int(legacy_threshold)))
+    if profile:
+        profile["groundedness_min"] = max(profile["groundedness_min"], floor)
+        profile["numeric_fidelity_min"] = max(profile["numeric_fidelity_min"], floor)
+        profile["constraint_satisfaction_min"] = max(profile["constraint_satisfaction_min"], floor)
+        profile["completeness_min"] = max(profile["completeness_min"], floor)
+    return profile
+
+
+def _compute_composite_score(
+    groundedness: Optional[int],
+    completeness: Optional[int],
+    numeric_fidelity: Optional[int],
+    constraint_satisfaction: Optional[int],
+    uncertainty_calibration: Optional[int],
+) -> Optional[float]:
+    vals = [groundedness, completeness, numeric_fidelity, constraint_satisfaction, uncertainty_calibration]
+    if any(v is None for v in vals):
+        return None
+    composite = (
+        0.35 * float(groundedness)
+        + 0.25 * float(numeric_fidelity)
+        + 0.20 * float(constraint_satisfaction)
+        + 0.15 * float(completeness)
+        + 0.05 * float(uncertainty_calibration)
+    )
+    return round(composite, 2)
+
+
+def _is_retry_candidate(eval_scores: Dict[str, Any]) -> bool:
+    if not isinstance(eval_scores, dict):
+        return False
+    if bool(eval_scores.get("hard_fail")):
+        return False
+
+    explicit = eval_scores.get("retry_candidate")
+    if isinstance(explicit, bool):
+        return explicit
+
+    composite = eval_scores.get("composite_score")
+    if composite is None:
+        return True
+
+    mode = _get_evaluator_mode()
+    profile = _evaluation_profile(mode, legacy_threshold=int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6")))
+    try:
+        comp = float(composite)
+    except Exception:
+        return True
+    return profile.get("retry_lower", 0.0) <= comp < profile.get("composite_min", 10.0)
 
 # ================================
 # Context understanding (UPDATED)
@@ -951,12 +1098,22 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         sess["last_intent_list"] = ctx.get("intent_list")
 
     out = (state.get("step_out") or []) + ["llm_summarizer ✓"]
+    mode = _get_evaluator_mode()
+    bypassed = mode == "off"
+    md = state.get("metadata") or {}
+    debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
+    debug = _deep_merge(debug, {
+        "evaluator_mode": mode,
+        "evaluator_bypassed": bypassed,
+    })
+
     print("[llm_summarizer] EXIT", flush=True)
     updates = {
         "final_response": answer,
         "session_state": sess,
         "step_out": out,
         "eval_retries": eval_retries,
+        "metadata": _deep_merge(md, {"debug": debug}),
     }
     updates.update(_ensure_evaluator_state_defaults(state))
     return updates
@@ -966,9 +1123,29 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     """Evaluate summarizer output and store structured verdict and retry metadata."""
     print("[evaluate_response] ENTER", flush=True)
 
+    if _is_evaluator_bypassed():
+        print("[evaluate_response] BYPASSED (mode=off)", flush=True)
+        md = state.get("metadata") or {}
+        debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
+        debug = _deep_merge(debug, {
+            "evaluator_mode": "off",
+            "evaluator_bypassed": True,
+        })
+        print("[evaluate_response] EXIT", flush=True)
+        return {
+            **_ensure_evaluator_state_defaults(state),
+            "eval_verdict": "pass",
+            "eval_feedback": None,
+            "eval_scores": {
+                "bypassed": True,
+            },
+            "metadata": _deep_merge(md, {"debug": debug}),
+        }
+
     question = state.get("last_message") or ""
     aggregated_data = state.get("aggregated_data") or {}
     answer = state.get("final_response") or ""
+    mode = _get_evaluator_mode()
 
     # Ensure evaluator keys are always available.
     base_updates = _ensure_evaluator_state_defaults(state)
@@ -980,32 +1157,96 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         answer=answer,
     )
 
-    threshold = int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6"))
-    faithfulness = result.get("faithfulness_score")
-    completeness = result.get("completeness_score")
+    legacy_threshold = int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6"))
+    profile = _evaluation_profile(mode, legacy_threshold)
+
+    faithfulness = _coerce_score(result.get("faithfulness_score"))
+    groundedness = _coerce_score(result.get("groundedness_score"))
+    completeness = _coerce_score(result.get("completeness_score"))
+    numeric_fidelity = _coerce_score(result.get("numeric_fidelity_score"))
+    constraint_satisfaction = _coerce_score(result.get("constraint_satisfaction_score"))
+    uncertainty_calibration = _coerce_score(result.get("uncertainty_calibration_score"))
+
+    if groundedness is None and faithfulness is not None:
+        groundedness = faithfulness
+    if faithfulness is None and groundedness is not None:
+        faithfulness = groundedness
+    if numeric_fidelity is None and groundedness is not None:
+        numeric_fidelity = groundedness
+    if constraint_satisfaction is None and completeness is not None:
+        constraint_satisfaction = completeness
+    if uncertainty_calibration is None and completeness is not None:
+        uncertainty_calibration = completeness
+
+    composite_score = _compute_composite_score(
+        groundedness=groundedness,
+        completeness=completeness,
+        numeric_fidelity=numeric_fidelity,
+        constraint_satisfaction=constraint_satisfaction,
+        uncertainty_calibration=uncertainty_calibration,
+    )
+
     issues = result.get("issues") if isinstance(result.get("issues"), list) else []
     feedback = result.get("corrective_feedback") if isinstance(result.get("corrective_feedback"), str) else None
+    hard_fail = bool(result.get("hard_fail")) or _derive_hard_fail_from_issues(issues)
+    hard_fail_reason = str(result.get("hard_fail_reason") or "").strip() or None
 
     # Normalize verdict and enforce threshold guardrails if scores are present.
     verdict = str(result.get("verdict") or "pass").lower().strip()
-    if faithfulness is not None and completeness is not None:
-        try:
-            if int(faithfulness) < threshold or int(completeness) < threshold:
-                verdict = "fail"
-        except Exception:
-            pass
+
+    # Hard fail rules always take precedence.
+    if hard_fail:
+        verdict = "fail"
+
+    # Prefer strict/balanced profile gates when dimensional scores are available.
+    has_dimensional_scores = all(
+        metric is not None
+        for metric in [groundedness, completeness, numeric_fidelity, constraint_satisfaction]
+    )
+    if has_dimensional_scores and composite_score is not None:
+        if (
+            groundedness < profile["groundedness_min"]
+            or numeric_fidelity < profile["numeric_fidelity_min"]
+            or constraint_satisfaction < profile["constraint_satisfaction_min"]
+            or completeness < profile["completeness_min"]
+            or composite_score < profile["composite_min"]
+        ):
+            verdict = "fail"
+    elif faithfulness is not None and completeness is not None:
+        # Backward-compatible guardrail if only legacy scores are returned.
+        if faithfulness < legacy_threshold or completeness < legacy_threshold:
+            verdict = "fail"
+
     if verdict not in {"pass", "fail"}:
         verdict = "pass"
 
+    retry_candidate = False
+    if verdict == "fail" and not hard_fail:
+        if composite_score is None:
+            retry_candidate = True
+        else:
+            retry_candidate = profile["retry_lower"] <= composite_score < profile["composite_min"]
+
     scores = {
+        "mode": mode,
         "faithfulness_score": faithfulness,
+        "groundedness_score": groundedness,
         "completeness_score": completeness,
+        "numeric_fidelity_score": numeric_fidelity,
+        "constraint_satisfaction_score": constraint_satisfaction,
+        "uncertainty_calibration_score": uncertainty_calibration,
+        "composite_score": composite_score,
+        "hard_fail": hard_fail,
+        "hard_fail_reason": hard_fail_reason,
+        "retry_candidate": retry_candidate,
         "issues": issues,
     }
 
     md = state.get("metadata") or {}
     debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
     debug = _deep_merge(debug, {
+        "evaluator_mode": mode,
+        "evaluator_bypassed": False,
         "eval_verdict": verdict,
         "eval_scores": scores,
         "eval_retries": retries,
@@ -1014,6 +1255,18 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         debug["eval_warning"] = "Evaluator failed answer quality check."
 
     print(f"[evaluate_response] verdict={verdict} retries={retries}", flush=True)
+    print(
+        "[evaluate_response] "
+        f"mode={mode} faithfulness={faithfulness} groundedness={groundedness} "
+        f"completeness={completeness} numeric={numeric_fidelity} "
+        f"constraint={constraint_satisfaction} uncertainty={uncertainty_calibration} "
+        f"composite={composite_score} hard_fail={hard_fail}",
+        flush=True,
+    )
+    if issues:
+        print(f"[evaluate_response] issues={issues}", flush=True)
+    if feedback:
+        print(f"[evaluate_response] feedback={feedback}", flush=True)
     print("[evaluate_response] EXIT", flush=True)
     return {
         **base_updates,
@@ -1025,8 +1278,19 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     }
 
 
+def route_after_summarizer(state: GraphState) -> str:
+    """Bypass evaluator entirely when mode=off."""
+    if _is_evaluator_bypassed():
+        print("[route_after_summarizer] evaluator bypass enabled → end", flush=True)
+        return "end"
+    return "evaluate_response"
+
+
 def route_after_evaluation(state: GraphState) -> str:
     """Route to END on pass or retry cap, otherwise loop back to summarizer once."""
+    if _is_evaluator_bypassed():
+        return "end"
+
     verdict = str(state.get("eval_verdict") or "pass").lower().strip()
     retries = int(state.get("eval_retries") or 0)
     max_retries = int(os.getenv("EVALUATOR_MAX_RETRIES", "1"))
@@ -1034,7 +1298,7 @@ def route_after_evaluation(state: GraphState) -> str:
     if verdict == "pass":
         return "end"
 
-    if verdict == "fail" and retries < max_retries:
+    if verdict == "fail" and retries < max_retries and _is_retry_candidate(state.get("eval_scores") or {}):
         return "retry_summarizer"
     return "end"
 
@@ -1130,7 +1394,14 @@ def build_building_flow_graph() -> StateGraph:
     )
 
     builder.add_edge("aggregator", "llm_summarizer")
-    builder.add_edge("llm_summarizer", "evaluate_response")
+    builder.add_conditional_edges(
+        "llm_summarizer",
+        route_after_summarizer,
+        {
+            "evaluate_response": "evaluate_response",
+            "end": END,
+        },
+    )
     builder.add_conditional_edges(
         "evaluate_response",
         route_after_evaluation,

@@ -145,7 +145,7 @@ class EvaluatorAgent(BaseAgent):
             params = {
                 "model": self.deployment,
                 "messages": messages,
-                "temperature": 0.0,
+                "temperature": 1.0,  # The actual model does not support temperature overrides.
             }
 
             try:
@@ -154,8 +154,9 @@ class EvaluatorAgent(BaseAgent):
                 if not self._is_temperature_unsupported_error(e):
                     raise
                 # Some Azure deployments only allow the default temperature.
-                logger.info("Evaluator model rejected temperature override; retrying without temperature.")
-                params.pop("temperature", None)
+                logger.info("Evaluator model rejected temperature override; retrying with default model temperature.")
+                #params["temperature"] = 1.0  # Use model default
+                params.pop("temperature", None)  # Remove temperature param to use model default
                 response = self.client.chat.completions.create(**params)
 
             content = (response.choices[0].message.content or "").strip()

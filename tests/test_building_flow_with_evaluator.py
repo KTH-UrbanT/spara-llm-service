@@ -16,6 +16,8 @@ def flow_module():
             "OPENAI_API_KEY": "test-key",
             "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": "resp-model",
             "OPENAI_RESPONSE_MODEL_API_VERSION": "2024-02-15-preview",
+            "EVALUATOR_ENABLED": "true",
+            "EVALUATOR_MODE": "balanced",
             "EVALUATOR_MAX_RETRIES": "1",
             "EVALUATOR_PASS_THRESHOLD": "6",
         },
@@ -77,8 +79,8 @@ def test_first_fail_retry_then_pass(flow_module):
     flow_module.evaluator_agent.evaluate.side_effect = [
         {
             "verdict": "fail",
-            "faithfulness_score": 4,
-            "completeness_score": 5,
+            "faithfulness_score": 7,
+            "completeness_score": 6,
             "issues": ["unsupported value"],
             "corrective_feedback": "Remove unsupported value and include EPC.",
         },
@@ -117,17 +119,17 @@ def test_both_fail_end_after_retry_cap(flow_module):
     flow_module.evaluator_agent.evaluate.side_effect = [
         {
             "verdict": "fail",
-            "faithfulness_score": 3,
-            "completeness_score": 4,
-            "issues": ["hallucination"],
-            "corrective_feedback": "Remove hallucination.",
+            "faithfulness_score": 7,
+            "completeness_score": 6,
+            "issues": ["missing required numeric detail"],
+            "corrective_feedback": "Include the exact numeric value from SQL.",
         },
         {
             "verdict": "fail",
-            "faithfulness_score": 2,
-            "completeness_score": 4,
-            "issues": ["hallucination"],
-            "corrective_feedback": "Still hallucinating.",
+            "faithfulness_score": 7,
+            "completeness_score": 6,
+            "issues": ["missing required numeric detail"],
+            "corrective_feedback": "Still missing exact numeric value.",
         },
     ]
 
@@ -143,6 +145,26 @@ def test_both_fail_end_after_retry_cap(flow_module):
     assert flow_module.route_after_evaluation(state) == "end"
     assert state["eval_retries"] == 1
     assert ((state.get("metadata") or {}).get("debug") or {}).get("eval_warning")
+
+
+def test_low_composite_fail_skips_retry(flow_module):
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer bad"
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "fail",
+        "faithfulness_score": 3,
+        "completeness_score": 4,
+        "issues": ["major omissions"],
+        "corrective_feedback": "N/A",
+    }
+
+    state = _base_state()
+    state.update(flow_module.llm_summarizer_node(state))
+    state.update(flow_module.evaluate_response_node(state))
+
+    assert flow_module.route_after_evaluation(state) == "end"
 
 
 def test_evaluator_exception_fail_open(flow_module):
@@ -162,3 +184,45 @@ def test_evaluator_exception_fail_open(flow_module):
 
     assert flow_module.route_after_evaluation(state) == "end"
     assert state["eval_verdict"] == "pass"
+
+
+def test_evaluator_bypass_routes_directly_to_end(flow_module):
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer without evaluator"
+
+    flow_module.evaluator_agent = MagicMock()
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "off"}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+
+        assert flow_module.route_after_summarizer(state) == "end"
+        assert ((state.get("metadata") or {}).get("debug") or {}).get("evaluator_bypassed") is True
+        flow_module.evaluator_agent.evaluate.assert_not_called()
+
+
+def test_strict_mode_enforces_high_precision_thresholds(flow_module):
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "groundedness_score": 9,
+        "faithfulness_score": 9,
+        "completeness_score": 8,
+        "numeric_fidelity_score": 8,
+        "constraint_satisfaction_score": 8,
+        "uncertainty_calibration_score": 8,
+        "issues": [],
+        "corrective_feedback": "Add exact numeric value from SQL result.",
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "strict"}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+        assert state["eval_verdict"] == "fail"
+        assert (state.get("eval_scores") or {}).get("mode") == "strict"
+        assert flow_module.route_after_evaluation(state) == "retry_summarizer"
