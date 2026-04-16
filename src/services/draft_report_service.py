@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional
 import redis
 
 from src.agents.openai_agent import OpenAIResponseAgent
+from src.agents.building_response_prompt import select_preferred_identifier
 from src.redis.redis_session_store import get_session_state
 
 
@@ -126,22 +127,30 @@ def _extract_building_id(metadata: Dict[str, Any], session_snapshot: Dict[str, A
     latest_metadata = (session_snapshot.get("latest_state", {}).get("metadata") or {})
     latest_aggregated = session_snapshot.get("latest_state", {}).get("aggregated_data") or {}
 
-    direct_candidates = [metadata, latest_metadata, latest_aggregated]
-    for candidate in direct_candidates:
-        if not isinstance(candidate, dict):
-            continue
-        for key in BUILDING_ID_KEYS:
-            value = _extract_first_nonempty(candidate.get(key))
-            if value:
-                return value
+    direct_sources = [metadata, latest_metadata, latest_aggregated, session_snapshot.get("latest_state", {}), session_snapshot.get("states", [])]
+    preferred_identifier = select_preferred_identifier(*direct_sources)
+    if preferred_identifier:
+        return preferred_identifier
 
-    for item in _walk_values(session_snapshot.get("states", [])):
-        if isinstance(item, dict):
-            for key in BUILDING_ID_KEYS:
-                value = _extract_first_nonempty(item.get(key))
-                if value:
-                    return value
     return "building_id_not_available"
+
+
+def _extract_building_id_from_messages(messages: List[Dict[str, Any]]) -> Optional[str]:
+    patterns = [
+        r"Building ID:\s*([A-Za-z0-9\-]+)",
+        r"byggnadsid[:\s]*([A-Za-z0-9\-]+)",
+    ]
+
+    for message in reversed(messages or []):
+        content = str(message.get("content") or "")
+        if not content:
+            continue
+        for pattern in patterns:
+            match = re.search(pattern, content, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+
+    return None
 
 
 def _collect_building_facts(metadata: Dict[str, Any], session_snapshot: Dict[str, Any]) -> Dict[str, Any]:
@@ -284,6 +293,10 @@ def generate_draft_report_response(
     session_snapshot = _normalize_session_state(session_state)
     address = _extract_address(metadata or {}, session_snapshot)
     building_id = _extract_building_id(metadata or {}, session_snapshot)
+    if building_id == "building_id_not_available":
+        building_id_from_messages = _extract_building_id_from_messages(messages or [])
+        if building_id_from_messages:
+            building_id = building_id_from_messages
     building_facts = _collect_building_facts(metadata or {}, session_snapshot)
 
     prompt = _build_report_prompt(

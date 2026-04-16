@@ -55,3 +55,40 @@ def test_generate_draft_report_stores_plain_text_artifact():
     assert payload["mime_type"] == "text/plain; charset=utf-8"
     assert payload["content"].startswith("# Draft Energy Report")
     assert "content_base64" not in payload
+
+
+def test_generate_draft_report_recovers_building_id_from_recent_messages():
+    redis_client = StubRedisClient()
+
+    stub_module("redis", StrictRedis=lambda *args, **kwargs: redis_client)
+    stub_module("src.agents.openai_agent", OpenAIResponseAgent=StubOpenAIResponseAgent)
+    stub_module(
+        "src.redis.redis_session_store",
+        get_session_state=lambda thread_id: {},
+    )
+
+    module = fresh_import("src.services.draft_report_service")
+    module._redis_client = redis_client
+
+    response = module.generate_draft_report_response(
+        thread_id="thread-2",
+        messages=[
+            {"role": "user", "content": "What is the energy class of my building?"},
+            {"role": "assistant", "content": "Can you please provide the building address?"},
+            {"role": "user", "content": "Artemisgatan 13"},
+            {
+                "role": "assistant",
+                "content": "Building ID: 01-80-SKYTTEN2-2\nThe latest energy performance certificate (EPC) reports an energy class of G.",
+            },
+            {"role": "user", "content": "can you give me the energy report ?"},
+        ],
+        metadata={},
+    )
+
+    assert response["downloadable_report"]["file_name"] == "01-80-SKYTTEN2-2.txt"
+    assert "01-80-SKYTTEN2-2" in response["content"]
+
+    assert len(redis_client.calls) == 1
+    _, _, raw_payload = redis_client.calls[0]
+    payload = json.loads(raw_payload)
+    assert payload["file_name"] == "01-80-SKYTTEN2-2.txt"
