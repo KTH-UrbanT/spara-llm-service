@@ -7,8 +7,10 @@ class DummyStateGraph:
 
 
 class DummyParseIntentAgent:
+    result = {"context": {}}
+
     def __call__(self, state):
-        return {"context": {}}
+        return type(self).result
 
 
 class DummySQLMapperLayer:
@@ -100,3 +102,72 @@ def test_vector_db_agent_persists_structured_hits_for_aggregation():
         "sources": ["boverket.pdf"],
         "snippets": ["Energy classes run from A to G."],
     }
+
+
+def test_understand_context_restores_prior_intent_for_address_only_follow_up():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "",
+            "intents": [],
+            "address": None,
+            "ambigious": True,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "i live in Professorsslingan 51",
+            "messages": [
+                {"role": "user", "content": "What is the energy class of my building?"},
+                {"role": "assistant", "content": "Can you please provide the building address?"},
+                {"role": "user", "content": "i live in Professorsslingan 51"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "context": {
+                    "parsed_intent": "SQL database",
+                    "intent_list": ["SQL database"],
+                },
+                "metadata": {},
+            },
+        }
+    )
+
+    assert result["context"]["address"] == "Professorsslingan 51"
+    assert result["context"]["parsed_intent"] == "SQL database"
+    assert result["context"]["intent_list"] == ["SQL database"]
+    assert result["metadata"]["address"] == "Professorsslingan 51"
+    assert result["metadata"]["address_from_user"] == "Professorsslingan 51"
+
+
+def test_understand_context_keeps_stored_address_when_new_turn_omits_it():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "What is the energy class of my building?",
+            "messages": [
+                {"role": "user", "content": "What is the energy class of my building?"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Professorsslingan 51",
+                    "address_from_user": "Professorsslingan 51",
+                }
+            },
+        }
+    )
+
+    assert result["context"]["intent_list"] == ["SQL database"]
+    assert result["metadata"]["address"] == "Professorsslingan 51"
+    assert result["metadata"]["address_from_user"] == "Professorsslingan 51"

@@ -112,6 +112,64 @@ def _ascii_fold(s: Optional[str]) -> Optional[str]:
         return s
     return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
 
+
+def _coerce_intent_list(ctx: Dict[str, Any]) -> List[str]:
+    intent_list = ctx.get("intent_list")
+    if isinstance(intent_list, (list, tuple)):
+        return [str(item).strip() for item in intent_list if str(item).strip()]
+
+    intents = ctx.get("intents")
+    if isinstance(intents, (list, tuple)):
+        return [str(item).strip() for item in intents if str(item).strip()]
+
+    parsed_intent = ctx.get("parsed_intent")
+    if isinstance(parsed_intent, str) and parsed_intent.strip():
+        return [part.strip() for part in re.split(r"\s*;\s*", parsed_intent) if part.strip()]
+
+    return []
+
+
+def _last_assistant_requested_address(messages: List[Dict[str, Any]]) -> bool:
+    for message in reversed(messages or []):
+        if message.get("role") != "assistant":
+            continue
+        content = str(message.get("content") or "").lower()
+        if "building address" in content:
+            return True
+        return False
+    return False
+
+
+def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+
+    candidate = str(text).strip()
+    if not candidate:
+        return None
+
+    candidate = re.sub(
+        r"^(?:i live in|i'm at|i am at|my address is|address is|it's|it is)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip(" .,:;")
+
+    if not candidate:
+        return None
+
+    if _is_address_recognized(candidate):
+        return candidate
+
+    folded = _ascii_fold(candidate)
+    if folded and _is_address_recognized(folded):
+        return candidate
+
+    if re.search(r"\d", candidate) and re.search(r"[A-Za-zÅÄÖåäö]", candidate):
+        return candidate
+
+    return None
+
 # --- replace your _safe_ctx_from_parsed with this ---
 def _safe_ctx_from_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -326,6 +384,7 @@ def understand_context_node(state: GraphState) -> GraphState:
 
     prior_state = _latest_session_state(state.get("session_state"))
     prior_metadata = prior_state.get("metadata") if isinstance(prior_state, dict) else {}
+    prior_context = prior_state.get("context") if isinstance(prior_state, dict) else {}
     incoming_metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
     merged_metadata = dict(prior_metadata or {})
     for key, value in (incoming_metadata or {}).items():
@@ -346,25 +405,45 @@ def understand_context_node(state: GraphState) -> GraphState:
     ctx = copy.deepcopy(parsed.get("context") or {})
     print(f"[understand_context] ctx keys before ensure={list(ctx.keys())}", flush=True)
 
-    # Ensure required intent keys exist (no transformations)
-    if "parsed_intent" not in ctx:
-        ctx["parsed_intent"] = None
-    if "intent_list" not in ctx or ctx["intent_list"] is None:
-        ctx["intent_list"] = []
+    # Normalize parser output shape so downstream nodes always see the same keys.
+    intent_list = _coerce_intent_list(ctx)
+    ctx["intent_list"] = intent_list
+    if "parsed_intent" not in ctx or ctx.get("parsed_intent") in (None, ""):
+        ctx["parsed_intent"] = " ; ".join(intent_list) if intent_list else None
 
-    # Preserve effective_query for address-only followups (logic kept as requested)
-    if ctx["parsed_intent"] == "" and  ctx.get("address") != "":
-        message_list = state.get("messages", [])
-        if len(message_list) >= 3:
-            try:
-                ctx["intent_list"], ctx["parsed_intent"] = message_list[-2]['intent_list'], message_list[-2]['parsed_intent']
-                print("[understand_context] restored intent from -3 message", flush=True)
-            except Exception as e:
-                print(f"[understand_context] restore intent failed: {e}", flush=True)
+    # If the parser missed an address on an address-only follow-up, recover it heuristically.
+    if not ctx.get("address") and _last_assistant_requested_address(state.get("messages", [])):
+        recovered_address = _extract_address_candidate_from_text(state.get("last_message"))
+        if recovered_address:
+            ctx["address"] = recovered_address
+            print(f"[understand_context] recovered address from raw message: {recovered_address!r}", flush=True)
+
+    # Preserve intent for address-only followups by using the latest stored building context.
+    if not ctx.get("parsed_intent") and ctx.get("address"):
+        prior_intent_list = _coerce_intent_list(prior_context or {})
+        prior_parsed_intent = (prior_context or {}).get("parsed_intent")
+        if prior_intent_list:
+            ctx["intent_list"] = copy.deepcopy(prior_intent_list)
+        if prior_parsed_intent:
+            ctx["parsed_intent"] = prior_parsed_intent
+        elif ctx.get("intent_list"):
+            ctx["parsed_intent"] = " ; ".join(ctx["intent_list"])
+        print(
+            f"[understand_context] restored prior intent parsed={ctx.get('parsed_intent')!r} intent_list={ctx.get('intent_list')}",
+            flush=True,
+        )
+
+    # Keep any previously stored address available across turns even when the parser omits it.
+    stored_address = (
+        (state.get("metadata") or {}).get("address")
+        or (state.get("metadata") or {}).get("address_from_user")
+        or (prior_metadata or {}).get("address")
+        or (prior_metadata or {}).get("address_from_user")
+    )
 
     # Metadata: if address present in parsed input, set both fields
     print(ctx)
-    addr = ctx.get("address")
+    addr = ctx.get("address") or stored_address
     if addr:
         md = state.get("metadata") or {}
         # Shallow copy to avoid mutating any external references
@@ -372,6 +451,7 @@ def understand_context_node(state: GraphState) -> GraphState:
         md["address"] = addr
         md["address_from_user"] = addr
         state["metadata"] = md  # write back only when modified
+        ctx["address"] = addr
         print(f"[understand_context] address set in metadata: {addr!r}", flush=True)
 
     # Write context back to state (in place) and return state

@@ -114,7 +114,7 @@ def test_routes_through_building_agent_when_switching_from_building_to_generic()
     )
 
     assert response["content"] == "building answer"
-    assert response["classification"] == "generic"
+    assert response["classification"] == "building_specific"
     assert response["agent_answered"] == "building"
     assert response["role"] == "assistant"
     assert metadata == {"address": ["street 1"]}

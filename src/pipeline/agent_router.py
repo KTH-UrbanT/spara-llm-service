@@ -125,7 +125,7 @@ class AgentRouter:
             # } , metadata
             out , metadata_updated  = self.building.handle_building_query(last_message, messages, base_metadata, thread_id)
             out['role'] = 'assistant'
-            out['classification']=classified
+            out['classification'] = "building_specific"
             return out , metadata_updated
 
         if classified == "generic":
