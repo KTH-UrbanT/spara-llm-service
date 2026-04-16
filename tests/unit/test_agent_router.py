@@ -5,6 +5,21 @@ class StubRouterAgent:
     next_classification = "generic"
     last_call = None
 
+    def wants_draft_report(self, message):
+        return "report" in message.lower()
+
+    def wants_expert_handoff(self, message):
+        lowered = message.lower()
+        return "expert" in lowered or "ekr" in lowered
+
+    def is_confirmation(self, message):
+        normalized = message.strip().lower()
+        return normalized == "yes"
+
+    def is_rejection(self, message):
+        normalized = message.strip().lower()
+        return normalized == "no"
+
     def classify_question(self, message, previous_classification):
         type(self).last_call = (message, previous_classification)
         return type(self).next_classification
@@ -189,7 +204,7 @@ def test_routes_conversational_requests():
 
 def test_routes_draft_report_requests():
     module = import_agent_router_module()
-    StubRouterAgent.next_classification = "draft_energy_report"
+    StubRouterAgent.next_classification = "generic"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -209,6 +224,22 @@ def test_routes_draft_report_requests():
         [{"role": "user", "content": "prepare a draft report"}],
         {"address": "Main Street 1"},
     )
+
+
+def test_report_requests_clear_stale_expert_handoff_confirmation():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "expert_handoff"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "can you give me the energy report?"}],
+        last_message="can you give me the energy report?",
+        metadata={"expert_handoff_pending_confirmation": True, "address": "Main Street 1"},
+        thread_id="thread-8",
+    )
+
+    assert response["classification"] == "draft_energy_report"
+    assert metadata["expert_handoff_pending_confirmation"] is False
 
 
 def test_unknown_classification_falls_back_cleanly():

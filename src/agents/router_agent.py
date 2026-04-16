@@ -207,6 +207,43 @@ class RouterAgent(BaseAgent):
 
         return any(phrase in lowered for phrase in explicit_phrases + implicit_phrases)
 
+    def wants_draft_report(self, message: str) -> bool:
+        if not message:
+            return False
+
+        lowered = message.strip().lower()
+        explicit_phrases = [
+            "draft energy report",
+            "draft report",
+            "energy report",
+            "generate a report",
+            "generate report",
+            "create a report",
+            "create report",
+            "prepare a report",
+            "prepare report",
+            "download a report",
+            "download report",
+        ]
+
+        return any(phrase in lowered for phrase in explicit_phrases)
+
+    def _matches_exact_or_prefix_phrase(self, normalized: str, phrases: list[str]) -> bool:
+        for phrase in phrases:
+            if normalized == phrase:
+                return True
+            if normalized.startswith(f"{phrase} "):
+                return True
+            if normalized.startswith(f"{phrase},"):
+                return True
+            if normalized.startswith(f"{phrase}."):
+                return True
+            if normalized.startswith(f"{phrase}!"):
+                return True
+            if normalized.startswith(f"{phrase}?"):
+                return True
+        return False
+
     def is_confirmation(self, message: str) -> bool:
         if not message:
             return False
@@ -229,7 +266,7 @@ class RouterAgent(BaseAgent):
             "please send the email",
             "yes send the email",
         ]
-        return any(phrase in normalized for phrase in positive_responses)
+        return self._matches_exact_or_prefix_phrase(normalized, positive_responses)
 
     def is_rejection(self, message: str) -> bool:
         if not message:
@@ -249,7 +286,7 @@ class RouterAgent(BaseAgent):
             "don't send",
             "do not send",
         ]
-        return any(phrase in normalized for phrase in negative_responses)
+        return self._matches_exact_or_prefix_phrase(normalized, negative_responses)
 
 
     def classify_question(self, message: str, previous_classification: Optional[str] = None) -> str:

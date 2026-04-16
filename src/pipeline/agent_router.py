@@ -99,7 +99,18 @@ class AgentRouter:
         else:
             previous_classification = None
 
-        classified = self.router.classify_question(last_message, previous_classification)
+        if getattr(self.router, "wants_draft_report", None) and self.router.wants_draft_report(last_message):
+            classified = "draft_energy_report"
+        elif getattr(self.router, "wants_expert_handoff", None) and self.router.wants_expert_handoff(last_message):
+            classified = "expert_handoff"
+        else:
+            classified = self.router.classify_question(last_message, previous_classification)
+
+        if pending_handoff and classified != "expert_handoff":
+            base_metadata = {
+                **base_metadata,
+                "expert_handoff_pending_confirmation": False,
+            }
 
         if classified == "draft_energy_report":
             return generate_draft_report_response(thread_id, messages, base_metadata), base_metadata
