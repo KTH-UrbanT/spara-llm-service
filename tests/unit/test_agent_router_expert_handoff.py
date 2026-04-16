@@ -18,15 +18,32 @@ class FakeRouterAgent:
         return "expert" in lowered or "ekr" in lowered or "human help" in lowered
 
     def is_confirmation(self, message):
-        normalized = message.strip().lower()
-        return any(
-            normalized == phrase or normalized.startswith(f"{phrase} ")
-            for phrase in {"yes", "yes please", "send it", "send the email", "please send the email"}
-        )
+        normalized = message.strip().lower().strip(" \t\r\n.,!?")
+        return normalized in {
+            "yes",
+            "yes please",
+            "please do",
+            "go ahead",
+            "send it",
+            "send it please",
+            "send the email",
+            "please send the email",
+            "yes send the email",
+            "yes please send the email",
+        }
 
     def is_rejection(self, message):
-        normalized = message.strip().lower()
-        return any(phrase in normalized for phrase in {"no", "cancel", "don't send"})
+        normalized = message.strip().lower().strip(" \t\r\n.,!?")
+        return normalized in {
+            "no",
+            "no thanks",
+            "no thank you",
+            "don't send",
+            "do not send",
+            "cancel",
+            "not now",
+            "never mind",
+        }
 
 
 class FakeBuildingAgent:

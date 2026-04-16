@@ -228,65 +228,44 @@ class RouterAgent(BaseAgent):
 
         return any(phrase in lowered for phrase in explicit_phrases)
 
-    def _matches_exact_or_prefix_phrase(self, normalized: str, phrases: list[str]) -> bool:
-        for phrase in phrases:
-            if normalized == phrase:
-                return True
-            if normalized.startswith(f"{phrase} "):
-                return True
-            if normalized.startswith(f"{phrase},"):
-                return True
-            if normalized.startswith(f"{phrase}."):
-                return True
-            if normalized.startswith(f"{phrase}!"):
-                return True
-            if normalized.startswith(f"{phrase}?"):
-                return True
-        return False
+    def _normalize_binary_reply(self, message: str) -> str:
+        return message.strip().lower().strip(" \t\r\n.,!?")
 
     def is_confirmation(self, message: str) -> bool:
         if not message:
             return False
 
-        normalized = message.strip().lower()
-        positive_responses = [
+        normalized = self._normalize_binary_reply(message)
+        positive_responses = {
             "yes",
-            "y",
             "yes please",
             "please do",
             "go ahead",
             "send it",
             "send it please",
-            "do it",
-            "ok",
-            "okay",
-            "sure",
-            "confirm",
             "send the email",
             "please send the email",
             "yes send the email",
-        ]
-        return self._matches_exact_or_prefix_phrase(normalized, positive_responses)
+            "yes please send the email",
+        }
+        return normalized in positive_responses
 
     def is_rejection(self, message: str) -> bool:
         if not message:
             return False
 
-        normalized = message.strip().lower()
-        negative_responses = [
+        normalized = self._normalize_binary_reply(message)
+        negative_responses = {
             "no",
-            "n",
             "no thanks",
             "no thank you",
-            "don't",
-            "do not",
+            "don't send",
+            "do not send",
             "cancel",
             "not now",
             "never mind",
-            "don't send",
-            "do not send",
-        ]
-        return self._matches_exact_or_prefix_phrase(normalized, negative_responses)
+        }
+        return normalized in negative_responses
 
 
     def classify_question(self, message: str, previous_classification: Optional[str] = None) -> str:
