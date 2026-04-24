@@ -25,14 +25,30 @@ class SessionStoreLoader:
     state = {}
 
 
+class SourceLinkResolver:
+    calls = []
+    result = []
+
+    @classmethod
+    def resolve(cls, source_keys):
+        cls.calls.append(list(source_keys))
+        return cls.result
+
+
 def import_building_agent_module():
     SessionStoreRecorder.calls = []
     FakeGraph.received_state = None
+    SourceLinkResolver.calls = []
+    SourceLinkResolver.result = []
     stub_module("src.agents.building_flow_graph", build_building_flow_graph=lambda: FakeGraph())
     stub_module(
         "src.redis.redis_session_store",
         get_session_state=lambda thread_id: SessionStoreLoader.state,
         update_session_state=SessionStoreRecorder.update,
+    )
+    stub_module(
+        "src.services.source_link_registry",
+        resolve_source_links=SourceLinkResolver.resolve,
     )
     return fresh_import("src.agents.building_agent")
 
@@ -100,6 +116,42 @@ def test_handle_building_query_falls_back_across_response_fields():
 
     assert response["content"] == "Fallback response"
     assert response["agent_answered"] == ["Hammarby dataset used"]
+    assert metadata == {}
+
+
+def test_handle_building_query_includes_vector_sources_from_merged_agent_data():
+    module = import_building_agent_module()
+    SourceLinkResolver.result = [
+        {
+            "name": "BRF Energieffektiv 2015",
+            "filename": "brfenergieffektiv_2015.pdf",
+            "link": "https://example.com/brfenergieffektiv_2015.pdf",
+        }
+    ]
+    FakeGraph.result = {
+        "final_response": "Energy class information",
+        "context": {},
+        "metadata": {},
+        "done_generic_sql": False,
+        "done_specialized_sql": False,
+        "done_vector": True,
+        "agent_data": {
+            "vector": {
+                "sources": [r"C:\docs\brfenergieffektiv_2015.pdf"],
+            }
+        },
+    }
+    FakeGraph.error = None
+
+    response, metadata = module.BuildingAgent().handle_building_query(
+        last_message="What is energy class?",
+        messages=[{"role": "user", "content": "What is energy class?"}],
+        metadata={},
+        thread_id="thread-vector",
+    )
+
+    assert response["sources"] == SourceLinkResolver.result
+    assert SourceLinkResolver.calls == [[r"C:\docs\brfenergieffektiv_2015.pdf"]]
     assert metadata == {}
 
 

@@ -140,13 +140,23 @@ class AgentRouter:
             return out , metadata_updated
 
         if classified == "generic":
-            response_text = self.generic.handle_generic_input(last_message, messages)
-            return {
+            generic_response = self.generic.handle_generic_input(last_message, messages)
+            if isinstance(generic_response, dict):
+                response_text = generic_response.get("content", "")
+                sources = generic_response.get("sources") or []
+            else:
+                response_text = generic_response or ""
+                sources = []
+
+            payload = {
                 'role' : 'assistant' , 
                 'content' :response_text , 
                 'classification' : classified  , 
                 'agent_answered' : "generic"
-            } , base_metadata
+            }
+            if sources:
+                payload["sources"] = sources
+            return payload , base_metadata
             # return _normalize_response(
             #     content=response_text,
             #     classification=classified,

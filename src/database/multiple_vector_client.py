@@ -79,7 +79,7 @@ class VectorClient:
             return [
                 {
                     "page_content": doc.page_content,
-                    "metadata": doc.metadata
+                    "source": (doc.metadata or {}).get("source", ""),
                 }
                 for doc in docs
             ]

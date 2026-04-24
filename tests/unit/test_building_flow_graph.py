@@ -79,7 +79,7 @@ def test_vector_db_agent_persists_structured_hits_for_aggregation():
     module.vector_database.hits = [
         {
             "page_content": "Energy classes run from A to G.",
-            "metadata": "boverket.pdf",
+            "source": "boverket.pdf",
         }
     ]
 
@@ -96,7 +96,7 @@ def test_vector_db_agent_persists_structured_hits_for_aggregation():
         "hits": [
             {
                 "page_content": "Energy classes run from A to G.",
-                "metadata": "boverket.pdf",
+                "source": "boverket.pdf",
             }
         ],
         "sources": ["boverket.pdf"],

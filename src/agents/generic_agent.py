@@ -1,8 +1,9 @@
 import os
 import logging
 from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
-from typing import List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional, Union
 from src.database.vector_client import VectorClient , VectorClientConfig
+from src.services.source_link_registry import resolve_source_links
 from dotenv import load_dotenv
 import time
 # Ensure BaseAgent is correctly imported.
@@ -128,11 +129,16 @@ class GenericAgent(BaseAgent):
             logger.error(f"Failed to initialize AzureOpenAI client: {e}")
             raise RuntimeError(f"Failed to initialize AzureOpenAI client: {e}")      
         
-    def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
+    def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[Dict[str, Any]]:
         start_time = time.time()  
         results = self.vector_client.query(last_message)
+        raw_sources = []
+        for item in results or []:
+            source_key = str((item or {}).get("source") or "").strip()
+            if source_key and source_key not in raw_sources:
+                raw_sources.append(source_key)
         #content_from_doc = ' '.join(i['page_content'] for i in results)
-        content_from_doc = '\n\n'.join(f"Source: {i['metadata']}\nContent: {i['page_content']}" for i in results)
+        content_from_doc = '\n\n'.join(f"Source: {i['source']}\nContent: {i['page_content']}" for i in results)
         logger.info(f"Received generic input. Last message: '{last_message[:70]}...'")
 
         if not isinstance(last_message, str):
@@ -201,16 +207,19 @@ class GenericAgent(BaseAgent):
             print(f"Generic Agent responded in {end_time - start_time} seconds")
             logger.info("Successfully received response from Azure OpenAI.")
             logger.debug(f"Received content: '{response_content[:100]}...'")
-            return response_content
+            return {
+                "content": response_content,
+                "sources": resolve_source_links(raw_sources),
+            }
         except APIConnectionError as e:
             logger.error(f"Could not connect to Azure OpenAI API: {e}", exc_info=True)
-            return "Error: Unable to connect to the AI service. Please check your network connection."
+            return {"content": "Error: Unable to connect to the AI service. Please check your network connection.", "sources": []}
         except RateLimitError as e:
             logger.error(f"Azure OpenAI API rate limit exceeded: {e}", exc_info=True)
-            return "Error: The AI service is currently busy. Please try again shortly."
+            return {"content": "Error: The AI service is currently busy. Please try again shortly.", "sources": []}
         except APIStatusError as e:
             logger.error(f"Azure OpenAI API returned an error status {e.status_code}: {e.response}", exc_info=True)
-            return f"Error: An issue occurred with the AI service. Status code: {e.status_code}"
+            return {"content": f"Error: An issue occurred with the AI service. Status code: {e.status_code}", "sources": []}
         except Exception as e:
             logger.error(f"An unexpected error occurred during API call: {e}", exc_info=True)
-            return "Error: An unexpected error occurred while processing your request."        
+            return {"content": "Error: An unexpected error occurred while processing your request.", "sources": []}

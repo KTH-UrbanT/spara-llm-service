@@ -1,4 +1,5 @@
 import json
+import tempfile
 
 from tests.support import fresh_import, stub_module
 
@@ -60,10 +61,9 @@ def import_vector_client_module():
 
 
 def write_config_file():
-    path = "tests/vector_client_config.json"
-    with open(path, "w", encoding="utf-8") as handle:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
         handle.write(CONFIG_JSON)
-    return path
+        return handle.name
 
 
 def test_vector_client_config_reads_json_and_environment(monkeypatch):
@@ -97,7 +97,7 @@ def test_vector_client_initializes_connection_and_queries_documents(monkeypatch)
 
     assert FakeVectorDataBase.instances[0].setup_calls == 1
     assert FakeRetrievalText.instances[0].vector_search is FakeVectorDataBase.instances[0].vector_search
-    assert result == [{"page_content": "district heating", "metadata": "source-a"}]
+    assert result == [{"page_content": "district heating", "source": "source-a"}]
 
 
 def test_vector_client_returns_empty_list_when_retrieval_fails(monkeypatch):

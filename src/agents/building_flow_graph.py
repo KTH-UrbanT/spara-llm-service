@@ -831,7 +831,7 @@ def vector_db_agent_node(state: GraphState) -> GraphState:
         print(f"[vector_db_agent] hits={count}", flush=True)
         if hits:
             snippets = [str((item or {}).get("page_content", "")).strip() for item in hits]
-            sources = [str((item or {}).get("metadata", "")).strip() for item in hits]
+            sources = [str((item or {}).get("source", "")).strip() for item in hits]
             content_from_doc = ' '.join(snippet for snippet in snippets if snippet)
             outs.append("Vector hits:\n" + content_from_doc )
             updates["agent_data_vector"] = {

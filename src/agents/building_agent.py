@@ -2,6 +2,21 @@
 from typing import Any, Dict
 from src.agents.building_flow_graph import build_building_flow_graph
 from src.redis.redis_session_store import get_session_state, update_session_state
+from src.services.source_link_registry import resolve_source_links
+
+
+def _vector_source_keys(final_state: Dict[str, Any]) -> list:
+    packed_vector = final_state.get("agent_data_vector") or {}
+    if isinstance(packed_vector, dict) and packed_vector.get("sources"):
+        return packed_vector.get("sources") or []
+
+    agent_data = final_state.get("agent_data") or {}
+    if isinstance(agent_data, dict):
+        vector_data = agent_data.get("vector") or {}
+        if isinstance(vector_data, dict) and vector_data.get("sources"):
+            return vector_data.get("sources") or []
+
+    return final_state.get("agent_vector_sources") or []
 
 
 class BuildingAgent:
@@ -82,12 +97,18 @@ class BuildingAgent:
             agents_used.append('Documents stored in Vector database used')
 
         agent_answered = ((md.get('debug') or {}).get('agent_answered')) or ""  # empty string if missing
+        source_keys = _vector_source_keys(final_state)
+        sources = resolve_source_links(source_keys)
         print(response)
 
-        return {
+        payload = {
             "content": response,
             "classification": "building_specific",     # router-level classification
             "parsed_intent": parsed_intent,   # parsed intent label
             'intent_list' : intent_list , 
-            "agent_answered": agents_used        # helpful for hybrid/vector QA
-        } , md
+            "agent_answered": agents_used,        # helpful for hybrid/vector QA
+        }
+        if sources:
+            payload["sources"] = sources
+
+        return payload , md

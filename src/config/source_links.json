@@ -1,0 +1,122 @@
+{
+  "brfenergieffektiv_2015.pdf": {
+    "title": "BRF Energieffektiv 2015",
+    "link": "https://www.energimyndigheten.se/effektiv-energianvandning/flerbostadshus/"
+  },
+  "Checklista_Offert_varmesystem_2025.pdf": {
+    "title": "Checklista: offert v\u00e4rmesystem 2025",
+    "link": "https://www.energiradgivningen.se/hitta-och-valja-foretag/"
+  },
+  "ekr_imp_files.txt": {
+    "title": "EKR referensanteckningar",
+    "link": ""
+  },
+  "electricity_enduses.csv": {
+    "title": "Electricity end uses reference data",
+    "link": ""
+  },
+  "EnergiBRFhandbokenSthlm.pdf": {
+    "title": "EnergiBRF-handboken Stockholm",
+    "link": "https://energiochklimatradgivningen.se/foreningar.27.html"
+  },
+  "Faktablad_Anvnd din luftluftvrmepump rtt_2025.pdf": {
+    "title": "Faktablad: Anv\u00e4nd din luft-luftv\u00e4rmepump r\u00e4tt 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Faktablad_Energitips_Tvttstugan_2025.pdf": {
+    "title": "Faktablad: Energitips tv\u00e4ttstugan 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Faktablad_Fjarrvrme_Undercentral_2025.pdf": {
+    "title": "Faktablad: Fj\u00e4rrv\u00e4rme undercentral 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Faktablad_Installera luftluftvrmepump_2025.pdf": {
+    "title": "Faktablad: Installera luft-luftv\u00e4rmepump 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Faktablad_Teknisk-forvaltning-Energi_2025.pdf": {
+    "title": "Optimera er energianv\u00e4ndning med Teknisk f\u00f6rvaltning Energi",
+    "link": "https://aff-forum.se/teknisk-forvaltning-energi/"
+  },
+  "Fixa laddplats i BRF_Steg fr steg_2025.pdf": {
+    "title": "Fixa laddplats i BRF: steg f\u00f6r steg 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Fixa laddplats i fretag_2025.pdf": {
+    "title": "Fixa laddplats i f\u00f6retag 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Fixa laddplats i samfllighet_2025.pdf": {
+    "title": "Fixa laddplats i samf\u00e4llighet 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "hvac_systems.csv": {
+    "title": "HVAC systems reference data",
+    "link": ""
+  },
+  "id.csv": {
+    "title": "ID reference data",
+    "link": ""
+  },
+  "Infobroschyren EKR_2025.pdf": {
+    "title": "Infobroschyren EKR 2025",
+    "link": "https://www.energimyndigheten.se/effektiv-energianvandning/hushall/energi--och-klimatradgivning/"
+  },
+  "Kunskapsbank.docx": {
+    "title": "Kunskapsbank",
+    "link": "https://klimatknuffen.se/knowledge"
+  },
+  "links_for_scrape.xlsx": {
+    "title": "Links for scrape manifest",
+    "link": ""
+  },
+  "meterings.csv": {
+    "title": "Meterings reference data",
+    "link": ""
+  },
+  "meterings_reordered.csv": {
+    "title": "Meterings reordered reference data",
+    "link": ""
+  },
+  "normalization_values.csv": {
+    "title": "Normalization values reference data",
+    "link": ""
+  },
+  "results-old.csv": {
+    "title": "Results reference data (old)",
+    "link": ""
+  },
+  "results.csv": {
+    "title": "Results reference data",
+    "link": ""
+  },
+  "results_reordered.csv": {
+    "title": "Results reordered reference data",
+    "link": ""
+  },
+  "standard_values.json": {
+    "title": "Standard values reference data",
+    "link": ""
+  },
+  "Tips om vrmepumpar_2025.pdf": {
+    "title": "Tips om v\u00e4rmepumpar 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Tips vid energirenovering av fnster_2025.pdf": {
+    "title": "Tips vid energirenovering av f\u00f6nster 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "Tips vid isolering_2025.pdf": {
+    "title": "Tips vid isolering 2025",
+    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+  },
+  "users.csv": {
+    "title": "Users reference data",
+    "link": ""
+  },
+  "V\u00e4gledning f\u00f6r energi- och driftoptimering.pdf": {
+    "title": "V\u00e4gledning f\u00f6r energi- och driftoptimering",
+    "link": "https://aff-forum.se/category/kunskapsbanken/anpassade-mallar/#teknisk-forvaltning-energi-2"
+  }
+}

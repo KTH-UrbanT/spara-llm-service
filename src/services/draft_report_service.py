@@ -176,6 +176,18 @@ def _sanitize_filename_component(value: str) -> str:
     return cleaned or "building_id_not_available"
 
 
+def _build_report_filename(building_id: str, address: str) -> str:
+    primary = _extract_first_nonempty(building_id)
+    if primary and primary != "building_id_not_available":
+        return f"{_sanitize_filename_component(primary)}.txt"
+
+    fallback_address = _extract_first_nonempty(address)
+    if fallback_address:
+        return f"{_sanitize_filename_component(fallback_address)}.txt"
+
+    return "draft_energy_report.txt"
+
+
 def _build_report_prompt(
     *,
     thread_id: str,
@@ -257,12 +269,13 @@ def _store_report(
     *,
     thread_id: str,
     building_id: str,
+    address: str,
     report_text: str,
 ) -> Dict[str, Any]:
     report_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc)
     expires_at = created_at + timedelta(seconds=REPORT_TTL_SECONDS)
-    file_name = f"{_sanitize_filename_component(building_id)}.txt"
+    file_name = _build_report_filename(building_id, address)
 
     payload = {
         "report_id": report_id,
@@ -328,6 +341,7 @@ def generate_draft_report_response(
     artifact = _store_report(
         thread_id=thread_id,
         building_id=building_id,
+        address=address,
         report_text=report_text,
     )
 

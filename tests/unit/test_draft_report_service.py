@@ -92,3 +92,31 @@ def test_generate_draft_report_recovers_building_id_from_recent_messages():
     _, _, raw_payload = redis_client.calls[0]
     payload = json.loads(raw_payload)
     assert payload["file_name"] == "01-80-SKYTTEN2-2.txt"
+
+
+def test_generate_draft_report_uses_address_filename_when_building_id_missing():
+    redis_client = StubRedisClient()
+
+    stub_module("redis", StrictRedis=lambda *args, **kwargs: redis_client)
+    stub_module("src.agents.openai_agent", OpenAIResponseAgent=StubOpenAIResponseAgent)
+    stub_module(
+        "src.redis.redis_session_store",
+        get_session_state=lambda thread_id: {
+            "metadata": {"address": "Artemisgatan 13"}
+        },
+    )
+
+    module = fresh_import("src.services.draft_report_service")
+    module._redis_client = redis_client
+
+    response = module.generate_draft_report_response(
+        thread_id="thread-3",
+        messages=[{"role": "user", "content": "Create a draft report"}],
+        metadata={},
+    )
+
+    assert response["downloadable_report"]["file_name"] == "Artemisgatan_13.txt"
+
+    _, _, raw_payload = redis_client.calls[0]
+    payload = json.loads(raw_payload)
+    assert payload["file_name"] == "Artemisgatan_13.txt"

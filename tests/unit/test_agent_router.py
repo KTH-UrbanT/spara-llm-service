@@ -50,10 +50,11 @@ class StubClusterAgent:
 
 class StubGenericAgent:
     last_call = None
+    next_response = "generic answer"
 
     def handle_generic_input(self, last_message, messages):
         type(self).last_call = (last_message, messages)
-        return "generic answer"
+        return type(self).next_response
 
 
 class StubConversationalAgent:
@@ -96,6 +97,7 @@ def import_agent_router_module():
 def test_routes_generic_requests():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = "generic answer"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -111,6 +113,42 @@ def test_routes_generic_requests():
     assert response["role"] == "assistant"
     assert metadata == {"kept": True}
     assert StubGenericAgent.last_call == ("hello", [{"role": "user", "content": "hello"}])
+
+
+def test_routes_generic_requests_with_structured_sources():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = {
+        "content": "generic answer",
+        "sources": [
+            {
+                "name": "BRF Energieffektiv 2015",
+                "filename": "brfenergieffektiv_2015.pdf",
+                "link": "https://example.com/brfenergieffektiv_2015.pdf",
+            }
+        ],
+    }
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "hello"}],
+        last_message="hello",
+        metadata={"kept": True},
+        thread_id="thread-1b",
+    )
+
+    assert response["content"] == "generic answer"
+    assert response["classification"] == "generic"
+    assert response["agent_answered"] == "generic"
+    assert response["role"] == "assistant"
+    assert response["sources"] == [
+        {
+            "name": "BRF Energieffektiv 2015",
+            "filename": "brfenergieffektiv_2015.pdf",
+            "link": "https://example.com/brfenergieffektiv_2015.pdf",
+        }
+    ]
+    assert metadata == {"kept": True}
 
 
 def test_routes_through_building_agent_when_switching_from_building_to_generic():
