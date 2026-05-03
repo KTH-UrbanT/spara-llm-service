@@ -145,7 +145,7 @@ class EvaluatorAgent(BaseAgent):
             params = {
                 "model": self.deployment,
                 "messages": messages,
-                "temperature": 1.0,  # The actual model does not support temperature overrides.
+                "temperature": 0.0,  # Deterministic judging: same answer must yield the same verdict.
             }
 
             try:
@@ -153,18 +153,27 @@ class EvaluatorAgent(BaseAgent):
             except Exception as e:
                 if not self._is_temperature_unsupported_error(e):
                     raise
-                # Some Azure deployments only allow the default temperature.
-                logger.info("Evaluator model rejected temperature override; retrying with default model temperature.")
-                #params["temperature"] = 1.0  # Use model default
-                params.pop("temperature", None)  # Remove temperature param to use model default
+                # Some Azure deployments (e.g. o-series) reject explicit temperature; fall back to model default.
+                logger.warning(
+                    "Evaluator model rejected temperature=0.0; retrying with model default. "
+                    "Verdicts on this deployment may not be deterministic."
+                )
+                params.pop("temperature", None)
                 response = self.client.chat.completions.create(**params)
 
             content = (response.choices[0].message.content or "").strip()
             parsed = self._safe_parse_json(content)
+            if isinstance(parsed, dict):
+                parsed.setdefault("evaluator_failed", False)
+                parsed.setdefault("evaluator_failure_reason", "")
             return parsed
         except Exception as e:
             logger.warning("Evaluator failed; fail-open pass used. Reason: %s", e)
-            return {"verdict": "pass"}
+            return {
+                "verdict": "pass",
+                "evaluator_failed": True,
+                "evaluator_failure_reason": str(e),
+            }
 
     def run(self, user_input: Dict[str, Any], thread_context: Dict[str, Any]) -> Dict[str, Any]:
         """BaseAgent-compatible wrapper around evaluate()."""
