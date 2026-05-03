@@ -120,6 +120,43 @@ def test_evaluator_temperature_unsupported_retries_without_temperature(mock_azur
     assert "temperature" not in second_kwargs
 
 
+@patch("src.agents.evaluator_agent.AzureOpenAI")
+def test_evaluator_loads_alternate_prompt_when_env_var_set(mock_azure_client_cls, mock_env_vars, tmp_path):
+    """Section 0.2: setting EVALUATOR_PROMPT_VERSION must actually load a different prompt file.
+    Without this, arm A4 (prompt-variant-B) would silently be identical to arm A2 — the
+    most damaging defect possible in the experimental setup.
+    """
+    mock_azure_client_cls.return_value = MagicMock()
+
+    # Sentinel content unique enough to detect that the variant file was loaded.
+    variant_content = "VARIANT_B_PROMPT_SENTINEL_xY7q3K\nThis is the v2 rubric."
+    variant_file = tmp_path / "evaluator_prompt_v2.txt"
+    variant_file.write_text(variant_content, encoding="utf-8")
+
+    with patch.dict(os.environ, {"EVALUATOR_PROMPT_VERSION": str(variant_file)}, clear=False):
+        agent = EvaluatorAgent()
+
+    assert agent.prompt_template == variant_content, (
+        "EvaluatorAgent did not load the prompt file pointed to by EVALUATOR_PROMPT_VERSION. "
+        "Arm A4 of the experiment will be invalid."
+    )
+    assert agent.prompt_path == str(variant_file)
+
+
+@patch("src.agents.evaluator_agent.AzureOpenAI")
+def test_evaluator_uses_default_prompt_when_env_var_absent(mock_azure_client_cls, mock_env_vars):
+    """Companion to the above: with no env var, the default prompt loads."""
+    mock_azure_client_cls.return_value = MagicMock()
+
+    # Defensive: ensure the env var is unset for this test even if .env set it.
+    env_without_version = {k: v for k, v in os.environ.items() if k != "EVALUATOR_PROMPT_VERSION"}
+    with patch.dict(os.environ, env_without_version, clear=True):
+        agent = EvaluatorAgent()
+
+    assert agent.prompt_path.endswith("evaluator_prompt.txt")
+    assert "VARIANT_B_PROMPT_SENTINEL" not in agent.prompt_template
+
+
 @pytest.mark.skipif(
     not os.getenv("AZURE_ENDPOINT") or not os.getenv("OPENAI_API_KEY"),
     reason="Requires real Azure credentials; determinism is verified against a live deployment.",

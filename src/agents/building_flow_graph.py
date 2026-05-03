@@ -326,6 +326,54 @@ def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
     return updates
 
 
+def _build_trace_identifiers(state: GraphState) -> Dict[str, Any]:
+    """Extract experiment identifier fields for the trace (Section 0.3 of plan-eil-v1.md).
+
+    These identifiers are how the analysis script joins traces across the four arms.
+    They are sourced from:
+      - question_id: state.metadata["question_id"] — set by the offline runner per question.
+      - dataset_version: state.metadata["dataset_version"] — set by the runner from the gold dataset header.
+      - run_id: EXPERIMENT_RUN_ID env var — set by the runner once per process.
+      - arm: EXPERIMENT_ARM env var — set by the runner once per process.
+      - attempt_index: equals the current eval_retries counter at trace-write time
+        (0 for first evaluation, 1 for the post-retry evaluation).
+    Missing values are returned as None so the analysis script can detect non-experimental traces.
+    """
+    md = state.get("metadata") or {}
+    if not isinstance(md, dict):
+        md = {}
+    retries = int(state.get("eval_retries") or 0)
+    return {
+        "question_id": md.get("question_id"),
+        "dataset_version": md.get("dataset_version"),
+        "run_id": os.getenv("EXPERIMENT_RUN_ID"),
+        "arm": os.getenv("EXPERIMENT_ARM"),
+        "attempt_index": retries,
+    }
+
+
+def _get_evaluator_prompt_version() -> str:
+    """Return a stable, JSON-serializable label for the loaded evaluator prompt.
+
+    Resolution: prefer the basename of `evaluator_agent.prompt_path` (the actual loaded
+    file, set by Section 0.2). Fall back to the `EVALUATOR_PROMPT_VERSION` env var,
+    or the default filename. Defensive against test mocks where `prompt_path` may
+    not be a str.
+    """
+    prompt_path = getattr(evaluator_agent, "prompt_path", None)
+    if isinstance(prompt_path, str) and prompt_path:
+        return os.path.basename(prompt_path)
+    return os.getenv("EVALUATOR_PROMPT_VERSION", "evaluator_prompt.txt")
+
+
+def _get_evaluator_deployment_label() -> Optional[str]:
+    """Return the evaluator deployment name as a JSON-serializable label or None."""
+    deployment = getattr(evaluator_agent, "deployment", None)
+    if isinstance(deployment, str) and deployment:
+        return deployment
+    return None
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -1153,6 +1201,7 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             "metadata": _deep_merge(md, {"debug": debug}),
         }
         trace = build_evaluation_trace(
+            **_build_trace_identifiers(state),
             question=question,
             answer=answer,
             mode="off",
@@ -1161,8 +1210,8 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             evaluation_status="bypassed",
             eval_retries=int(state.get("eval_retries") or 0),
             eval_scores=updates["eval_scores"],
-            model_deployment=getattr(evaluator_agent, "deployment", None),
-            prompt_version=os.getenv("EVALUATOR_PROMPT_VERSION", "evaluator_prompt.txt"),
+            model_deployment=_get_evaluator_deployment_label(),
+            prompt_version=_get_evaluator_prompt_version(),
         )
         try:
             append_evaluation_trace(trace)
@@ -1299,6 +1348,7 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         print(f"[evaluate_response] feedback={feedback}", flush=True)
 
     trace = build_evaluation_trace(
+        **_build_trace_identifiers(state),
         question=question,
         answer=answer,
         mode=mode,
@@ -1307,8 +1357,8 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         evaluation_status="failed_open" if evaluator_failed else "evaluated",
         eval_retries=retries,
         eval_scores=scores,
-        model_deployment=getattr(evaluator_agent, "deployment", None),
-        prompt_version=os.getenv("EVALUATOR_PROMPT_VERSION", "evaluator_prompt.txt"),
+        model_deployment=_get_evaluator_deployment_label(),
+        prompt_version=_get_evaluator_prompt_version(),
         evaluator_failure_reason=evaluator_failure_reason,
     )
     try:

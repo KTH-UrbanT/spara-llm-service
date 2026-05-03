@@ -240,6 +240,101 @@ def test_evaluation_trace_is_written(flow_module, tmp_path):
     assert trace_records[-1]["evaluated"] is True
 
 
+def test_question_id_run_id_arm_in_trace(flow_module, tmp_path):
+    """Section 0.3: every trace record must carry the experiment identifier fields
+    (question_id, run_id, arm, attempt_index, dataset_version) so the analysis
+    script can join records across the four arms.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+
+    flow_module.evaluator_agent = MagicMock()
+    # Defensive: set string attributes to make the trace JSON-serializable.
+    # See _get_evaluator_deployment_label / _get_evaluator_prompt_version helpers.
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "faithfulness_score": 8,
+        "completeness_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+    }
+
+    state = _base_state()
+    # Inject experiment identifiers via metadata + env vars exactly as the runner will.
+    state["metadata"] = {
+        "question_id": "Q017",
+        "dataset_version": "1.0",
+    }
+
+    env_overrides = {
+        "EVALUATION_TRACE_DIR": str(tmp_path),
+        "EXPERIMENT_RUN_ID": "2026-05-04_test_run",
+        "EXPERIMENT_ARM": "A2",
+    }
+    with patch.dict(os.environ, env_overrides, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    trace_jsonl = Path(tmp_path) / "evaluation_traces.jsonl"
+    assert trace_jsonl.exists(), "Trace JSONL was not written."
+
+    records = [json.loads(line) for line in trace_jsonl.read_text().splitlines() if line.strip()]
+    assert records, "No trace records found."
+    last = records[-1]
+
+    assert last["trace_schema_version"] == 2, "Schema version was not bumped to 2."
+    assert last["question_id"] == "Q017"
+    assert last["dataset_version"] == "1.0"
+    assert last["run_id"] == "2026-05-04_test_run"
+    assert last["arm"] == "A2"
+    assert last["attempt_index"] == 0  # First attempt — no retry yet.
+    # Sanity: the trace also contains the version label as a basename, not a full path.
+    assert last["prompt_version"] == "evaluator_prompt.txt"
+    assert last["model_deployment"] == "test-deployment"
+
+
+def test_trace_identifiers_default_to_none_outside_experiment(flow_module, tmp_path):
+    """Section 0.3: when run outside of an experiment (no env vars, no question_id),
+    the identifier fields are None. Lets the analysis script filter non-experimental traces.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "faithfulness_score": 8,
+        "completeness_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+    }
+
+    state = _base_state()  # No question_id in metadata.
+
+    # Strip any experiment env vars that may exist from .env.
+    env_clean = {k: v for k, v in os.environ.items() if k not in ("EXPERIMENT_RUN_ID", "EXPERIMENT_ARM")}
+    env_clean["EVALUATION_TRACE_DIR"] = str(tmp_path)
+    with patch.dict(os.environ, env_clean, clear=True):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    last = records[-1]
+    assert last["question_id"] is None
+    assert last["run_id"] is None
+    assert last["arm"] is None
+    assert last["dataset_version"] is None
+    assert last["attempt_index"] == 0
+
+
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Answer v1"

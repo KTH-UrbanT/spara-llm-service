@@ -31,11 +31,20 @@ def get_trace_paths() -> Dict[str, Path]:
     }
 
 
+TRACE_SCHEMA_VERSION = 2
+"""Schema version for evaluation trace records.
+
+Version 2 (Section 0.3 of plan-eil-v1.md) adds the experiment identifier fields:
+question_id, run_id, arm, attempt_index, dataset_version. These are required to
+join records across the four experimental arms.
+"""
+
+
 def build_evaluation_trace(**fields: Any) -> Dict[str, Any]:
     """Build a timestamped trace record for a single evaluator run."""
     record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "trace_schema_version": 1,
+        "trace_schema_version": TRACE_SCHEMA_VERSION,
     }
     record.update(fields)
     return record

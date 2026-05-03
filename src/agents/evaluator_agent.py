@@ -21,21 +21,42 @@ class EvaluatorAgent(BaseAgent):
     a "pass" verdict so user-facing responses are never blocked by this component.
     """
 
-    DEFAULT_PROMPT_RELATIVE_PATH = os.path.join("..", "prompts", "evaluator_prompt.txt")
+    DEFAULT_PROMPT_FILENAME = "evaluator_prompt.txt"
+    PROMPTS_DIR_RELATIVE = os.path.join("..", "prompts")
 
     def __init__(self, prompt_path: str | None = None):
-        """Load prompt template and initialize Azure OpenAI client."""
-        self.prompt_template = self._load_prompt(prompt_path)
+        """Load prompt template and initialize Azure OpenAI client.
+
+        Prompt resolution (highest priority first):
+        1. Explicit `prompt_path` argument.
+        2. `EVALUATOR_PROMPT_VERSION` env var. If absolute, used as-is. Otherwise
+           treated as a filename within the prompts directory (e.g. "evaluator_prompt_v2.txt").
+        3. Default: "evaluator_prompt.txt" in the prompts directory.
+
+        The resolved path is stored on `self.prompt_path` so callers/tracers can
+        record exactly which file was loaded.
+        """
+        self.prompt_path = self._resolve_prompt_path(prompt_path)
+        self.prompt_template = self._load_prompt(self.prompt_path)
         self._initialize_openai_client()
 
-    def _load_prompt(self, path: str | None) -> str:
-        """Load evaluator system prompt from disk."""
-        if path is None:
-            script_dir = os.path.dirname(__file__)
-            full_path = os.path.join(script_dir, self.DEFAULT_PROMPT_RELATIVE_PATH)
-        else:
-            full_path = path
+    def _resolve_prompt_path(self, path: str | None) -> str:
+        """Resolve the prompt file path. See __init__ docstring for resolution order."""
+        if path is not None:
+            return path
 
+        prompts_dir = os.path.join(os.path.dirname(__file__), self.PROMPTS_DIR_RELATIVE)
+        env_value = os.getenv("EVALUATOR_PROMPT_VERSION")
+
+        if env_value:
+            if os.path.isabs(env_value):
+                return env_value
+            return os.path.join(prompts_dir, env_value)
+
+        return os.path.join(prompts_dir, self.DEFAULT_PROMPT_FILENAME)
+
+    def _load_prompt(self, full_path: str) -> str:
+        """Load evaluator system prompt from a fully-resolved path."""
         try:
             with open(full_path, "r", encoding="utf-8") as file:
                 return file.read()
