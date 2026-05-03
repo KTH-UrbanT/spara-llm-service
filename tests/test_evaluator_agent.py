@@ -72,7 +72,9 @@ def test_evaluator_exception_fail_open(mock_azure_client_cls, mock_env_vars):
     agent = EvaluatorAgent()
     out = agent.evaluate("q", {"a": 1}, "answer")
 
-    assert out == {"verdict": "pass"}
+    assert out["verdict"] == "pass"
+    assert out["evaluator_failed"] is True
+    assert "boom" in out["evaluator_failure_reason"]
 
 
 @patch("src.agents.evaluator_agent.AzureOpenAI")
@@ -87,7 +89,8 @@ def test_evaluator_malformed_json_fail_open(mock_azure_client_cls, mock_env_vars
     agent = EvaluatorAgent()
     out = agent.evaluate("q", {"a": 1}, "answer")
 
-    assert out == {"verdict": "pass"}
+    assert out["verdict"] == "pass"
+    assert out["evaluator_failed"] is True
 
 
 @patch("src.agents.evaluator_agent.AzureOpenAI")
@@ -115,6 +118,32 @@ def test_evaluator_temperature_unsupported_retries_without_temperature(mock_azur
     second_kwargs = mock_client.chat.completions.create.call_args_list[1].kwargs
     assert first_kwargs.get("temperature") == 0.0
     assert "temperature" not in second_kwargs
+
+
+@pytest.mark.skipif(
+    not os.getenv("AZURE_ENDPOINT") or not os.getenv("OPENAI_API_KEY"),
+    reason="Requires real Azure credentials; determinism is verified against a live deployment.",
+)
+def test_evaluator_determinism_same_input_twice_returns_identical_json():
+    """Section 0.1: with temperature=0.0, the evaluator must produce byte-identical output
+    when called twice on the same input. Skipped in CI when Azure credentials are absent."""
+    agent = EvaluatorAgent()
+    question = "What is the energy class of the building at Hammarby Gata 10?"
+    aggregated_data = {
+        "generic_sql": [{"address": "Hammarby Gata 10", "declaredEnergyClass": "B"}],
+        "vector": {"sources": [], "snippets": []},
+    }
+    answer = "The building's declared energy class is B."
+
+    out1 = agent.evaluate(question, aggregated_data, answer)
+    out2 = agent.evaluate(question, aggregated_data, answer)
+
+    # Compare verdict + scores; the entire dict must match. If this fails, the evaluator
+    # is non-deterministic and Section 0.1 fix did not take effect.
+    assert out1 == out2, (
+        "Evaluator returned different verdicts for identical input — "
+        "temperature is not pinned to 0.0 or the deployment ignores it."
+    )
 
 
 @patch("src.agents.evaluator_agent.AzureOpenAI")
@@ -145,3 +174,4 @@ def test_evaluator_extended_schema_payload(mock_azure_client_cls, mock_env_vars)
     assert out["verdict"] == "fail"
     assert out["numeric_fidelity_score"] == 5
     assert out["hard_fail"] is False
+    assert out["evaluator_failed"] is False

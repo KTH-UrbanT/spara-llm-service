@@ -1,6 +1,8 @@
 import importlib
+import json
 import os
 from contextlib import ExitStack
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -179,11 +181,16 @@ def test_evaluator_exception_fail_open(flow_module):
 
     # Node itself should remain fail-open because evaluator agent handles errors upstream.
     # Simulate upstream fail-open return directly if exception bubbles from mock.
-    with patch.object(flow_module.evaluator_agent, "evaluate", return_value={"verdict": "pass"}):
+    with patch.object(
+        flow_module.evaluator_agent,
+        "evaluate",
+        return_value={"verdict": "pass", "evaluator_failed": True, "evaluator_failure_reason": "boom"},
+    ):
         state.update(flow_module.evaluate_response_node(state))
 
     assert flow_module.route_after_evaluation(state) == "end"
     assert state["eval_verdict"] == "pass"
+    assert (state.get("eval_scores") or {}).get("evaluated") is False
 
 
 def test_evaluator_bypass_routes_directly_to_end(flow_module):
@@ -199,6 +206,38 @@ def test_evaluator_bypass_routes_directly_to_end(flow_module):
         assert flow_module.route_after_summarizer(state) == "end"
         assert ((state.get("metadata") or {}).get("debug") or {}).get("evaluator_bypassed") is True
         flow_module.evaluator_agent.evaluate.assert_not_called()
+
+
+def test_evaluation_trace_is_written(flow_module, tmp_path):
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "faithfulness_score": 8,
+        "completeness_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    trace_jsonl = Path(tmp_path) / "evaluation_traces.jsonl"
+    trace_csv = Path(tmp_path) / "evaluation_traces.csv"
+
+    assert trace_jsonl.exists()
+    assert trace_csv.exists()
+
+    trace_records = [json.loads(line) for line in trace_jsonl.read_text().splitlines() if line.strip()]
+    assert trace_records
+    assert trace_records[-1]["evaluation_status"] == "evaluated"
+    assert trace_records[-1]["evaluated"] is True
 
 
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):
