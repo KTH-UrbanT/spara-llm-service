@@ -1,5 +1,6 @@
 # src/agents/building_flow_graph.py
 from __future__ import annotations
+import logging
 import re
 import os
 from typing import Any, Dict, List, Tuple, Optional
@@ -17,8 +18,12 @@ from src.agents.openai_agent import OpenAIResponseAgent
 from src.agents.evaluator_agent import EvaluatorAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
 from src.database.hammarby_data import query_address
+from src.evaluation import append_evaluation_trace, build_evaluation_trace
 from typing import Annotated
 import operator
+
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # Define the Graph State Schema
@@ -1123,6 +1128,10 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     """Evaluate summarizer output and store structured verdict and retry metadata."""
     print("[evaluate_response] ENTER", flush=True)
 
+    question = state.get("last_message") or ""
+    aggregated_data = state.get("aggregated_data") or {}
+    answer = state.get("final_response") or ""
+
     if _is_evaluator_bypassed():
         print("[evaluate_response] BYPASSED (mode=off)", flush=True)
         md = state.get("metadata") or {}
@@ -1132,19 +1141,34 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             "evaluator_bypassed": True,
         })
         print("[evaluate_response] EXIT", flush=True)
-        return {
+        updates = {
             **_ensure_evaluator_state_defaults(state),
             "eval_verdict": "pass",
             "eval_feedback": None,
             "eval_scores": {
                 "bypassed": True,
+                "evaluated": False,
+                "evaluation_status": "bypassed",
             },
             "metadata": _deep_merge(md, {"debug": debug}),
         }
-
-    question = state.get("last_message") or ""
-    aggregated_data = state.get("aggregated_data") or {}
-    answer = state.get("final_response") or ""
+        trace = build_evaluation_trace(
+            question=question,
+            answer=answer,
+            mode="off",
+            verdict="pass",
+            evaluated=False,
+            evaluation_status="bypassed",
+            eval_retries=int(state.get("eval_retries") or 0),
+            eval_scores=updates["eval_scores"],
+            model_deployment=getattr(evaluator_agent, "deployment", None),
+            prompt_version=os.getenv("EVALUATOR_PROMPT_VERSION", "evaluator_prompt.txt"),
+        )
+        try:
+            append_evaluation_trace(trace)
+        except Exception as trace_error:
+            logger.warning("Failed to append evaluator bypass trace: %s", trace_error)
+        return updates
     mode = _get_evaluator_mode()
 
     # Ensure evaluator keys are always available.
@@ -1156,6 +1180,8 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         aggregated_data=aggregated_data,
         answer=answer,
     )
+    evaluator_failed = bool(result.get("evaluator_failed"))
+    evaluator_failure_reason = str(result.get("evaluator_failure_reason") or "").strip()
 
     legacy_threshold = int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6"))
     profile = _evaluation_profile(mode, legacy_threshold)
@@ -1240,6 +1266,10 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "hard_fail_reason": hard_fail_reason,
         "retry_candidate": retry_candidate,
         "issues": issues,
+        "evaluated": not evaluator_failed,
+        "evaluation_status": "failed_open" if evaluator_failed else "evaluated",
+        "evaluator_failed": evaluator_failed,
+        "evaluator_failure_reason": evaluator_failure_reason,
     }
 
     md = state.get("metadata") or {}
@@ -1267,6 +1297,25 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         print(f"[evaluate_response] issues={issues}", flush=True)
     if feedback:
         print(f"[evaluate_response] feedback={feedback}", flush=True)
+
+    trace = build_evaluation_trace(
+        question=question,
+        answer=answer,
+        mode=mode,
+        verdict=verdict,
+        evaluated=not evaluator_failed,
+        evaluation_status="failed_open" if evaluator_failed else "evaluated",
+        eval_retries=retries,
+        eval_scores=scores,
+        model_deployment=getattr(evaluator_agent, "deployment", None),
+        prompt_version=os.getenv("EVALUATOR_PROMPT_VERSION", "evaluator_prompt.txt"),
+        evaluator_failure_reason=evaluator_failure_reason,
+    )
+    try:
+        append_evaluation_trace(trace)
+    except Exception as trace_error:
+        logger.warning("Failed to append evaluator trace: %s", trace_error)
+
     print("[evaluate_response] EXIT", flush=True)
     return {
         **base_updates,
