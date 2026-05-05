@@ -87,8 +87,31 @@ class OpenAIResponseAgent:
             messages.append({"role": "user", "content": last_message})
         return messages
 
+    def _extract_token_usage(self, response) -> Optional[Dict[str, int]]:
+        """Coerce the OpenAI usage object into a plain dict, defensively."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        try:
+            return {
+                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    def _record_call_meta(self, latency_ms: int, token_usage: Optional[Dict[str, int]]) -> None:
+        """Side-channel for nodes to read after generate_response (Section 0.4 of plan-eil-v1.md)."""
+        self._last_call_meta = {
+            "latency_ms": int(latency_ms),
+            "token_usage": token_usage,
+        }
+
     def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
+        # Reset side-channel meta so callers always see THIS call's data, never stale.
+        self._last_call_meta = {"latency_ms": None, "token_usage": None}
 
         # be forgiving about types
         if not isinstance(last_message, str):
@@ -121,27 +144,34 @@ class OpenAIResponseAgent:
                     params.pop(k, None)
                 response = self.client.chat.completions.create(**params)
             else:
+                self._record_call_meta(int((time.time() - start_time) * 1000), None)
                 logger.error(f"BadRequestError: {e}", exc_info=True)
                 return f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}"
         except APIConnectionError as e:
+            self._record_call_meta(int((time.time() - start_time) * 1000), None)
             logger.error(f"Connection error: {e}", exc_info=True)
             return "Error: Cannot connect to AI service."
         except RateLimitError as e:
+            self._record_call_meta(int((time.time() - start_time) * 1000), None)
             logger.error(f"Rate limit exceeded: {e}", exc_info=True)
             return "Error: Rate limit exceeded. Please retry shortly."
         except APIStatusError as e:
+            self._record_call_meta(int((time.time() - start_time) * 1000), None)
             logger.error(f"API status error: {e.status_code} - {e.response}", exc_info=True)
             return f"Error: API returned status code {e.status_code}."
         except Exception as e:
+            self._record_call_meta(int((time.time() - start_time) * 1000), None)
             logger.error(f"Unexpected error: {e}", exc_info=True)
             return "Error: An unexpected issue occurred."
 
         try:
-            
+
             response_content = response.choices[0].message.content
         except Exception:
             response_content = None
 
-        end_time = time.time()
-        logger.info(f"Response generated in {end_time - start_time:.2f} seconds.")
+        latency_ms = int((time.time() - start_time) * 1000)
+        token_usage = self._extract_token_usage(response)
+        self._record_call_meta(latency_ms, token_usage)
+        logger.info(f"Response generated in {latency_ms} ms (tokens: {token_usage}).")
         return response_content or "No content returned from the model."

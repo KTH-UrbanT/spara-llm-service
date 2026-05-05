@@ -18,7 +18,7 @@ from src.agents.openai_agent import OpenAIResponseAgent
 from src.agents.evaluator_agent import EvaluatorAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
 from src.database.hammarby_data import query_address
-from src.evaluation import append_evaluation_trace, build_evaluation_trace
+from src.evaluation import append_evaluation_trace, build_evaluation_trace, truncate_for_trace
 from typing import Annotated
 import operator
 
@@ -1144,6 +1144,19 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         answer = "Sorry, summarizer error."
         print(f"[llm_summarizer] ERROR: {e}", flush=True)
 
+    # Section 0.4: capture per-call latency + token usage from the side-channel meta.
+    # isinstance check is defensive against MagicMock instances in tests where every
+    # attribute access otherwise produces yet another MagicMock.
+    summarizer_meta = getattr(llm_summarizer, "_last_call_meta", None)
+    if not isinstance(summarizer_meta, dict):
+        summarizer_meta = {}
+    summarizer_latency_ms = summarizer_meta.get("latency_ms")
+    summarizer_token_usage = summarizer_meta.get("token_usage")
+    if not isinstance(summarizer_latency_ms, (int, float)):
+        summarizer_latency_ms = None
+    if not isinstance(summarizer_token_usage, dict):
+        summarizer_token_usage = None
+
     sess = {**(state.get("session_state") or {})}
     if ctx.get("intent"):
         sess["last_intent"] = ctx.get("intent")
@@ -1166,6 +1179,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         "session_state": sess,
         "step_out": out,
         "eval_retries": eval_retries,
+        "summarizer_latency_ms": summarizer_latency_ms,
+        "summarizer_token_usage": summarizer_token_usage,
         "metadata": _deep_merge(md, {"debug": debug}),
     }
     updates.update(_ensure_evaluator_state_defaults(state))
@@ -1204,6 +1219,9 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             **_build_trace_identifiers(state),
             question=question,
             answer=answer,
+            # Section 0.5: snapshot the SQL/vector evidence so annotators verify
+            # groundedness against the same context the (skipped) evaluator would have seen.
+            aggregated_data=truncate_for_trace(aggregated_data),
             mode="off",
             verdict="pass",
             evaluated=False,
@@ -1212,6 +1230,12 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             eval_scores=updates["eval_scores"],
             model_deployment=_get_evaluator_deployment_label(),
             prompt_version=_get_evaluator_prompt_version(),
+            # Section 0.4: latency + tokens. Bypass mode never invokes the evaluator,
+            # so its latency is 0 and tokens are None. Summarizer fields come from state.
+            summarizer_latency_ms=state.get("summarizer_latency_ms"),
+            summarizer_token_usage=state.get("summarizer_token_usage"),
+            evaluator_latency_ms=0,
+            evaluator_token_usage=None,
         )
         try:
             append_evaluation_trace(trace)
@@ -1231,6 +1255,21 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     )
     evaluator_failed = bool(result.get("evaluator_failed"))
     evaluator_failure_reason = str(result.get("evaluator_failure_reason") or "").strip()
+
+    # Section 0.4: latency + token usage attached to the result by EvaluatorAgent.
+    # Defensive coercion (same rationale as in llm_summarizer_node).
+    evaluator_latency_ms = result.get("_latency_ms")
+    evaluator_token_usage = result.get("_token_usage")
+    if not isinstance(evaluator_latency_ms, (int, float)):
+        evaluator_latency_ms = None
+    if not isinstance(evaluator_token_usage, dict):
+        evaluator_token_usage = None
+    summarizer_latency_ms = state.get("summarizer_latency_ms")
+    summarizer_token_usage = state.get("summarizer_token_usage")
+    if not isinstance(summarizer_latency_ms, (int, float)):
+        summarizer_latency_ms = None
+    if not isinstance(summarizer_token_usage, dict):
+        summarizer_token_usage = None
 
     legacy_threshold = int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6"))
     profile = _evaluation_profile(mode, legacy_threshold)
@@ -1351,6 +1390,10 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         **_build_trace_identifiers(state),
         question=question,
         answer=answer,
+        # Section 0.5: snapshot the SQL/vector evidence the evaluator actually saw,
+        # truncated per-leaf to keep the JSONL line manageable. Annotators reading
+        # the trace use this to verify groundedness without re-running the pipeline.
+        aggregated_data=truncate_for_trace(aggregated_data),
         mode=mode,
         verdict=verdict,
         evaluated=not evaluator_failed,
@@ -1360,6 +1403,12 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         model_deployment=_get_evaluator_deployment_label(),
         prompt_version=_get_evaluator_prompt_version(),
         evaluator_failure_reason=evaluator_failure_reason,
+        # Section 0.4: this attempt's latency + tokens. Multi-attempt sequences
+        # produce one trace record per attempt, each with its own per-call meta.
+        summarizer_latency_ms=summarizer_latency_ms,
+        summarizer_token_usage=summarizer_token_usage,
+        evaluator_latency_ms=evaluator_latency_ms,
+        evaluator_token_usage=evaluator_token_usage,
     )
     try:
         append_evaluation_trace(trace)
@@ -1373,6 +1422,10 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "eval_feedback": feedback if verdict == "fail" else None,
         "eval_scores": scores,
         "eval_retries": retries,
+        # Section 0.4: persist this attempt's latency/tokens into state so the runner
+        # can sum across attempts when writing per-question totals to results.jsonl.
+        "evaluator_latency_ms": evaluator_latency_ms,
+        "evaluator_token_usage": evaluator_token_usage,
         "metadata": _deep_merge(md, {"debug": debug}),
     }
 

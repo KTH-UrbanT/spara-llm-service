@@ -335,6 +335,190 @@ def test_trace_identifiers_default_to_none_outside_experiment(flow_module, tmp_p
     assert last["attempt_index"] == 0
 
 
+def test_latency_and_token_usage_in_trace(flow_module, tmp_path):
+    """Section 0.4: every trace record must contain summarizer_latency_ms,
+    evaluator_latency_ms, and the corresponding token_usage dicts. Without
+    these, the thesis cannot report cost/latency overhead per arm.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    # Side-channel meta that the node reads after generate_response().
+    flow_module.llm_summarizer._last_call_meta = {
+        "latency_ms": 1234,
+        "token_usage": {"prompt_tokens": 500, "completion_tokens": 100, "total_tokens": 600},
+    }
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "faithfulness_score": 8,
+        "completeness_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+        # Section 0.4: per-call meta on the result.
+        "_latency_ms": 567,
+        "_token_usage": {"prompt_tokens": 800, "completion_tokens": 50, "total_tokens": 850},
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    # State carries the meta forward (so a runner can sum across attempts).
+    assert state.get("summarizer_latency_ms") == 1234
+    assert state.get("summarizer_token_usage") == {
+        "prompt_tokens": 500, "completion_tokens": 100, "total_tokens": 600,
+    }
+    assert state.get("evaluator_latency_ms") == 567
+    assert state.get("evaluator_token_usage") == {
+        "prompt_tokens": 800, "completion_tokens": 50, "total_tokens": 850,
+    }
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    last = records[-1]
+    assert last["summarizer_latency_ms"] == 1234
+    assert last["evaluator_latency_ms"] == 567
+    assert last["summarizer_token_usage"] == {
+        "prompt_tokens": 500, "completion_tokens": 100, "total_tokens": 600,
+    }
+    assert last["evaluator_token_usage"] == {
+        "prompt_tokens": 800, "completion_tokens": 50, "total_tokens": 850,
+    }
+
+
+def test_bypass_trace_has_zero_evaluator_latency(flow_module, tmp_path):
+    """Section 0.4: in the bypass path (mode=off), the evaluator is never called,
+    so its latency must be 0 and token_usage None — *not* missing/null. Lets the
+    analysis script compute overhead = balanced_latency - off_latency cleanly.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {
+        "latency_ms": 999,
+        "token_usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+    }
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+
+    state = _base_state()
+    env_overrides = {
+        "EVALUATION_TRACE_DIR": str(tmp_path),
+        "EVALUATOR_MODE": "off",
+    }
+    with patch.dict(os.environ, env_overrides, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    last = records[-1]
+    assert last["evaluation_status"] == "bypassed"
+    assert last["summarizer_latency_ms"] == 999
+    assert last["evaluator_latency_ms"] == 0
+    assert last["evaluator_token_usage"] is None
+    flow_module.evaluator_agent.evaluate.assert_not_called()
+
+
+def test_aggregated_data_present_in_trace(flow_module, tmp_path):
+    """Section 0.5: the trace must capture the SQL/vector evidence the evaluator saw.
+    Without this, human annotators cannot verify groundedness — they would be scoring
+    against memory/imagination rather than the actual context.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 100, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "faithfulness_score": 8,
+        "completeness_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+        "_latency_ms": 50,
+        "_token_usage": None,
+    }
+
+    state = _base_state()
+    state["aggregated_data"] = {
+        "generic_sql": [
+            {"address": "Hammarby Gata 10", "declaredEnergyClass": "B", "numberOfApartments": 24},
+            {"address": "Hammarby Gata 12", "declaredEnergyClass": "C", "numberOfApartments": 18},
+        ],
+        "specialized_sql": [{"building_id": 4521, "energy_kwh_m2": 95.7}],
+        "vector": {
+            "sources": ["doc-001.pdf", "doc-002.pdf"],
+            "snippets": ["Energy class B requires...", "Recent retrofits in Hammarby..."],
+        },
+    }
+
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    last = records[-1]
+    assert "aggregated_data" in last, "Trace missing aggregated_data field."
+    agg = last["aggregated_data"]
+    assert agg["generic_sql"][0]["address"] == "Hammarby Gata 10"
+    assert agg["generic_sql"][0]["declaredEnergyClass"] == "B"
+    assert agg["specialized_sql"][0]["building_id"] == 4521
+    assert agg["vector"]["sources"] == ["doc-001.pdf", "doc-002.pdf"]
+
+
+def test_aggregated_data_truncated_in_trace(flow_module, tmp_path):
+    """Section 0.5: long string values inside aggregated_data are truncated to
+    keep individual JSONL lines bounded. Vector store snippets can exceed 50 KB;
+    we cap at ~4000 chars and append a truncation marker.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 100, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "faithfulness_score": 8,
+        "completeness_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+        "_latency_ms": 50,
+        "_token_usage": None,
+    }
+
+    huge_snippet = "X" * 10000  # 10 KB string — clearly above the 4000 cap.
+    state = _base_state()
+    state["aggregated_data"] = {
+        "vector": {
+            "snippets": [huge_snippet, "small one"],
+        },
+    }
+
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    truncated = records[-1]["aggregated_data"]["vector"]["snippets"][0]
+    short = records[-1]["aggregated_data"]["vector"]["snippets"][1]
+    assert len(truncated) <= 4100, f"First snippet was not truncated: len={len(truncated)}"
+    assert truncated.endswith("…[truncated]"), "Truncation marker missing."
+    assert short == "small one", "Short string should not be modified."
+
+
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Answer v1"

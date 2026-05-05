@@ -40,6 +40,40 @@ join records across the four experimental arms.
 """
 
 
+_DEFAULT_TRUNCATION_LIMIT = 4000
+_TRUNCATION_MARKER = "…[truncated]"
+
+
+def truncate_for_trace(value: Any, max_length: int = _DEFAULT_TRUNCATION_LIMIT) -> Any:
+    """Recursively truncate string leaves so the trace JSONL stays manageable.
+
+    Section 0.5 of plan-eil-v1.md: aggregated_data may contain large vector-store
+    snippets (10–50 KB each). Without truncation a single trace line can exceed
+    100 KB and choke downstream tools.
+
+    Behavior:
+      - dict / list: recurse, preserving structure.
+      - str: truncate to `max_length` chars and append _TRUNCATION_MARKER.
+      - int / float / bool / None: returned unchanged.
+      - other types: coerced to str via repr() then truncated.
+    The original input is *not* mutated.
+    """
+    if isinstance(value, str):
+        if len(value) > max_length:
+            return value[:max_length] + _TRUNCATION_MARKER
+        return value
+    if isinstance(value, dict):
+        return {k: truncate_for_trace(v, max_length) for k, v in value.items()}
+    if isinstance(value, list):
+        return [truncate_for_trace(v, max_length) for v in value]
+    if isinstance(value, tuple):
+        return [truncate_for_trace(v, max_length) for v in value]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    # Fallback for non-JSON-serializable types (MagicMock in tests, etc.).
+    return truncate_for_trace(repr(value), max_length)
+
+
 def build_evaluation_trace(**fields: Any) -> Dict[str, Any]:
     """Build a timestamped trace record for a single evaluator run."""
     record = {

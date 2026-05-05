@@ -1,7 +1,8 @@
 import json
 import logging
 import os
-from typing import Any, Dict
+import time
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from openai import AzureOpenAI
@@ -146,11 +147,28 @@ class EvaluatorAgent(BaseAgent):
             )
         )
 
+    def _extract_token_usage(self, response) -> Optional[Dict[str, int]]:
+        """Coerce the OpenAI usage object into a plain dict, defensively."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        try:
+            return {
+                "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+                "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+            }
+        except (TypeError, ValueError):
+            return None
+
     def evaluate(self, question: str, aggregated_data: Dict[str, Any], answer: str) -> Dict[str, Any]:
         """Run evaluation and return structured verdict dict.
 
         On any failure, returns {"verdict": "pass"} to keep the main response path available.
+        The result dict always includes `_latency_ms` (int, this call's wall time) and
+        `_token_usage` (dict or None) for trace capture per Section 0.4 of plan-eil-v1.md.
         """
+        start_time = time.time()
         payload = {
             "question": question or "",
             "aggregated_data": aggregated_data or {},
@@ -182,11 +200,14 @@ class EvaluatorAgent(BaseAgent):
                 params.pop("temperature", None)
                 response = self.client.chat.completions.create(**params)
 
+            token_usage = self._extract_token_usage(response)
             content = (response.choices[0].message.content or "").strip()
             parsed = self._safe_parse_json(content)
             if isinstance(parsed, dict):
                 parsed.setdefault("evaluator_failed", False)
                 parsed.setdefault("evaluator_failure_reason", "")
+                parsed["_latency_ms"] = int((time.time() - start_time) * 1000)
+                parsed["_token_usage"] = token_usage
             return parsed
         except Exception as e:
             logger.warning("Evaluator failed; fail-open pass used. Reason: %s", e)
@@ -194,6 +215,8 @@ class EvaluatorAgent(BaseAgent):
                 "verdict": "pass",
                 "evaluator_failed": True,
                 "evaluator_failure_reason": str(e),
+                "_latency_ms": int((time.time() - start_time) * 1000),
+                "_token_usage": None,
             }
 
     def run(self, user_input: Dict[str, Any], thread_context: Dict[str, Any]) -> Dict[str, Any]:

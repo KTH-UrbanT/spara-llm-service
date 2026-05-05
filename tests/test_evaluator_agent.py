@@ -175,9 +175,12 @@ def test_evaluator_determinism_same_input_twice_returns_identical_json():
     out1 = agent.evaluate(question, aggregated_data, answer)
     out2 = agent.evaluate(question, aggregated_data, answer)
 
-    # Compare verdict + scores; the entire dict must match. If this fails, the evaluator
-    # is non-deterministic and Section 0.1 fix did not take effect.
-    assert out1 == out2, (
+    # Strip private meta keys (`_latency_ms`, `_token_usage` from Section 0.4) which
+    # are naturally different between calls. We're testing the *judgment* is identical.
+    def _judgment_only(d: dict) -> dict:
+        return {k: v for k, v in d.items() if not k.startswith("_")}
+
+    assert _judgment_only(out1) == _judgment_only(out2), (
         "Evaluator returned different verdicts for identical input — "
         "temperature is not pinned to 0.0 or the deployment ignores it."
     )
