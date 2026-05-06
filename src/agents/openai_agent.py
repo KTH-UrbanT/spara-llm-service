@@ -101,17 +101,74 @@ class OpenAIResponseAgent:
         except (TypeError, ValueError):
             return None
 
-    def _record_call_meta(self, latency_ms: int, token_usage: Optional[Dict[str, int]]) -> None:
-        """Side-channel for nodes to read after generate_response (Section 0.4 of plan-eil-v1.md)."""
+    def _get_summarizer_temperature(self) -> float:
+        """Read SUMMARIZER_TEMPERATURE env var (Section 0.8 of plan-eil-v1.md).
+
+        Default is 0.2 (production tone). Experiment runs pin to 0.0 in the
+        run_arm.py wrapper. Invalid values fall back to default with a warning.
+        """
+        raw = os.getenv("SUMMARIZER_TEMPERATURE")
+        if not raw:
+            return 0.2
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid SUMMARIZER_TEMPERATURE=%r; falling back to 0.2.", raw
+            )
+            return 0.2
+
+    def _is_temperature_unsupported_error(self, error: Exception) -> bool:
+        """Detect Azure deployments (typically o-series) that reject explicit temperature."""
+        if getattr(error, "param", None) == "temperature":
+            return True
+        if (
+            getattr(error, "code", None) == "unsupported_value"
+            and getattr(error, "status_code", None) == 400
+        ):
+            return "temperature" in str(error).lower()
+        msg = str(error).lower()
+        return (
+            "temperature" in msg
+            and (
+                "unsupported value" in msg
+                or "does not support" in msg
+                or "default (1)" in msg
+            )
+        )
+
+    def _record_call_meta(
+        self,
+        latency_ms: int,
+        token_usage: Optional[Dict[str, int]],
+        temperature_requested: Optional[float] = None,
+        temperature_unsupported: bool = False,
+    ) -> None:
+        """Side-channel for nodes to read after generate_response (Section 0.4 of plan-eil-v1.md).
+
+        Section 0.8 additions: temperature_requested + temperature_unsupported flow
+        through to the trace so the thesis can audit which arms actually ran at the
+        configured temperature vs which fell back to model default.
+        """
         self._last_call_meta = {
             "latency_ms": int(latency_ms),
             "token_usage": token_usage,
+            "temperature_requested": temperature_requested,
+            "temperature_unsupported": temperature_unsupported,
         }
 
     def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
+        temperature = self._get_summarizer_temperature()
+        temperature_unsupported = False
+
         # Reset side-channel meta so callers always see THIS call's data, never stale.
-        self._last_call_meta = {"latency_ms": None, "token_usage": None}
+        self._last_call_meta = {
+            "latency_ms": None,
+            "token_usage": None,
+            "temperature_requested": temperature,
+            "temperature_unsupported": False,
+        }
 
         # be forgiving about types
         if not isinstance(last_message, str):
@@ -120,12 +177,19 @@ class OpenAIResponseAgent:
             message_list = []
 
         messages = self._build_messages(last_message, message_list)
-        params = {"model": self.deployment, "messages": messages, "stream": False}
+        # Section 0.8: temperature is set unconditionally for ALL model families,
+        # then the BadRequestError handler below removes it for deployments that
+        # reject the override (o-series). This makes the env var honored uniformly.
+        params = {
+            "model": self.deployment,
+            "messages": messages,
+            "stream": False,
+            "temperature": temperature,
+        }
         if self._is_o4_family():
             params["max_completion_tokens"] = 4000
         else:
             params["max_tokens"] = 800
-            params["temperature"] = 0.2
             params["top_p"] = 0.23
             params["frequency_penalty"] = 0
             params["presence_penalty"] = 0
@@ -133,7 +197,7 @@ class OpenAIResponseAgent:
         try:
             response = self.client.chat.completions.create(**params)
         except BadRequestError as e:
-            # Auto-recover common param mismatch: swap max_tokens -> max_completion_tokens
+            # Auto-recover common param mismatch: swap max_tokens -> max_completion_tokens.
             msg = str(e)
             if "max_tokens" in msg and "max_completion_tokens" in msg:
                 logger.warning("Retrying with max_completion_tokens for o4/o3 model.")
@@ -143,35 +207,69 @@ class OpenAIResponseAgent:
                 for k in ("top_p", "frequency_penalty", "presence_penalty"):
                     params.pop(k, None)
                 response = self.client.chat.completions.create(**params)
+            elif self._is_temperature_unsupported_error(e):
+                # Section 0.8: o-series deployments reject explicit temperature.
+                logger.warning(
+                    "Summarizer model rejected temperature=%s; retrying without. "
+                    "This run is NOT fully deterministic (model default applies).",
+                    temperature,
+                )
+                params.pop("temperature", None)
+                temperature_unsupported = True
+                response = self.client.chat.completions.create(**params)
             else:
-                self._record_call_meta(int((time.time() - start_time) * 1000), None)
+                self._record_call_meta(
+                    int((time.time() - start_time) * 1000),
+                    None,
+                    temperature_requested=temperature,
+                    temperature_unsupported=temperature_unsupported,
+                )
                 logger.error(f"BadRequestError: {e}", exc_info=True)
                 return f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}"
         except APIConnectionError as e:
-            self._record_call_meta(int((time.time() - start_time) * 1000), None)
+            self._record_call_meta(
+                int((time.time() - start_time) * 1000), None,
+                temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
+            )
             logger.error(f"Connection error: {e}", exc_info=True)
             return "Error: Cannot connect to AI service."
         except RateLimitError as e:
-            self._record_call_meta(int((time.time() - start_time) * 1000), None)
+            self._record_call_meta(
+                int((time.time() - start_time) * 1000), None,
+                temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
+            )
             logger.error(f"Rate limit exceeded: {e}", exc_info=True)
             return "Error: Rate limit exceeded. Please retry shortly."
         except APIStatusError as e:
-            self._record_call_meta(int((time.time() - start_time) * 1000), None)
+            self._record_call_meta(
+                int((time.time() - start_time) * 1000), None,
+                temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
+            )
             logger.error(f"API status error: {e.status_code} - {e.response}", exc_info=True)
             return f"Error: API returned status code {e.status_code}."
         except Exception as e:
-            self._record_call_meta(int((time.time() - start_time) * 1000), None)
+            self._record_call_meta(
+                int((time.time() - start_time) * 1000), None,
+                temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
+            )
             logger.error(f"Unexpected error: {e}", exc_info=True)
             return "Error: An unexpected issue occurred."
 
         try:
-
             response_content = response.choices[0].message.content
         except Exception:
             response_content = None
 
         latency_ms = int((time.time() - start_time) * 1000)
         token_usage = self._extract_token_usage(response)
-        self._record_call_meta(latency_ms, token_usage)
-        logger.info(f"Response generated in {latency_ms} ms (tokens: {token_usage}).")
+        self._record_call_meta(
+            latency_ms, token_usage,
+            temperature_requested=temperature,
+            temperature_unsupported=temperature_unsupported,
+        )
+        logger.info(
+            "Response generated in %d ms (tokens: %s, temperature_requested=%s, "
+            "temperature_unsupported=%s).",
+            latency_ms, token_usage, temperature, temperature_unsupported,
+        )
         return response_content or "No content returned from the model."

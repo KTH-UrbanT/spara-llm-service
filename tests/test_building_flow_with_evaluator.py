@@ -193,6 +193,20 @@ def test_evaluator_exception_fail_open(flow_module):
     assert (state.get("eval_scores") or {}).get("evaluated") is False
 
 
+def test_route_after_summarizer_returns_end_when_off(flow_module):
+    """Section 0.9: route_after_summarizer must return 'end' (not 'evaluate_response')
+    when EVALUATOR_MODE=off. This is the production-side guarantee that arm A1
+    incurs zero evaluator overhead — the graph never enters evaluate_response_node.
+    """
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "off"}, clear=False):
+        assert flow_module.route_after_summarizer(state) == "end"
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "balanced"}, clear=False):
+        assert flow_module.route_after_summarizer(state) == "evaluate_response"
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "strict"}, clear=False):
+        assert flow_module.route_after_summarizer(state) == "evaluate_response"
+
+
 def test_evaluator_bypass_routes_directly_to_end(flow_module):
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Answer without evaluator"
@@ -635,6 +649,80 @@ def test_faithfulness_groundedness_alias_not_recorded_as_fallback(flow_module, t
     # Faithfulness was synthesized but it's an alias, so we don't pollute the filter.
     assert "faithfulness_score" not in fallbacks
     assert state["eval_scores"]["faithfulness_score"] == 9
+
+
+def test_summarizer_temperature_in_trace(flow_module, tmp_path):
+    """Section 0.8: temperature_requested + temperature_unsupported flow into the trace.
+    The thesis manifest pins SUMMARIZER_TEMPERATURE=0.0; this trace field is the
+    audit trail confirming the run actually used that value.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {
+        "latency_ms": 100,
+        "token_usage": None,
+        "temperature_requested": 0.0,
+        "temperature_unsupported": False,
+    }
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "groundedness_score": 9, "faithfulness_score": 9, "completeness_score": 8,
+        "numeric_fidelity_score": 9, "constraint_satisfaction_score": 8,
+        "uncertainty_calibration_score": 8,
+        "issues": [], "corrective_feedback": "",
+        "evaluator_failed": False, "evaluator_failure_reason": "",
+        "_latency_ms": 50, "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    last = records[-1]
+    assert last["summarizer_temperature_requested"] == 0.0
+    assert last["summarizer_temperature_unsupported"] is False
+
+
+def test_summarizer_temperature_unsupported_flag_in_trace(flow_module, tmp_path):
+    """Section 0.8: when the deployment rejects temperature, the fallback path
+    sets temperature_unsupported=True. This is the audit signal that says
+    'this row's quality may have extra variance — model default applied'.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {
+        "latency_ms": 100,
+        "token_usage": None,
+        "temperature_requested": 0.0,
+        "temperature_unsupported": True,  # The deployment rejected it.
+    }
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "groundedness_score": 9, "faithfulness_score": 9, "completeness_score": 8,
+        "numeric_fidelity_score": 9, "constraint_satisfaction_score": 8,
+        "uncertainty_calibration_score": 8,
+        "issues": [], "corrective_feedback": "",
+        "evaluator_failed": False, "evaluator_failure_reason": "",
+        "_latency_ms": 50, "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    records = [json.loads(line) for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines() if line.strip()]
+    assert records[-1]["summarizer_temperature_unsupported"] is True
 
 
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):

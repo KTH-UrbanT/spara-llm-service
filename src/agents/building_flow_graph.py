@@ -1157,10 +1157,16 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         summarizer_meta = {}
     summarizer_latency_ms = summarizer_meta.get("latency_ms")
     summarizer_token_usage = summarizer_meta.get("token_usage")
+    # Section 0.8: temperature provenance. Non-bool defaults (and MagicMock default)
+    # are coerced to bool below.
+    summarizer_temperature_requested = summarizer_meta.get("temperature_requested")
+    summarizer_temperature_unsupported = bool(summarizer_meta.get("temperature_unsupported"))
     if not isinstance(summarizer_latency_ms, (int, float)):
         summarizer_latency_ms = None
     if not isinstance(summarizer_token_usage, dict):
         summarizer_token_usage = None
+    if not isinstance(summarizer_temperature_requested, (int, float)):
+        summarizer_temperature_requested = None
 
     sess = {**(state.get("session_state") or {})}
     if ctx.get("intent"):
@@ -1186,6 +1192,9 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         "eval_retry_count": eval_retry_count,
         "summarizer_latency_ms": summarizer_latency_ms,
         "summarizer_token_usage": summarizer_token_usage,
+        # Section 0.8: temperature provenance for thesis audit.
+        "summarizer_temperature_requested": summarizer_temperature_requested,
+        "summarizer_temperature_unsupported": summarizer_temperature_unsupported,
         "metadata": _deep_merge(md, {"debug": debug}),
     }
     updates.update(_ensure_evaluator_state_defaults(state))
@@ -1193,7 +1202,20 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 
 
 def evaluate_response_node(state: GraphState) -> GraphState:
-    """Evaluate summarizer output and store structured verdict and retry metadata."""
+    """Evaluate summarizer output and store structured verdict and retry metadata.
+
+    Section 0.9 of plan-eil-v1.md: when EVALUATOR_MODE=off, the production graph
+    NEVER enters this node — `route_after_summarizer` routes summarizer → END
+    directly (see `build_building_flow_graph`). This means arm A1 of the thesis
+    experiment incurs *zero* evaluator overhead in real runs (no extra LLM call,
+    no extra wall-clock time, no synthetic trace record from this node).
+
+    The bypass branch below is a defensive fallback that fires only when this
+    function is called *directly* (e.g., in unit tests that don't go through
+    the graph router). For thesis trace symmetry across arms, the offline
+    runner (Task 3 of plan-eil-v1.md) writes synthetic A1 trace records itself
+    rather than relying on this branch.
+    """
     print("[evaluate_response] ENTER", flush=True)
 
     question = state.get("last_message") or ""
@@ -1201,6 +1223,8 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     answer = state.get("final_response") or ""
 
     if _is_evaluator_bypassed():
+        # Defensive: only reached on direct calls (tests). Production graph routes
+        # around this node entirely when mode=off.
         print("[evaluate_response] BYPASSED (mode=off)", flush=True)
         md = state.get("metadata") or {}
         debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
@@ -1241,6 +1265,9 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             summarizer_token_usage=state.get("summarizer_token_usage"),
             evaluator_latency_ms=0,
             evaluator_token_usage=None,
+            # Section 0.8: temperature provenance.
+            summarizer_temperature_requested=state.get("summarizer_temperature_requested"),
+            summarizer_temperature_unsupported=bool(state.get("summarizer_temperature_unsupported")),
         )
         try:
             append_evaluation_trace(trace)
@@ -1431,6 +1458,9 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         summarizer_token_usage=summarizer_token_usage,
         evaluator_latency_ms=evaluator_latency_ms,
         evaluator_token_usage=evaluator_token_usage,
+        # Section 0.8: temperature provenance, sourced from state (set by summarizer node).
+        summarizer_temperature_requested=state.get("summarizer_temperature_requested"),
+        summarizer_temperature_unsupported=bool(state.get("summarizer_temperature_unsupported")),
     )
     try:
         append_evaluation_trace(trace)
@@ -1453,7 +1483,15 @@ def evaluate_response_node(state: GraphState) -> GraphState:
 
 
 def route_after_summarizer(state: GraphState) -> str:
-    """Bypass evaluator entirely when mode=off."""
+    """Decide what runs after the summarizer.
+
+    Returns:
+        "end" — when EVALUATOR_MODE=off (or EVALUATOR_ENABLED=false). The graph
+        skips evaluate_response_node entirely; arm A1 of the thesis experiment
+        incurs zero evaluator overhead. This is a *complete bypass*, not a
+        zero-threshold pass-through. See Section 0.9 of plan-eil-v1.md.
+        "evaluate_response" — for balanced/strict modes (arms A2/A3/A4).
+    """
     if _is_evaluator_bypassed():
         print("[route_after_summarizer] evaluator bypass enabled → end", flush=True)
         return "end"
