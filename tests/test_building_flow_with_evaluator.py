@@ -975,6 +975,90 @@ def test_trace_has_two_records_on_retry(flow_module, tmp_path):
     assert by_attempt[0]["run_id"] == "retry-trace-run" and by_attempt[1]["run_id"] == "retry-trace-run"
 
 
+def test_runner_uses_cached_aggregated_data(flow_module):
+    """Section 0.12: when state["aggregated_data_cached"]=True (set by the runner
+    via --cache-from), the parallel agents must SKIP all external calls. This
+    isolates evaluator effects from upstream-pipeline noise — arms A2/A3/A4
+    operate on byte-identical SQL/vector evidence cached from arm A1's run.
+
+    Without this bypass, every arm would re-query the SQL/vector DBs, and a
+    single non-deterministic SQL response (e.g., a vector store with float ties)
+    would inject confounding noise into the per-arm comparison.
+    """
+    # The flow_module fixture already mocks the SQL/vector layers. We assert
+    # that no .execute() was called on them when the cache flag is set.
+    flow_module.sql_mapper_layer = MagicMock()
+    flow_module.specialized_sql_layer = MagicMock()
+    flow_module.vector_client = MagicMock()
+
+    cached_evidence = {
+        "generic_sql": [{"address": "Hammarby Gata 10", "declaredEnergyClass": "B"}],
+        "specialized_sql": [{"building_id": 4521, "energy_kwh_m2": 95.7}],
+        "vector": {"sources": ["doc-001.pdf"], "snippets": ["Energy class B requires..."]},
+    }
+
+    state = {
+        "last_message": "What is the energy class?",
+        "aggregated_data": cached_evidence,  # Pre-populated by the runner.
+        "aggregated_data_cached": True,       # The bypass flag.
+        "messages": [],
+        "metadata": {"question_id": "Q017", "address": "Hammarby Gata 10"},
+        "parallel": {"active": True, "required": {"generic_sql": True, "specialized_sql": True, "vector": True}},
+    }
+
+    # All three parallel agents run; each must short-circuit.
+    update_g = flow_module.generic_sql_agent_node(state)
+    update_s = flow_module.specialized_sql_agent_node(state)
+    update_v = flow_module.vector_db_agent_node(state)
+
+    # Each agent marks itself done so wait_for_replies passes.
+    assert update_g == {"done_generic_sql": True}
+    assert update_s == {"done_specialized_sql": True}
+    assert update_v == {"done_vector": True}
+
+    # Critical: no external calls were issued. This is the property that makes
+    # arms A2/A3/A4 operate on byte-identical evidence.
+    flow_module.sql_mapper_layer.execute.assert_not_called()
+    flow_module.specialized_sql_layer.execute.assert_not_called()
+    # VectorClient typically has a search method — assert no methods called.
+    assert flow_module.vector_client.method_calls == []
+
+    # Aggregator preserves the cached evidence (deep-merge with empty new data
+    # returns the cached value untouched).
+    state.update(update_g)
+    state.update(update_s)
+    state.update(update_v)
+    agg_update = flow_module.aggregator_node(state)
+    assert agg_update.get("aggregated_data") == cached_evidence, (
+        "Aggregator clobbered the cached aggregated_data. The deep-merge logic "
+        "must preserve cached values when merged_data is empty."
+    )
+
+
+def test_runner_without_cache_flag_runs_normally(flow_module):
+    """Section 0.12 negative test: without aggregated_data_cached=True, the
+    parallel agents proceed normally (the bypass must NOT fire by default).
+    Otherwise arm A1 (cache-populating run) would skip its own pipeline.
+    """
+    flow_module.sql_mapper_layer = MagicMock()
+    flow_module.sql_mapper_layer.execute.return_value = {"ok": True, "data": [{"a": 1}]}
+
+    state = {
+        "last_message": "What is the energy class?",
+        "messages": [],
+        "metadata": {"address": "Hammarby Gata 10"},
+        # NOTE: aggregated_data_cached NOT set.
+    }
+
+    flow_module.generic_sql_agent_node(state)
+
+    # The bypass must NOT have fired — the SQL layer was queried.
+    assert flow_module.sql_mapper_layer.execute.called, (
+        "Generic SQL agent did not query when aggregated_data_cached was absent. "
+        "Arm A1 would never populate the cache; the chain breaks."
+    )
+
+
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Answer v1"

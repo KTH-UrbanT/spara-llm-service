@@ -820,6 +820,16 @@ def await_more_node(state: "GraphState") -> "GraphState":
 # Agent nodes (updated for parallel semantics)
 # ===========================================
 def generic_sql_agent_node(state: GraphState) -> GraphState:
+    # Section 0.12: when running with cached aggregated_data (arms A2/A3/A4 of the
+    # thesis experiment), the runner pre-populates state["aggregated_data"] from
+    # arm A1's cache and sets aggregated_data_cached=True. We must NOT issue a SQL
+    # query — both for cost and to ensure all arms see byte-identical evidence.
+    # Mark done so wait_for_replies passes; the aggregator preserves cached data
+    # via deep-merge with empty new data.
+    if state.get("aggregated_data_cached"):
+        print("[generic_sql_agent] skipped: aggregated_data is cached", flush=True)
+        return {"done_generic_sql": True}
+
     par = state.get("parallel") or {}
     if par.get("active") and not par.get("required", {}).get("generic_sql", False):
         print("[generic_sql_agent] skipped by parallel plan", flush=True)
@@ -869,6 +879,12 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
     return updates
 
 def specialized_sql_agent_node(state: GraphState) -> GraphState:
+    # Section 0.12: bypass for cached-aggregated_data runs. See generic_sql_agent_node
+    # for rationale.
+    if state.get("aggregated_data_cached"):
+        print("[specialized_sql_agent] skipped: aggregated_data is cached", flush=True)
+        return {"done_specialized_sql": True}
+
     par = state.get("parallel") or {}
     if par.get("active") and not par.get("required", {}).get("specialized_sql", False):
         print("[specialized_sql_agent] skipped by parallel plan", flush=True)
@@ -931,6 +947,12 @@ def specialized_sql_agent_node(state: GraphState) -> GraphState:
 
 
 def vector_db_agent_node(state: GraphState) -> GraphState:
+    # Section 0.12: bypass for cached-aggregated_data runs. See generic_sql_agent_node
+    # for rationale.
+    if state.get("aggregated_data_cached"):
+        print("[vector_db_agent] skipped: aggregated_data is cached", flush=True)
+        return {"done_vector": True}
+
     par = state.get("parallel") or {}
     if par.get("active") and not par.get("required", {}).get("vector", False):
         print("[vector_db_agent] skipped by parallel plan", flush=True)
