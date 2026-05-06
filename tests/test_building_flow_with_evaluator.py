@@ -725,6 +725,256 @@ def test_summarizer_temperature_unsupported_flag_in_trace(flow_module, tmp_path)
     assert records[-1]["summarizer_temperature_unsupported"] is True
 
 
+def test_composite_floor_rejects_when_axes_high(flow_module):
+    """Section 0.11: scores that pass every per-axis gate can still fail the composite.
+
+    Strict thresholds: per-axis (groundedness=9, numeric=9, constraint=8, completeness=8)
+    AND composite_min=8.7. With g=9, nf=9, cs=8, c=8, uc=0:
+    composite = 0.35·9 + 0.25·9 + 0.20·8 + 0.15·8 + 0.05·0 = 8.2 (< 8.7) → FAIL.
+    Confirms the composite gate is independent of per-axis gates.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 10, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",  # LLM said pass — code must override based on composite.
+        "groundedness_score": 9, "faithfulness_score": 9,
+        "completeness_score": 8, "numeric_fidelity_score": 9,
+        "constraint_satisfaction_score": 8, "uncertainty_calibration_score": 0,
+        "issues": [], "corrective_feedback": "",
+        "evaluator_failed": False, "evaluator_failure_reason": "",
+        "_latency_ms": 10, "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "strict"}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    composite = state["eval_scores"]["composite_score"]
+    assert composite < 8.7, f"Test setup wrong: composite={composite} should be below strict threshold 8.7"
+    # Every per-axis is at-or-above strict mins. Only the composite forces fail.
+    assert state["eval_verdict"] == "fail", (
+        "Composite-floor gate did not fire. The thesis claim that 'composite is "
+        "an independent gate' would not be defensible without this enforcement."
+    )
+
+
+def test_hard_fail_true_with_high_scores_still_fails(flow_module):
+    """Section 0.11: hard_fail=true must override even all-high scores.
+
+    Without this enforcement, a single critical hallucination could be 'passed' by
+    composite + per-axis gates and the evaluator's hard-fail rule would be advisory.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 10, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",  # LLM said pass — must be overridden.
+        "groundedness_score": 9, "faithfulness_score": 9,
+        "completeness_score": 9, "numeric_fidelity_score": 9,
+        "constraint_satisfaction_score": 9, "uncertainty_calibration_score": 9,
+        "hard_fail": True,  # The override.
+        "hard_fail_reason": "Numeric contradiction with aggregated data.",
+        "issues": [], "corrective_feedback": "Use the SQL value verbatim.",
+        "evaluator_failed": False, "evaluator_failure_reason": "",
+        "_latency_ms": 10, "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "balanced"}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    assert state["eval_verdict"] == "fail"
+    assert state["eval_scores"]["hard_fail"] is True
+    # Hard-fail also disables retry candidacy (per evaluate_response_node logic).
+    assert state["eval_scores"]["retry_candidate"] is False, (
+        "hard_fail=true must NOT trigger a retry — the answer has a critical "
+        "defect that one re-summarization cannot fix."
+    )
+
+
+def test_retry_attempted_at_retry_lower_boundary(flow_module):
+    """Section 0.11: composite *exactly* at retry_lower must trigger retry.
+
+    Off-by-one protection. The retry-band rule is `retry_lower ≤ composite < composite_min`,
+    so the boundary value is INCLUSIVE on the lower side. Otherwise the analysis
+    script's retry_attempt_rate could be off by ~1/40 = 2.5 percentage points.
+
+    Balanced thresholds: retry_lower=6.0, composite_min=7.2. With all axes=6:
+    composite = 0.35·6 + 0.25·6 + 0.20·6 + 0.15·6 + 0.05·6 = 6.0 (== retry_lower).
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 10, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "fail",
+        "groundedness_score": 6, "faithfulness_score": 6,
+        "completeness_score": 6, "numeric_fidelity_score": 6,
+        "constraint_satisfaction_score": 6, "uncertainty_calibration_score": 6,
+        "issues": ["below per-axis minimums"], "corrective_feedback": "Tighten claims.",
+        "evaluator_failed": False, "evaluator_failure_reason": "",
+        "_latency_ms": 10, "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "balanced"}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+        composite = state["eval_scores"]["composite_score"]
+        assert composite == 6.0, f"Test setup wrong: composite={composite} should be exactly 6.0"
+        assert state["eval_scores"]["retry_candidate"] is True, (
+            f"Composite={composite} == retry_lower=6.0 must be retry-eligible. "
+            "If this fails, the retry-band lower bound is exclusive, not inclusive — "
+            "analysis script's retry_attempt_rate is silently off."
+        )
+        # And the router agrees:
+        assert flow_module.route_after_evaluation(state) == "retry_summarizer"
+
+
+def test_balanced_accepts_what_strict_rejects(flow_module):
+    """Section 0.11: identical scores produce different verdicts under different modes.
+
+    The dual-direction proof of the strict/balanced trade-off the thesis claims.
+    Scores all=8: composite=8.0, per-axis all=8.
+    - Strict (per-axis min=9, composite_min=8.7): every per-axis fails AND composite fails → fail.
+    - Balanced (per-axis min=7, composite_min=7.2): all gates clear → pass.
+    """
+    def _make_eval_return():
+        return {
+            "verdict": "pass",
+            "groundedness_score": 8, "faithfulness_score": 8,
+            "completeness_score": 8, "numeric_fidelity_score": 8,
+            "constraint_satisfaction_score": 8, "uncertainty_calibration_score": 8,
+            "issues": [], "corrective_feedback": "",
+            "evaluator_failed": False, "evaluator_failure_reason": "",
+            "_latency_ms": 10, "_token_usage": None,
+        }
+
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 10, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/evaluator_prompt.txt"
+
+    # Direction 1: BALANCED accepts.
+    flow_module.evaluator_agent.evaluate.return_value = _make_eval_return()
+    state_balanced = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "balanced"}, clear=False):
+        state_balanced.update(flow_module.llm_summarizer_node(state_balanced))
+        state_balanced.update(flow_module.evaluate_response_node(state_balanced))
+    assert state_balanced["eval_verdict"] == "pass", (
+        "Balanced mode must accept all-axes=8 / composite=8.0 (≥ 7.2)."
+    )
+
+    # Direction 2: STRICT rejects the EXACT same scores.
+    flow_module.evaluator_agent.evaluate.return_value = _make_eval_return()
+    state_strict = _base_state()
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "strict"}, clear=False):
+        state_strict.update(flow_module.llm_summarizer_node(state_strict))
+        state_strict.update(flow_module.evaluate_response_node(state_strict))
+    assert state_strict["eval_verdict"] == "fail", (
+        "Strict mode must reject all-axes=8 (groundedness=8 < strict_min=9). "
+        "If both modes return the same verdict, arms A2 vs A3 are identical and "
+        "the strict/balanced thesis claim collapses."
+    )
+
+
+def test_trace_has_two_records_on_retry(flow_module, tmp_path):
+    """Section 0.11: a fail→retry→pass sequence writes 2 trace records, with
+    `attempt_index=0` for the first eval and `attempt_index=1` for the post-retry.
+
+    Without this guarantee, the analysis script cannot compute retry_rescue_rate
+    reliably — there'd be no way to identify the first-attempt verdict.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.side_effect = ["Answer bad", "Answer fixed"]
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 10, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.side_effect = [
+        # First eval: in retry band (composite ≥ retry_lower) so retry triggers.
+        {
+            "verdict": "fail",
+            "groundedness_score": 7, "faithfulness_score": 7,
+            "completeness_score": 7, "numeric_fidelity_score": 6,
+            "constraint_satisfaction_score": 7, "uncertainty_calibration_score": 7,
+            "issues": ["one numeric mismatch"], "corrective_feedback": "Fix the kWh value.",
+            "evaluator_failed": False, "evaluator_failure_reason": "",
+            "_latency_ms": 10, "_token_usage": None,
+        },
+        # Second eval (after retry): pass.
+        {
+            "verdict": "pass",
+            "groundedness_score": 9, "faithfulness_score": 9,
+            "completeness_score": 8, "numeric_fidelity_score": 9,
+            "constraint_satisfaction_score": 8, "uncertainty_calibration_score": 8,
+            "issues": [], "corrective_feedback": "",
+            "evaluator_failed": False, "evaluator_failure_reason": "",
+            "_latency_ms": 10, "_token_usage": None,
+        },
+    ]
+
+    state = _base_state()
+    state["metadata"] = {"question_id": "Q-retry-trace"}
+    env_overrides = {
+        "EVALUATION_TRACE_DIR": str(tmp_path),
+        "EVALUATOR_MODE": "balanced",
+        "EXPERIMENT_RUN_ID": "retry-trace-run",
+        "EXPERIMENT_ARM": "A2",
+    }
+    with patch.dict(os.environ, env_overrides, clear=False):
+        # Pass 1: summarizer → evaluate (FAIL with retry_candidate).
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+        assert state["eval_verdict"] == "fail"
+        assert flow_module.route_after_evaluation(state) == "retry_summarizer", (
+            "Test setup: first-pass scores must be in retry band so retry actually fires."
+        )
+
+        # Pass 2: summarizer (with feedback → retry_count increments) → evaluate (PASS).
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+        assert state["eval_verdict"] == "pass"
+        assert flow_module.route_after_evaluation(state) == "end"
+
+    records = [
+        json.loads(line)
+        for line in (Path(tmp_path) / "evaluation_traces.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    # Filter to this question only (in case other tests wrote to the same dir).
+    records = [r for r in records if r.get("question_id") == "Q-retry-trace"]
+    assert len(records) == 2, f"Expected 2 trace records for retry sequence, got {len(records)}"
+
+    by_attempt = {r["attempt_index"]: r for r in records}
+    assert 0 in by_attempt and 1 in by_attempt, "Missing attempt_index=0 or =1 in trace records."
+
+    assert by_attempt[0]["verdict"] == "fail"
+    assert by_attempt[1]["verdict"] == "pass"
+    # Both records carry the same question_id and arm — that's the join key analysis uses.
+    assert by_attempt[0]["arm"] == "A2" and by_attempt[1]["arm"] == "A2"
+    assert by_attempt[0]["run_id"] == "retry-trace-run" and by_attempt[1]["run_id"] == "retry-trace-run"
+
+
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
