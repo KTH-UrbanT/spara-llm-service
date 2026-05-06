@@ -519,6 +519,124 @@ def test_aggregated_data_truncated_in_trace(flow_module, tmp_path):
     assert short == "small one", "Short string should not be modified."
 
 
+def test_score_fallbacks_applied_field_records_dimensions(flow_module, tmp_path):
+    """Section 0.7: when the LLM omits a dimension and the code synthesizes it
+    from another axis (e.g., numeric_fidelity ← groundedness), the dimension
+    name is appended to `eval_scores.score_fallbacks_applied`. Without this,
+    per-axis thesis claims would be silently inflated by synthetic values.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 100, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    # Sloppy LLM output: only groundedness + completeness, missing the other 3 dims.
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "groundedness_score": 8,
+        "completeness_score": 7,
+        # numeric_fidelity_score, constraint_satisfaction_score, uncertainty_calibration_score MISSING
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+        "_latency_ms": 50,
+        "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    scores = state["eval_scores"]
+    fallbacks = scores["score_fallbacks_applied"]
+    # All three cross-dimension synthesizes fired:
+    assert "numeric_fidelity_score" in fallbacks  # synthesized from groundedness
+    assert "constraint_satisfaction_score" in fallbacks  # synthesized from completeness
+    assert "uncertainty_calibration_score" in fallbacks  # synthesized from completeness
+    # The values themselves are the synthesized ones (8 from groundedness, 7 from completeness):
+    assert scores["numeric_fidelity_score"] == 8
+    assert scores["constraint_satisfaction_score"] == 7
+    assert scores["uncertainty_calibration_score"] == 7
+
+
+def test_score_fallbacks_empty_when_all_dimensions_present(flow_module, tmp_path):
+    """Section 0.7: clean LLM output with all 5 dimensions → empty fallback list.
+    These are the rows the thesis can use for per-axis claims.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 100, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        "groundedness_score": 9,
+        "faithfulness_score": 9,
+        "completeness_score": 8,
+        "numeric_fidelity_score": 9,
+        "constraint_satisfaction_score": 8,
+        "uncertainty_calibration_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+        "_latency_ms": 50,
+        "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    assert state["eval_scores"]["score_fallbacks_applied"] == []
+
+
+def test_faithfulness_groundedness_alias_not_recorded_as_fallback(flow_module, tmp_path):
+    """Section 0.7: faithfulness ↔ groundedness is an alias (prompt enforces equality),
+    not a real cross-dimension synthesis. It must NOT appear in score_fallbacks_applied.
+    """
+    flow_module.llm_summarizer = MagicMock()
+    flow_module.llm_summarizer.generate_response.return_value = "Answer v1"
+    flow_module.llm_summarizer._last_call_meta = {"latency_ms": 100, "token_usage": None}
+
+    flow_module.evaluator_agent = MagicMock()
+    flow_module.evaluator_agent.deployment = "test-deployment"
+    flow_module.evaluator_agent.prompt_path = "/abs/path/to/evaluator_prompt.txt"
+    # LLM omits faithfulness_score (legacy field) but provides everything else.
+    flow_module.evaluator_agent.evaluate.return_value = {
+        "verdict": "pass",
+        # "faithfulness_score": MISSING — should fall back to groundedness silently
+        "groundedness_score": 9,
+        "completeness_score": 8,
+        "numeric_fidelity_score": 9,
+        "constraint_satisfaction_score": 8,
+        "uncertainty_calibration_score": 8,
+        "issues": [],
+        "corrective_feedback": "",
+        "evaluator_failed": False,
+        "evaluator_failure_reason": "",
+        "_latency_ms": 50,
+        "_token_usage": None,
+    }
+
+    state = _base_state()
+    with patch.dict(os.environ, {"EVALUATION_TRACE_DIR": str(tmp_path)}, clear=False):
+        state.update(flow_module.llm_summarizer_node(state))
+        state.update(flow_module.evaluate_response_node(state))
+
+    fallbacks = state["eval_scores"]["score_fallbacks_applied"]
+    # Faithfulness was synthesized but it's an alias, so we don't pollute the filter.
+    assert "faithfulness_score" not in fallbacks
+    assert state["eval_scores"]["faithfulness_score"] == 9
+
+
 def test_strict_mode_enforces_high_precision_thresholds(flow_module):
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Answer v1"

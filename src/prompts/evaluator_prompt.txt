@@ -40,6 +40,7 @@ Output requirements:
 - Return only valid JSON, no markdown.
 - Keep issues concise and specific.
 - corrective_feedback must be concrete and actionable.
+- Every one of the five dimension scores (groundedness_score, completeness_score, numeric_fidelity_score, constraint_satisfaction_score, uncertainty_calibration_score) MUST be present in the output. If a dimension is not applicable to this question (e.g., no numeric content, no explicit constraint), still return its score (typically 10 for "no violation possible") and explain why in the issues list. Never omit a dimension — downstream analysis relies on independent per-axis scores.
 - Use exactly this schema:
 {
 	"verdict": "pass" | "fail",

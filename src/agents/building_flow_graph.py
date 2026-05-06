@@ -1286,16 +1286,29 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     constraint_satisfaction = _coerce_score(result.get("constraint_satisfaction_score"))
     uncertainty_calibration = _coerce_score(result.get("uncertainty_calibration_score"))
 
+    # Section 0.7: track which dimensions were filled by fallback. This lets the
+    # analysis script exclude rows from per-axis breakdowns where the LLM did not
+    # actually score a dimension independently. Composite + overall pass rate
+    # still include these rows; only per-axis tables filter on this field.
+    #
+    # Note: faithfulness ↔ groundedness is an alias (prompt enforces equality),
+    # NOT a cross-dimension synthesis. We do not record it here so the per-axis
+    # filter only flags the three real cross-dimension fallbacks.
+    score_fallbacks_applied: List[str] = []
+
     if groundedness is None and faithfulness is not None:
         groundedness = faithfulness
     if faithfulness is None and groundedness is not None:
         faithfulness = groundedness
     if numeric_fidelity is None and groundedness is not None:
         numeric_fidelity = groundedness
+        score_fallbacks_applied.append("numeric_fidelity_score")
     if constraint_satisfaction is None and completeness is not None:
         constraint_satisfaction = completeness
+        score_fallbacks_applied.append("constraint_satisfaction_score")
     if uncertainty_calibration is None and completeness is not None:
         uncertainty_calibration = completeness
+        score_fallbacks_applied.append("uncertainty_calibration_score")
 
     composite_score = _compute_composite_score(
         groundedness=groundedness,
@@ -1363,6 +1376,10 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "evaluation_status": "failed_open" if evaluator_failed else "evaluated",
         "evaluator_failed": evaluator_failed,
         "evaluator_failure_reason": evaluator_failure_reason,
+        # Section 0.7: empty list = LLM scored every dimension independently;
+        # any entry means that axis was synthesized from another and should be
+        # excluded from per-axis statistical comparisons in the thesis.
+        "score_fallbacks_applied": score_fallbacks_applied,
     }
 
     md = state.get("metadata") or {}
