@@ -308,15 +308,18 @@ GraphState = Annotated[Dict[str, Any], operator.or_]
 # Evaluator-related state keys (plain dict keys, no TypedDict schema needed):
 # - eval_verdict: Optional[str] -> "pass" | "fail"
 # - eval_feedback: Optional[str] -> corrective feedback for summarizer retries
-# - eval_retries: int -> number of evaluator-triggered retries so far
+# - eval_retry_count: int -> number of completed retry loops (0 = first attempt,
+#   1 = after one retry). Renamed from `eval_retries` per Section 0.6 of
+#   plan-eil-v1.md to clarify it counts summarizer re-runs after a failed eval,
+#   NOT evaluator failures.
 # - eval_scores: Optional[dict] -> score bundle + gating metadata
 
 
 def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
     """Return missing evaluator defaults without overwriting existing values."""
     updates: Dict[str, Any] = {}
-    if "eval_retries" not in state or state.get("eval_retries") is None:
-        updates["eval_retries"] = 0
+    if "eval_retry_count" not in state or state.get("eval_retry_count") is None:
+        updates["eval_retry_count"] = 0
     if "eval_verdict" not in state:
         updates["eval_verdict"] = None
     if "eval_feedback" not in state:
@@ -335,20 +338,20 @@ def _build_trace_identifiers(state: GraphState) -> Dict[str, Any]:
       - dataset_version: state.metadata["dataset_version"] — set by the runner from the gold dataset header.
       - run_id: EXPERIMENT_RUN_ID env var — set by the runner once per process.
       - arm: EXPERIMENT_ARM env var — set by the runner once per process.
-      - attempt_index: equals the current eval_retries counter at trace-write time
-        (0 for first evaluation, 1 for the post-retry evaluation).
+      - attempt_index: equals the current eval_retry_count counter at trace-write
+        time (0 for first evaluation, 1 for the post-retry evaluation).
     Missing values are returned as None so the analysis script can detect non-experimental traces.
     """
     md = state.get("metadata") or {}
     if not isinstance(md, dict):
         md = {}
-    retries = int(state.get("eval_retries") or 0)
+    retry_count = int(state.get("eval_retry_count") or 0)
     return {
         "question_id": md.get("question_id"),
         "dataset_version": md.get("dataset_version"),
         "run_id": os.getenv("EXPERIMENT_RUN_ID"),
         "arm": os.getenv("EXPERIMENT_ARM"),
-        "attempt_index": retries,
+        "attempt_index": retry_count,
     }
 
 
@@ -1127,7 +1130,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 
     # If evaluator rejected a prior answer, pass corrective guidance to the summarizer.
     eval_feedback = state.get("eval_feedback")
-    eval_retries = int(state.get("eval_retries") or 0)
+    eval_retry_count = int(state.get("eval_retry_count") or 0)
     if eval_feedback:
         prompt += (
             "\n\nPrevious answer was rejected by evaluator. "
@@ -1135,7 +1138,9 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
             + str(eval_feedback)
         )
         # Count retries when we actually perform a corrective summarization pass.
-        eval_retries += 1
+        # eval_retry_count is the number of completed retry loops, NOT the number
+        # of evaluator failures. See Section 0.6 of plan-eil-v1.md for rationale.
+        eval_retry_count += 1
 
     try:
         answer = llm_summarizer.generate_response(prompt, message_list=(state.get('messages') or []))
@@ -1178,7 +1183,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         "final_response": answer,
         "session_state": sess,
         "step_out": out,
-        "eval_retries": eval_retries,
+        "eval_retry_count": eval_retry_count,
         "summarizer_latency_ms": summarizer_latency_ms,
         "summarizer_token_usage": summarizer_token_usage,
         "metadata": _deep_merge(md, {"debug": debug}),
@@ -1226,7 +1231,7 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             verdict="pass",
             evaluated=False,
             evaluation_status="bypassed",
-            eval_retries=int(state.get("eval_retries") or 0),
+            eval_retry_count=int(state.get("eval_retry_count") or 0),
             eval_scores=updates["eval_scores"],
             model_deployment=_get_evaluator_deployment_label(),
             prompt_version=_get_evaluator_prompt_version(),
@@ -1246,7 +1251,7 @@ def evaluate_response_node(state: GraphState) -> GraphState:
 
     # Ensure evaluator keys are always available.
     base_updates = _ensure_evaluator_state_defaults(state)
-    retries = int(state.get("eval_retries") or 0)
+    retry_count = int(state.get("eval_retry_count") or 0)
 
     result = evaluator_agent.evaluate(
         question=question,
@@ -1367,12 +1372,12 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "evaluator_bypassed": False,
         "eval_verdict": verdict,
         "eval_scores": scores,
-        "eval_retries": retries,
+        "eval_retry_count": retry_count,
     })
     if verdict == "fail":
         debug["eval_warning"] = "Evaluator failed answer quality check."
 
-    print(f"[evaluate_response] verdict={verdict} retries={retries}", flush=True)
+    print(f"[evaluate_response] verdict={verdict} retry_count={retry_count}", flush=True)
     print(
         "[evaluate_response] "
         f"mode={mode} faithfulness={faithfulness} groundedness={groundedness} "
@@ -1398,7 +1403,7 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         verdict=verdict,
         evaluated=not evaluator_failed,
         evaluation_status="failed_open" if evaluator_failed else "evaluated",
-        eval_retries=retries,
+        eval_retry_count=retry_count,
         eval_scores=scores,
         model_deployment=_get_evaluator_deployment_label(),
         prompt_version=_get_evaluator_prompt_version(),
@@ -1421,7 +1426,7 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "eval_verdict": verdict,
         "eval_feedback": feedback if verdict == "fail" else None,
         "eval_scores": scores,
-        "eval_retries": retries,
+        "eval_retry_count": retry_count,
         # Section 0.4: persist this attempt's latency/tokens into state so the runner
         # can sum across attempts when writing per-question totals to results.jsonl.
         "evaluator_latency_ms": evaluator_latency_ms,
@@ -1444,13 +1449,13 @@ def route_after_evaluation(state: GraphState) -> str:
         return "end"
 
     verdict = str(state.get("eval_verdict") or "pass").lower().strip()
-    retries = int(state.get("eval_retries") or 0)
+    retry_count = int(state.get("eval_retry_count") or 0)
     max_retries = int(os.getenv("EVALUATOR_MAX_RETRIES", "1"))
 
     if verdict == "pass":
         return "end"
 
-    if verdict == "fail" and retries < max_retries and _is_retry_candidate(state.get("eval_scores") or {}):
+    if verdict == "fail" and retry_count < max_retries and _is_retry_candidate(state.get("eval_scores") or {}):
         return "retry_summarizer"
     return "end"
 

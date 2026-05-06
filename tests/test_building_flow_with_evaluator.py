@@ -70,7 +70,7 @@ def test_first_pass_pass(flow_module):
 
     assert route == "end"
     assert state["eval_verdict"] == "pass"
-    assert state["eval_retries"] == 0
+    assert state["eval_retry_count"] == 0
 
 
 def test_first_fail_retry_then_pass(flow_module):
@@ -110,7 +110,7 @@ def test_first_fail_retry_then_pass(flow_module):
     # 2nd evaluation (pass)
     state.update(flow_module.evaluate_response_node(state))
     assert flow_module.route_after_evaluation(state) == "end"
-    assert state["eval_retries"] == 1
+    assert state["eval_retry_count"] == 1
 
 
 def test_both_fail_end_after_retry_cap(flow_module):
@@ -145,7 +145,7 @@ def test_both_fail_end_after_retry_cap(flow_module):
     state.update(flow_module.evaluate_response_node(state))
 
     assert flow_module.route_after_evaluation(state) == "end"
-    assert state["eval_retries"] == 1
+    assert state["eval_retry_count"] == 1
     assert ((state.get("metadata") or {}).get("debug") or {}).get("eval_warning")
 
 
