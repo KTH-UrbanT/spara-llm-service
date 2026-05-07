@@ -69,7 +69,13 @@ class OpenAIResponseAgent:
             raise RuntimeError("Failed to initialize OpenAI client.")
 
     def _is_o4_family(self) -> bool:
-        """Treat o3/o4 deployments with the new param names/limits."""
+        """Return True if the deployment is an o3/o4-series model.
+
+        o3/o4 models use `max_completion_tokens` instead of `max_tokens`, and
+        reject sampling parameters like `top_p`, `frequency_penalty`, and
+        `presence_penalty` with a 400 error. Callers use this flag to send the
+        right parameter set for the deployed model family.
+        """
         name = (self.deployment or "").lower()
         return ("o4" in name) or ("o3" in name)
 
@@ -88,7 +94,13 @@ class OpenAIResponseAgent:
         return messages
 
     def _extract_token_usage(self, response) -> Optional[Dict[str, int]]:
-        """Coerce the OpenAI usage object into a plain dict, defensively."""
+        """Convert the Azure SDK usage object into a plain JSON-serializable dict.
+
+        The SDK returns a `CompletionUsage` object (not a dict), and some attributes
+        can be None when the API omits them. We coerce everything to int with a 0
+        fallback so the trace writer never sees non-serializable types.
+        Returns None if the response has no usage attribute at all.
+        """
         usage = getattr(response, "usage", None)
         if usage is None:
             return None
@@ -102,10 +114,11 @@ class OpenAIResponseAgent:
             return None
 
     def _get_summarizer_temperature(self) -> float:
-        """Read SUMMARIZER_TEMPERATURE env var (Section 0.8 of plan-eil-v1.md).
+        """Read the SUMMARIZER_TEMPERATURE env var.
 
-        Default is 0.2 (production tone). Experiment runs pin to 0.0 in the
-        run_arm.py wrapper. Invalid values fall back to default with a warning.
+        Default is 0.2 (production tone). Experiment runs should pin this to 0.0
+        via the env var to minimize stochastic variance across arms.
+        Invalid values fall back to the default with a warning.
         """
         raw = os.getenv("SUMMARIZER_TEMPERATURE")
         if not raw:
@@ -144,11 +157,12 @@ class OpenAIResponseAgent:
         temperature_requested: Optional[float] = None,
         temperature_unsupported: bool = False,
     ) -> None:
-        """Side-channel for nodes to read after generate_response (Section 0.4 of plan-eil-v1.md).
+        """Store per-call metadata so the calling node can read it after generate_response.
 
-        Section 0.8 additions: temperature_requested + temperature_unsupported flow
-        through to the trace so the thesis can audit which arms actually ran at the
-        configured temperature vs which fell back to model default.
+        Using a side-channel rather than changing the return type lets callers that
+        don't need the metadata ignore it while callers that do (e.g. the summarizer
+        node writing to the evaluation trace) can read latency, token usage, and the
+        temperature provenance without any API change.
         """
         self._last_call_meta = {
             "latency_ms": int(latency_ms),
@@ -170,14 +184,15 @@ class OpenAIResponseAgent:
             "temperature_unsupported": False,
         }
 
-        # be forgiving about types
+        # Callers sometimes pass None or non-string types from upstream graph nodes.
+        # Normalizing here avoids a confusing TypeError deep inside the API call.
         if not isinstance(last_message, str):
             last_message = "" if last_message is None else str(last_message)
         if not isinstance(message_list, list):
             message_list = []
 
         messages = self._build_messages(last_message, message_list)
-        # Section 0.8: temperature is set unconditionally for ALL model families,
+        # Temperature is set unconditionally for ALL model families here,
         # then the BadRequestError handler below removes it for deployments that
         # reject the override (o-series). This makes the env var honored uniformly.
         params = {
@@ -203,12 +218,13 @@ class OpenAIResponseAgent:
                 logger.warning("Retrying with max_completion_tokens for o4/o3 model.")
                 params.pop("max_tokens", None)
                 params["max_completion_tokens"] = 800
-                # Remove legacy sampling params that may cause 400 on o4/o3
+                # o4/o3 models reject top_p, frequency_penalty, and presence_penalty
+                # with a 400 error; strip them before retrying.
                 for k in ("top_p", "frequency_penalty", "presence_penalty"):
                     params.pop(k, None)
                 response = self.client.chat.completions.create(**params)
             elif self._is_temperature_unsupported_error(e):
-                # Section 0.8: o-series deployments reject explicit temperature.
+                # o-series deployments reject explicit temperature — retry without it.
                 logger.warning(
                     "Summarizer model rejected temperature=%s; retrying without. "
                     "This run is NOT fully deterministic (model default applies).",

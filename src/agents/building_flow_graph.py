@@ -309,14 +309,20 @@ GraphState = Annotated[Dict[str, Any], operator.or_]
 # - eval_verdict: Optional[str] -> "pass" | "fail"
 # - eval_feedback: Optional[str] -> corrective feedback for summarizer retries
 # - eval_retry_count: int -> number of completed retry loops (0 = first attempt,
-#   1 = after one retry). Renamed from `eval_retries` per Section 0.6 of
-#   plan-eil-v1.md to clarify it counts summarizer re-runs after a failed eval,
-#   NOT evaluator failures.
+#   1 = after one retry). Counts summarizer re-runs that followed a failed
+#   evaluation — NOT the number of evaluator failures themselves.
 # - eval_scores: Optional[dict] -> score bundle + gating metadata
 
 
 def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
-    """Return missing evaluator defaults without overwriting existing values."""
+    """Return a dict of evaluator state keys that are missing or None in `state`.
+
+    LangGraph merges the returned dict into state using `operator.or_`, which means
+    any key we return will OVERWRITE the existing value. We therefore only include
+    keys that are genuinely absent or uninitialized — never returning a key that
+    already has a meaningful value. This is called at node entry to guarantee that
+    downstream code can always read these keys safely without None-checks.
+    """
     updates: Dict[str, Any] = {}
     if "eval_retry_count" not in state or state.get("eval_retry_count") is None:
         updates["eval_retry_count"] = 0
@@ -330,7 +336,7 @@ def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
 
 
 def _build_trace_identifiers(state: GraphState) -> Dict[str, Any]:
-    """Extract experiment identifier fields for the trace (Section 0.3 of plan-eil-v1.md).
+    """Extract experiment identifier fields for the trace.
 
     These identifiers are how the analysis script joins traces across the four arms.
     They are sourced from:
@@ -356,12 +362,15 @@ def _build_trace_identifiers(state: GraphState) -> Dict[str, Any]:
 
 
 def _get_evaluator_prompt_version() -> str:
-    """Return a stable, JSON-serializable label for the loaded evaluator prompt.
+    """Return the filename of the evaluator prompt that was actually loaded.
 
-    Resolution: prefer the basename of `evaluator_agent.prompt_path` (the actual loaded
-    file, set by Section 0.2). Fall back to the `EVALUATOR_PROMPT_VERSION` env var,
-    or the default filename. Defensive against test mocks where `prompt_path` may
-    not be a str.
+    This is recorded in every trace record so that analysis can group runs by
+    prompt version and detect whether two arms used different rubric wordings.
+    Using the basename of the resolved file path (rather than the env var value)
+    is more reliable because it reflects what the agent actually opened on disk,
+    even if the env var was set to an absolute path. Falls back to the env var
+    or the default filename when the evaluator is mocked in tests and has no
+    real `prompt_path` attribute.
     """
     prompt_path = getattr(evaluator_agent, "prompt_path", None)
     if isinstance(prompt_path, str) and prompt_path:
@@ -370,7 +379,12 @@ def _get_evaluator_prompt_version() -> str:
 
 
 def _get_evaluator_deployment_label() -> Optional[str]:
-    """Return the evaluator deployment name as a JSON-serializable label or None."""
+    """Return the evaluator's Azure deployment name as a plain string for the trace.
+
+    The isinstance guard prevents test MagicMock objects (where any attribute access
+    returns another MagicMock) from leaking into the trace and causing JSON
+    serialization failures. Returns None when the evaluator is mocked or uninitialized.
+    """
     deployment = getattr(evaluator_agent, "deployment", None)
     if isinstance(deployment, str) and deployment:
         return deployment
@@ -820,12 +834,12 @@ def await_more_node(state: "GraphState") -> "GraphState":
 # Agent nodes (updated for parallel semantics)
 # ===========================================
 def generic_sql_agent_node(state: GraphState) -> GraphState:
-    # Section 0.12: when running with cached aggregated_data (arms A2/A3/A4 of the
-    # thesis experiment), the runner pre-populates state["aggregated_data"] from
-    # arm A1's cache and sets aggregated_data_cached=True. We must NOT issue a SQL
-    # query — both for cost and to ensure all arms see byte-identical evidence.
-    # Mark done so wait_for_replies passes; the aggregator preserves cached data
-    # via deep-merge with empty new data.
+    # When the runner pre-populates state["aggregated_data"] from a previous run's
+    # cache, it also sets aggregated_data_cached=True to signal that upstream agents
+    # must not re-query. Skipping the SQL query here serves two purposes: it avoids
+    # redundant cost, and it ensures all arms in a comparative run see byte-identical
+    # evidence. We still mark done so wait_for_replies sees the completion signal;
+    # the aggregator preserves the cached data via deep-merge with empty new data.
     if state.get("aggregated_data_cached"):
         print("[generic_sql_agent] skipped: aggregated_data is cached", flush=True)
         return {"done_generic_sql": True}
@@ -879,8 +893,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
     return updates
 
 def specialized_sql_agent_node(state: GraphState) -> GraphState:
-    # Section 0.12: bypass for cached-aggregated_data runs. See generic_sql_agent_node
-    # for rationale.
+    # Skip when aggregated_data was pre-loaded from cache — same rationale as
+    # generic_sql_agent_node: avoid re-querying and ensure all arms see the same evidence.
     if state.get("aggregated_data_cached"):
         print("[specialized_sql_agent] skipped: aggregated_data is cached", flush=True)
         return {"done_specialized_sql": True}
@@ -947,8 +961,8 @@ def specialized_sql_agent_node(state: GraphState) -> GraphState:
 
 
 def vector_db_agent_node(state: GraphState) -> GraphState:
-    # Section 0.12: bypass for cached-aggregated_data runs. See generic_sql_agent_node
-    # for rationale.
+    # Skip when aggregated_data was pre-loaded from cache — same rationale as
+    # generic_sql_agent_node: avoid re-querying and ensure all arms see the same evidence.
     if state.get("aggregated_data_cached"):
         print("[vector_db_agent] skipped: aggregated_data is cached", flush=True)
         return {"done_vector": True}
@@ -1161,7 +1175,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         )
         # Count retries when we actually perform a corrective summarization pass.
         # eval_retry_count is the number of completed retry loops, NOT the number
-        # of evaluator failures. See Section 0.6 of plan-eil-v1.md for rationale.
+        # of evaluator failures. Incrementing here (not in the evaluator node)
+        # ensures the counter reflects summarizer re-runs, not eval invocations.
         eval_retry_count += 1
 
     try:
@@ -1171,16 +1186,21 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         answer = "Sorry, summarizer error."
         print(f"[llm_summarizer] ERROR: {e}", flush=True)
 
-    # Section 0.4: capture per-call latency + token usage from the side-channel meta.
-    # isinstance check is defensive against MagicMock instances in tests where every
-    # attribute access otherwise produces yet another MagicMock.
+    # Capture per-call latency + token usage from the side-channel meta the summarizer
+    # stores on itself after each generate_response call. The isinstance check guards
+    # against MagicMock instances in tests where every attribute access returns yet
+    # another MagicMock, which would later fail JSON serialization in the trace writer.
     summarizer_meta = getattr(llm_summarizer, "_last_call_meta", None)
     if not isinstance(summarizer_meta, dict):
         summarizer_meta = {}
     summarizer_latency_ms = summarizer_meta.get("latency_ms")
     summarizer_token_usage = summarizer_meta.get("token_usage")
-    # Section 0.8: temperature provenance. Non-bool defaults (and MagicMock default)
-    # are coerced to bool below.
+    # Read temperature provenance from the side-channel: temperature_requested is
+    # the float we asked for, temperature_unsupported is True when the deployment
+    # rejected it and we fell back to the model default. Both fields are written into
+    # the trace so any downstream reader can tell whether this run was actually
+    # deterministic. Non-numeric and non-bool values (including MagicMock in tests)
+    # are coerced to None / False below so they can be JSON-serialized safely.
     summarizer_temperature_requested = summarizer_meta.get("temperature_requested")
     summarizer_temperature_unsupported = bool(summarizer_meta.get("temperature_unsupported"))
     if not isinstance(summarizer_latency_ms, (int, float)):
@@ -1214,7 +1234,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         "eval_retry_count": eval_retry_count,
         "summarizer_latency_ms": summarizer_latency_ms,
         "summarizer_token_usage": summarizer_token_usage,
-        # Section 0.8: temperature provenance for thesis audit.
+        # Temperature provenance is written to state so the trace node can include it.
         "summarizer_temperature_requested": summarizer_temperature_requested,
         "summarizer_temperature_unsupported": summarizer_temperature_unsupported,
         "metadata": _deep_merge(md, {"debug": debug}),
@@ -1226,17 +1246,17 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 def evaluate_response_node(state: GraphState) -> GraphState:
     """Evaluate summarizer output and store structured verdict and retry metadata.
 
-    Section 0.9 of plan-eil-v1.md: when EVALUATOR_MODE=off, the production graph
-    NEVER enters this node — `route_after_summarizer` routes summarizer → END
-    directly (see `build_building_flow_graph`). This means arm A1 of the thesis
-    experiment incurs *zero* evaluator overhead in real runs (no extra LLM call,
-    no extra wall-clock time, no synthetic trace record from this node).
+    When EVALUATOR_MODE=off, the production graph NEVER enters this node —
+    `route_after_summarizer` routes summarizer → END directly (see
+    `build_building_flow_graph`). This means the no-evaluator arm incurs *zero*
+    evaluator overhead in real runs (no extra LLM call, no extra wall-clock time,
+    no trace record from this node).
 
     The bypass branch below is a defensive fallback that fires only when this
-    function is called *directly* (e.g., in unit tests that don't go through
-    the graph router). For thesis trace symmetry across arms, the offline
-    runner (Task 3 of plan-eil-v1.md) writes synthetic A1 trace records itself
-    rather than relying on this branch.
+    function is called *directly* (e.g., in unit tests that bypass the graph
+    router). The offline batch runner writes synthetic bypassed-arm trace records
+    itself rather than relying on this branch, so trace structure is consistent
+    across all arms.
     """
     print("[evaluate_response] ENTER", flush=True)
 
@@ -1270,8 +1290,8 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             **_build_trace_identifiers(state),
             question=question,
             answer=answer,
-            # Section 0.5: snapshot the SQL/vector evidence so annotators verify
-            # groundedness against the same context the (skipped) evaluator would have seen.
+            # Snapshot the SQL/vector evidence so annotators can verify groundedness
+            # against the same context the (skipped) evaluator would have seen.
             aggregated_data=truncate_for_trace(aggregated_data),
             mode="off",
             verdict="pass",
@@ -1281,13 +1301,12 @@ def evaluate_response_node(state: GraphState) -> GraphState:
             eval_scores=updates["eval_scores"],
             model_deployment=_get_evaluator_deployment_label(),
             prompt_version=_get_evaluator_prompt_version(),
-            # Section 0.4: latency + tokens. Bypass mode never invokes the evaluator,
-            # so its latency is 0 and tokens are None. Summarizer fields come from state.
+            # Bypass mode never invokes the evaluator, so its latency is 0 and
+            # tokens are None. Summarizer fields are read from state as usual.
             summarizer_latency_ms=state.get("summarizer_latency_ms"),
             summarizer_token_usage=state.get("summarizer_token_usage"),
             evaluator_latency_ms=0,
             evaluator_token_usage=None,
-            # Section 0.8: temperature provenance.
             summarizer_temperature_requested=state.get("summarizer_temperature_requested"),
             summarizer_temperature_unsupported=bool(state.get("summarizer_temperature_unsupported")),
         )
@@ -1310,8 +1329,9 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     evaluator_failed = bool(result.get("evaluator_failed"))
     evaluator_failure_reason = str(result.get("evaluator_failure_reason") or "").strip()
 
-    # Section 0.4: latency + token usage attached to the result by EvaluatorAgent.
-    # Defensive coercion (same rationale as in llm_summarizer_node).
+    # Latency and token usage are attached to the result dict by EvaluatorAgent.
+    # Same defensive coercion as in llm_summarizer_node (guards against MagicMock
+    # values in tests that would otherwise break trace JSON serialization).
     evaluator_latency_ms = result.get("_latency_ms")
     evaluator_token_usage = result.get("_token_usage")
     if not isinstance(evaluator_latency_ms, (int, float)):
@@ -1335,14 +1355,15 @@ def evaluate_response_node(state: GraphState) -> GraphState:
     constraint_satisfaction = _coerce_score(result.get("constraint_satisfaction_score"))
     uncertainty_calibration = _coerce_score(result.get("uncertainty_calibration_score"))
 
-    # Section 0.7: track which dimensions were filled by fallback. This lets the
-    # analysis script exclude rows from per-axis breakdowns where the LLM did not
-    # actually score a dimension independently. Composite + overall pass rate
-    # still include these rows; only per-axis tables filter on this field.
+    # Track which dimensions were filled by fallback rather than directly scored.
+    # The analysis script uses this list to exclude rows from per-axis breakdowns
+    # where the LLM did not score a dimension independently — a synthesized score
+    # from another axis is not statistically independent and would contaminate
+    # per-axis comparisons. Composite and overall pass rate still include these rows;
+    # only per-axis tables filter on this field.
     #
-    # Note: faithfulness ↔ groundedness is an alias (prompt enforces equality),
-    # NOT a cross-dimension synthesis. We do not record it here so the per-axis
-    # filter only flags the three real cross-dimension fallbacks.
+    # faithfulness ↔ groundedness is a prompt-enforced alias, NOT a cross-dimension
+    # synthesis, so we do not record it here — only the three real fallbacks below.
     score_fallbacks_applied: List[str] = []
 
     if groundedness is None and faithfulness is not None:
@@ -1425,9 +1446,9 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "evaluation_status": "failed_open" if evaluator_failed else "evaluated",
         "evaluator_failed": evaluator_failed,
         "evaluator_failure_reason": evaluator_failure_reason,
-        # Section 0.7: empty list = LLM scored every dimension independently;
-        # any entry means that axis was synthesized from another and should be
-        # excluded from per-axis statistical comparisons in the thesis.
+        # Empty list = every dimension was scored independently by the LLM.
+        # Any entry names an axis that was synthesized from another dimension;
+        # such rows must be excluded from per-axis statistical comparisons.
         "score_fallbacks_applied": score_fallbacks_applied,
     }
 
@@ -1461,9 +1482,9 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         **_build_trace_identifiers(state),
         question=question,
         answer=answer,
-        # Section 0.5: snapshot the SQL/vector evidence the evaluator actually saw,
-        # truncated per-leaf to keep the JSONL line manageable. Annotators reading
-        # the trace use this to verify groundedness without re-running the pipeline.
+        # Snapshot the SQL/vector evidence the evaluator actually saw, truncated
+        # per-leaf to keep the JSONL line manageable. Anyone reviewing the trace
+        # can verify groundedness against this evidence without re-running the pipeline.
         aggregated_data=truncate_for_trace(aggregated_data),
         mode=mode,
         verdict=verdict,
@@ -1474,13 +1495,13 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         model_deployment=_get_evaluator_deployment_label(),
         prompt_version=_get_evaluator_prompt_version(),
         evaluator_failure_reason=evaluator_failure_reason,
-        # Section 0.4: this attempt's latency + tokens. Multi-attempt sequences
-        # produce one trace record per attempt, each with its own per-call meta.
+        # This attempt's latency + tokens. Multi-attempt sequences (retry) produce
+        # one trace record per attempt, each with its own per-call timing.
         summarizer_latency_ms=summarizer_latency_ms,
         summarizer_token_usage=summarizer_token_usage,
         evaluator_latency_ms=evaluator_latency_ms,
         evaluator_token_usage=evaluator_token_usage,
-        # Section 0.8: temperature provenance, sourced from state (set by summarizer node).
+        # Temperature provenance is sourced from state, written there by the summarizer node.
         summarizer_temperature_requested=state.get("summarizer_temperature_requested"),
         summarizer_temperature_unsupported=bool(state.get("summarizer_temperature_unsupported")),
     )
@@ -1496,8 +1517,8 @@ def evaluate_response_node(state: GraphState) -> GraphState:
         "eval_feedback": feedback if verdict == "fail" else None,
         "eval_scores": scores,
         "eval_retry_count": retry_count,
-        # Section 0.4: persist this attempt's latency/tokens into state so the runner
-        # can sum across attempts when writing per-question totals to results.jsonl.
+        # Persist this attempt's latency/tokens into state so the runner can sum
+        # across attempts (first attempt + retry) when writing per-question totals.
         "evaluator_latency_ms": evaluator_latency_ms,
         "evaluator_token_usage": evaluator_token_usage,
         "metadata": _deep_merge(md, {"debug": debug}),
@@ -1509,9 +1530,9 @@ def route_after_summarizer(state: GraphState) -> str:
 
     Returns:
         "end" — when EVALUATOR_MODE=off (or EVALUATOR_ENABLED=false). The graph
-        skips evaluate_response_node entirely; arm A1 of the thesis experiment
-        incurs zero evaluator overhead. This is a *complete bypass*, not a
-        zero-threshold pass-through. See Section 0.9 of plan-eil-v1.md.
+        skips evaluate_response_node entirely; the no-evaluator arm incurs zero
+        evaluator overhead. This is a *complete bypass*, not a zero-threshold
+        pass-through: the evaluator node is never invoked at all.
         "evaluate_response" — for balanced/strict modes (arms A2/A3/A4).
     """
     if _is_evaluator_bypassed():

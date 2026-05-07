@@ -105,11 +105,17 @@ class EvaluatorAgent(BaseAgent):
             raise RuntimeError("Failed to initialize evaluator Azure OpenAI client") from e
 
     def _safe_parse_json(self, content: str) -> Dict[str, Any]:
-        """Parse model output into a JSON object, tolerating light output noise."""
+        """Parse model output into a JSON object, tolerating common output noise.
+
+        The model is instructed to return pure JSON, but it sometimes wraps the
+        object in markdown code fences (```json ... ```) or adds a preamble sentence.
+        The fallback path strips everything outside the outermost `{...}` so those
+        cases don't cause an unnecessary fail-open event.
+        """
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Empty evaluator response")
 
-        # Try direct parse first.
+        # Try direct parse first — the happy path when the model follows instructions.
         try:
             parsed = json.loads(content)
             if isinstance(parsed, dict):
@@ -117,7 +123,10 @@ class EvaluatorAgent(BaseAgent):
         except json.JSONDecodeError:
             pass
 
-        # Fallback: extract first JSON object from noisy output.
+        # Fallback: extract the first complete JSON object from noisy output.
+        # rfind("{") is intentionally NOT used — we want the outermost object start,
+        # not the last one. rfind("}") gives us the last closing brace so nested
+        # objects are included correctly.
         start = content.find("{")
         end = content.rfind("}")
         if start == -1 or end == -1 or end <= start:
@@ -148,7 +157,13 @@ class EvaluatorAgent(BaseAgent):
         )
 
     def _extract_token_usage(self, response) -> Optional[Dict[str, int]]:
-        """Coerce the OpenAI usage object into a plain dict, defensively."""
+        """Convert the Azure SDK usage object into a plain JSON-serializable dict.
+
+        The SDK returns a `CompletionUsage` object (not a dict), and some attributes
+        can be None when the API omits them (e.g., cached-prompt runs). We coerce
+        everything to int with a 0 fallback so the trace writer never sees non-serializable
+        types. Returns None if the response has no usage attribute at all.
+        """
         usage = getattr(response, "usage", None)
         if usage is None:
             return None
@@ -166,7 +181,8 @@ class EvaluatorAgent(BaseAgent):
 
         On any failure, returns {"verdict": "pass"} to keep the main response path available.
         The result dict always includes `_latency_ms` (int, this call's wall time) and
-        `_token_usage` (dict or None) for trace capture per Section 0.4 of plan-eil-v1.md.
+        `_token_usage` (dict or None) so the calling node can write per-call timing and
+        cost data into the evaluation trace without a second LLM call.
         """
         start_time = time.time()
         payload = {

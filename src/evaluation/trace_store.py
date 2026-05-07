@@ -34,9 +34,9 @@ def get_trace_paths() -> Dict[str, Path]:
 TRACE_SCHEMA_VERSION = 2
 """Schema version for evaluation trace records.
 
-Version 2 (Section 0.3 of plan-eil-v1.md) adds the experiment identifier fields:
-question_id, run_id, arm, attempt_index, dataset_version. These are required to
-join records across the four experimental arms.
+Version 2 adds experiment identifier fields — question_id, run_id, arm,
+attempt_index, dataset_version — that are required to join records across
+experimental arms in statistical analysis.
 """
 
 
@@ -47,9 +47,9 @@ _TRUNCATION_MARKER = "…[truncated]"
 def truncate_for_trace(value: Any, max_length: int = _DEFAULT_TRUNCATION_LIMIT) -> Any:
     """Recursively truncate string leaves so the trace JSONL stays manageable.
 
-    Section 0.5 of plan-eil-v1.md: aggregated_data may contain large vector-store
-    snippets (10–50 KB each). Without truncation a single trace line can exceed
-    100 KB and choke downstream tools.
+    `aggregated_data` can contain large vector-store snippets (10–50 KB each).
+    Without truncation a single trace line can exceed 100 KB and choke downstream
+    tools that read the JSONL.
 
     Behavior:
       - dict / list: recurse, preserving structure.

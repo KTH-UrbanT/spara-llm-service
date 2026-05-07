@@ -1,12 +1,11 @@
 """Analysis-side filters for evaluation traces.
 
-Section 0.10 of plan-eil-v1.md: when the evaluator crashes (a "fail-open" event),
-it returns verdict="pass" so the user-facing path is never blocked. But a naïve
-`pass_rate = (verdict == "pass").mean()` over traces would silently count
-fail-open verdicts as real passes, inflating arm A2/A3/A4 pass rates by the
-crash rate.
+When the evaluator crashes (a "fail-open" event), it returns verdict="pass" so
+the user-facing path is never blocked. But a naïve `pass_rate = (verdict ==
+"pass").mean()` over traces would silently count fail-open verdicts as real
+passes, inflating pass rates by the crash rate.
 
-This module defines the canonical filtering rules that Task 8's `analyze_results.py`
+This module defines the canonical filtering rules that `analyze_results.py`
 must apply. Codifying them here (with tests) means a future analyst gets the
 right behavior by importing instead of re-deriving the logic.
 
@@ -14,16 +13,16 @@ Trace `evaluation_status` value semantics:
   - "evaluated"   → evaluator successfully judged the answer; verdict is meaningful.
   - "failed_open" → evaluator crashed; verdict was synthetically "pass" to avoid
                     blocking the user. EXCLUDE from pass-rate aggregations.
-  - "bypassed"    → arm A1 (mode=off); the evaluator never ran. The synthetic
-                    A1 trace records (Task 3) carry this status. They have no
-                    eval_scores, so they are excluded from per-axis aggregations
-                    but are still part of overall arm comparisons via human labels.
+  - "bypassed"    → the evaluator never ran (mode=off). Synthetic trace records
+                    for bypassed arms carry this status. They have no eval_scores,
+                    so they are excluded from per-axis aggregations but are still
+                    part of overall arm comparisons via human labels.
 
 Rule of thumb for the analysis script:
   - Per-arm `pass_rate_evaluated`: only rows with status == "evaluated".
   - Per-arm `pass_rate_unfiltered`: all rows (reported in footnote).
   - Per-axis stats: only rows with status == "evaluated" AND no fallback
-    contamination (see Section 0.7's `score_fallbacks_applied` field).
+    contamination (see `score_fallbacks_applied` in eval_scores).
   - `fail_open_rate`: fraction of evaluator-running rows with status == "failed_open".
     A value above 2 % is a yellow flag that warrants investigation before publishing.
 """
@@ -36,15 +35,21 @@ EVALUATED = "evaluated"
 FAILED_OPEN = "failed_open"
 BYPASSED = "bypassed"
 
-# Configurable warning threshold for fail-open rate (Section 0.10 of plan-eil-v1.md).
+# Configurable warning threshold for fail-open rate.
 # A run with fail_open_rate above this threshold should not be published without
-# investigation per the plan's "Do not publish numbers with an unexplained high
-# fail-open rate" guidance.
+# investigation: inspect evaluator_failure_reason patterns to determine whether
+# the root cause is a JSON parse failure, timeout, or rate-limit.
 FAIL_OPEN_RATE_WARNING_THRESHOLD = 0.02
 
 
 def evaluation_status(record: Dict[str, Any]) -> str:
-    """Read the evaluation_status field with a sane default ('evaluated')."""
+    """Read the evaluation_status field, defaulting to 'evaluated' when absent.
+
+    The default exists for backward compatibility with traces written before
+    the evaluation_status field was introduced (schema version 1). Older records
+    were only ever written by a successful evaluator run, so treating them as
+    'evaluated' is correct.
+    """
     return str(record.get("evaluation_status") or EVALUATED)
 
 
@@ -79,9 +84,10 @@ def filter_genuine_evaluations(records: Iterable[Dict[str, Any]]) -> List[Dict[s
 def filter_for_per_axis(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Return rows safe for per-axis statistical comparisons.
 
-    Per Section 0.7 of plan-eil-v1.md, rows where the LLM omitted a dimension
-    (and the code synthesized it from another) must be excluded from per-axis
-    breakdowns. This filter combines that with the genuine-evaluation rule.
+    Rows where the LLM omitted a scoring dimension (causing the node to synthesize
+    it from another axis) must be excluded from per-axis breakdowns — the score
+    is not independent and would contaminate per-axis statistical comparisons.
+    This filter combines that fallback check with the genuine-evaluation rule.
     """
     out: List[Dict[str, Any]] = []
     for r in records:
@@ -112,12 +118,18 @@ def fail_open_rate(records: Iterable[Dict[str, Any]]) -> float:
 
 
 def fail_open_rate_exceeds_threshold(records: Iterable[Dict[str, Any]]) -> bool:
-    """Yellow-flag check for whether to publish without investigation."""
+    """Return True if the fail-open rate is above the warning threshold.
+
+    A fail-open rate above 2 % means the evaluator crashed more often than
+    expected, and any pass-rate numbers derived from that run are suspect —
+    each crash silently added a synthetic "pass" verdict. Investigate the
+    `evaluator_failure_reason` field in the traces before publishing results.
+    """
     return fail_open_rate(records) > FAIL_OPEN_RATE_WARNING_THRESHOLD
 
 
 def pass_rate_evaluated(records: Iterable[Dict[str, Any]]) -> float:
-    """Pass rate restricted to rows with status='evaluated'. Section 0.10 headline metric.
+    """Pass rate restricted to rows where the evaluator actually ran successfully.
 
     A pass is `verdict == "pass"`. Fail-open verdicts are excluded by construction
     because their status is `"failed_open"`, not `"evaluated"`.
