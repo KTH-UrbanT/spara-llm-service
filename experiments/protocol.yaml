@@ -1,0 +1,87 @@
+# SPARA evaluator-in-the-loop master-thesis protocol (v2).
+#
+# This file is the pre-run statement of intent. It is committed BEFORE the
+# experiment is executed and its SHA-256 is recorded in run_record_<id>.yaml
+# at run time. Together they reconstruct the experimental setup post-hoc.
+#
+# Cross-references:
+#   - plan-eil-v2.md §C.5 specifies the schema below.
+#   - plan-eil-v2.md §B.1, §B.2, §B.6 specify success criteria, arms, metrics.
+#   - run_record_<id>.yaml records the values that are only known at run time
+#     (deployment names, git commit, start/end timestamps, fail-open counts).
+
+plan_version: "v2"
+study_name: "spara-evaluator-in-the-loop-thesis-v2"
+written_at: "2026-05-15"
+
+dataset:
+  path: "src/config/questions.json"
+  expected_count: 20
+  dataset_version: "2.0"
+
+prompts:
+  v1: "src/prompts/evaluator_prompt.txt"
+  v2: "src/prompts/evaluator_prompt_v2.txt"
+
+arms_primary:
+  - id: "A1"
+    mode: "off"
+    max_retries: 0
+    prompt_version: null
+  - id: "A2"
+    mode: "balanced"
+    max_retries: 1
+    prompt_version: "evaluator_prompt.txt"
+
+arms_optional:
+  - id: "A3"
+    mode: "strict"
+    max_retries: 1
+    prompt_version: "evaluator_prompt.txt"
+  - id: "A4"
+    mode: "balanced"
+    max_retries: 1
+    prompt_version: "evaluator_prompt_v2.txt"
+
+models:
+  summarizer_temperature: 0.0
+  evaluator_temperature: 0.0
+  summarizer_deployment: "<set at run time, recorded in run_record.yaml>"
+  evaluator_deployment: "<set at run time, recorded in run_record.yaml>"
+
+statistical_methods:
+  bootstrap_iterations: 10000
+  bootstrap_seed: 42
+  ci_level: 0.95
+  paired_test: "wilcoxon_signed_rank"
+  binary_test: "mcnemar_continuity_corrected"
+  multiple_comparisons_correction: "none (single primary comparison)"
+
+success_criteria:
+  - id: "primary_quality_improvement"
+    metric: "mean(composite_quality[A2]) - mean(composite_quality[A1])"
+    target: "> 0, 95% bootstrap CI excludes 0"
+  - id: "latency_overhead_bound"
+    metric: "median(wall_clock_ms[A2]) / median(wall_clock_ms[A1])"
+    target: "<= 2.5"
+  - id: "fail_open_rate_bound"
+    metric: "fail_open_rate per arm"
+    target: "< 0.05"
+  - id: "determinism"
+    metric: "rerun A2 with new run_id, compare verdicts"
+    target: "differ in <= 1 verdict"
+
+annotation:
+  primary_annotator: "huncho"
+  secondary_annotator: null
+  intra_annotator_check:
+    enabled: true
+    cooling_off_days: 7
+    subset_size: 8
+    selection: "stratified by category"
+
+scope_decisions:
+  - "A3 and A4 are optional; report descriptively only if executed."
+  - "aggregated_data is cached after A1 and reused by A2/A3/A4 to factor out upstream pipeline noise. Declared in Methods chapter."
+  - "Single annotator; intra-annotator reliability is the IRR proxy."
+  - "No Holm-Bonferroni or pre-registration tagging — single primary comparison and master-thesis scope."

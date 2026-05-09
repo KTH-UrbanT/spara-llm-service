@@ -248,18 +248,22 @@ class TestCheckCategoryCounts:
 
     def test_wrong_category_count_fails(self):
         records = _make_full_dataset()["questions"]
-        # Convert one simple_address into vector_sql_hybrid → simple goes 10→9, hybrid 7→8
+        # Convert one simple_address into vector_sql_hybrid.
+        # Under v2 counts (simple=5, hybrid=3) the result is simple 5→4, hybrid 3→4.
         for r in records:
             if r["category"] == "simple_address":
                 r["category"] = "vector_sql_hybrid"
                 break
         ok, errs = vd.check_category_counts(records)
         assert not ok
-        assert any("simple_address" in e and "9" in e for e in errs)
-        assert any("vector_sql_hybrid" in e and "8" in e for e in errs)
+        # simple_address actual=4 (expected 5)
+        assert any("simple_address" in e and "found 4" in e for e in errs)
+        # vector_sql_hybrid actual=4 (expected 3)
+        assert any("vector_sql_hybrid" in e and "found 4" in e for e in errs)
 
     def test_total_record_count_off_fails(self):
-        records = _make_full_dataset()["questions"][:30]   # 30 instead of 40
+        # Under v2 the full dataset is 20 records; slice to fewer than 20 to trip the check.
+        records = _make_full_dataset()["questions"][:15]
         ok, errs = vd.check_category_counts(records)
         assert not ok
         assert any("total records" in e for e in errs)

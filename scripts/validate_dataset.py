@@ -11,7 +11,7 @@ Eight checks (each prints PASS/FAIL with detail):
   2. Each record has all required fields.
   3. Field types are correct (lists, dicts, ISO 8601 dates).
   4. question_id values are unique and match Q\\d{3}.
-  5. Category counts match the experimental design (10/8/7/7/5/3 = 40).
+  5. Category counts match the experimental design (5/4/3/3/3/2 = 20).
   6. Difficulty distribution sanity (≥2 of each easy/medium/hard).
   7. (Skipped with --no-db) Every record's hint_address resolves in the live DB.
   8. (Skipped without --smoke) The smoke subset is a strict subset of the
@@ -56,16 +56,16 @@ VALID_CATEGORIES = {
 }
 VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
-# Fixed by the experimental design.
+# Fixed by the experimental design (plan-eil-v2 §B.3 — trimmed from v1's 40 to 20).
 EXPECTED_CATEGORY_COUNTS = {
-    "simple_address": 10,
-    "numeric_aggregation": 8,
-    "constraint_filtering": 7,
-    "vector_sql_hybrid": 7,
-    "comparative": 5,
-    "edge_case": 3,
+    "simple_address": 5,
+    "numeric_aggregation": 4,
+    "constraint_filtering": 3,
+    "vector_sql_hybrid": 3,
+    "comparative": 3,
+    "edge_case": 2,
 }
-EXPECTED_TOTAL = sum(EXPECTED_CATEGORY_COUNTS.values())  # 40
+EXPECTED_TOTAL = sum(EXPECTED_CATEGORY_COUNTS.values())  # 20
 QUESTION_ID_PATTERN = re.compile(r"^Q\d{3}$")
 
 # Edge-case records that intentionally exercise the missing-data path.
@@ -376,7 +376,7 @@ def run(args: argparse.Namespace) -> int:
                                 check_field_types(records))
     all_passed &= _print_check("4. question_id uniqueness + pattern",
                                 check_question_ids(records))
-    all_passed &= _print_check("5. Category counts (10/8/7/7/5/3 = 40)",
+    all_passed &= _print_check("5. Category counts (5/4/3/3/3/2 = 20)",
                                 check_category_counts(records))
     all_passed &= _print_check("6. Difficulty distribution sanity",
                                 check_difficulty_distribution(records))
