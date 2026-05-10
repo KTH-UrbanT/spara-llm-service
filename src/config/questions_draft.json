@@ -6,7 +6,7 @@
     "",
     "This file is NOT committed to the experimental run. It is the scratchpad",
     "you use while authoring candidate questions. The committed files are:",
-    "  - src/config/questions.json        (the 40-question gold dataset)",
+    "  - src/config/questions.json        (the 20-question gold dataset)",
     "  - src/config/questions_smoke.json  (a 5-question subset for smoke runs)",
     "",
     "AUTHORING LOOP (per plan-eil-v1.md §1.F):",
@@ -14,7 +14,7 @@
     "  0. Set up the working dir:",
     "       mkdir -p artifacts/runs/authoring/aggregated_cache",
     "",
-    "  1. Pick a category. Replace the example question below with a real one.",
+    "  1. Pick a category. Add a real question.",
     "     Start with simple_address — easiest. Set expected_facts to []",
     "     for now; you'll fill it in after step 2.",
     "",
@@ -41,8 +41,8 @@
     "     into questions.json with stable Q-IDs (Q001..Q020).",
     "",
     "  5. After all 20 are authored, hand-pick 5 for questions_smoke.json:",
-    "     2 simple_address, 1 vector_sql_hybrid, 1 constraint_filtering,",
-    "     1 edge_case (Option 2 split — no numeric_aggregation or comparative).",
+    "     2 simple_address, 2 edge_case, 1 constraint_filtering",
+    "     (Option 3 split — no vector_sql_hybrid, no numeric_aggregation, no comparative).",
     "",
     "  6. Validate (also from llm-service/):",
     "       python -m scripts.validate_dataset \\",
@@ -82,12 +82,12 @@
     "Option 2 split — set 2026-05-10 after Step 0.5.2 walkthrough.",
     "==========================================================================",
     "",
-    "  simple_address         8",
-    "  vector_sql_hybrid      5",
-    "  edge_case              4",
-    "  constraint_filtering   3",
-    "  numeric_aggregation    0  ← dropped (DeSO routes to broken Specialized SQL)",
-    "  comparative            0  ← dropped (same root cause)",
+    "  simple_address        10",
+    "  edge_case              6",
+    "  constraint_filtering   4",
+    "  vector_sql_hybrid      0  ← dropped Option 3 (pre-existing routing bugs)",
+    "  numeric_aggregation    0  ← dropped Option 2 (DeSO routes to broken Specialized SQL)",
+    "  comparative            0  ← dropped Option 2 (same root cause)",
     "  ────────────────────",
     "  TOTAL                 20",
     "",
@@ -95,7 +95,7 @@
   ],
   "dataset_version": "draft",
   "created_at": "2026-05-10T00:00:00Z",
-  "description": "Working draft — Q001 is the simple_address walkthrough baseline (PASSED 10/10 in Step 0.5.2). Author the remaining 19 questions here under Option 2 split (8 simple_address / 5 vector_sql_hybrid / 3 constraint_filtering / 4 edge_case).",
+  "description": "Working draft — 20 questions under Option 3 split (10 simple_address / 6 edge_case / 4 constraint_filtering). All address-anchored on real ODEN records from DeSO 0180C5810 (Stockholm). Q009/Q010/Q011/Q012/Q013 replaced after Phase 1 dry-run revealed vector_sql_hybrid routing bugs; see plan-eil-v3.md Step 0.5.2/§Option 3.",
   "questions": [
     {
       "question_id": "Q001",
@@ -112,7 +112,373 @@
       },
       "expected_constraints": [],
       "must_avoid": [],
-      "notes": "Phase 0.5.2 Question A — low-risk baseline (Step 0.5.2 walkthrough, both runs PASS 10/10). ODEN single_filter on epc_idadr resolves to exactly 1 building (byggnadsid 01-80-BERBERISEN7-1, DeSO 0180C5810). Expected Atemp 270 m², year built 1947. Routes: SQL database → generic_sql_agent → ODEN building_by_address.",
+      "notes": "Step 0.5.2 baseline. ODEN single_filter on epc_idadr → 1 row (byggnadsid 01-80-BERBERISEN7-1). Routes: SQL database → generic_sql_agent → ODEN building_by_address. Walkthrough A passed 10/10 on both runs.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q002",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What year was the building at Astrakangatan 180 built?",
+      "hint_address": "Astrakangatan 180",
+      "expected_facts": [
+        "the building at Astrakangatan 180 was built in 1957"
+      ],
+      "expected_numeric": {
+        "year_built": 1957
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-AVKOPPLINGEN4-1, Atemp 108, year 1957 (epc_egennybyggar). Tests construction-year extraction from a single ODEN row.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q003",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What is the heated area (Atemp) of the building at Friherregatan 111?",
+      "hint_address": "Friherregatan 111",
+      "expected_facts": [
+        "heated area (Atemp) is 132 m²"
+      ],
+      "expected_numeric": {
+        "atemp_m2": 132
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-KLAETTEN14-1, year 1960. Same shape as Q001 but smaller building — sanity check the generic_sql route on multiple targets.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q004",
+      "category": "simple_address",
+      "difficulty": "medium",
+      "question": "How many floors does the building at Förridargränd 5 have?",
+      "hint_address": "Förridargränd 5",
+      "expected_facts": [
+        "the building has 2 floors above ground"
+      ],
+      "expected_numeric": {
+        "floors_above_ground": 2
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-AVSKILDHETEN3-1, epc_egenantalplan=2. Tests a less common field — summarizer must pick the right key out of the full ODEN payload.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q005",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What is the building type (epc_egenbyggnadstyp) of the building at Friherregatan 138?",
+      "hint_address": "Friherregatan 138",
+      "expected_facts": [
+        "the building at Friherregatan 138 is of type Gavel"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-BLOMLISTEN1-1, epc_egenbyggnadstyp='Gavel' (end-of-row), year 1957. String field, not numeric — tests answer formatting.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q006",
+      "category": "simple_address",
+      "difficulty": "medium",
+      "question": "What is the building category (epc_egenbyggnadskat) of Bruntegatan 5, and what year was it built?",
+      "hint_address": "Bruntegatan 5",
+      "expected_facts": [
+        "the building at Bruntegatan 5 is in the category En- och tvåbostadshus",
+        "the building was built in 1957"
+      ],
+      "expected_numeric": {
+        "year_built": 1957
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-BLOMPRAKTEN4-1, Atemp 115. Two-fact answer in one question — tests completeness scoring (both facts required).",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q007",
+      "category": "simple_address",
+      "difficulty": "medium",
+      "question": "What is the heated area of the building at Förridargränd 9?",
+      "hint_address": "Förridargränd 9",
+      "expected_facts": [
+        "heated area (Atemp) is 95 m²"
+      ],
+      "expected_numeric": {
+        "atemp_m2": 95
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-AVSKILDHETEN5-1, year 1957, epc_egenantaltrapphus=1. Small building — Atemp 95 is one of the smaller in DeSO.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q008",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "When was the building at Kurirgatan 16 built?",
+      "hint_address": "Kurirgatan 16",
+      "expected_facts": [
+        "the building was built in 1957"
+      ],
+      "expected_numeric": {
+        "year_built": 1957
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-BAECKSLINGAN3-1, Atemp 119. Same shape as Q002 — different address.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q009",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What is the heated area (Atemp) of the building at Kurirgatan 11?",
+      "hint_address": "Kurirgatan 11",
+      "expected_facts": [
+        "heated area (Atemp) is 94 m²"
+      ],
+      "expected_numeric": {
+        "atemp_m2": 94
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-BAECKSLINGAN12-1, Atemp=94, year=1958 (epc_egennybyggar). Same shape as Q001 — small Atemp value.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q010",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What year was the building at Förridargränd 11 built?",
+      "hint_address": "Förridargränd 11",
+      "expected_facts": [
+        "the building at Förridargränd 11 was built in 1957"
+      ],
+      "expected_numeric": {
+        "year_built": 1957
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-AVSKILDHETEN6-1, Atemp=117, year=1957. Same shape as Q002/Q008.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q011",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "question": "What construction material (brick, wood, concrete) is the building at Loviselundsvägen 81 made of?",
+      "hint_address": "Loviselundsvägen 81",
+      "expected_facts": [
+        "indicate that construction material is not available in the EPC data",
+        "do not fabricate a material claim"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not state a specific construction material as fact"
+      ],
+      "must_avoid": [
+        "fabricated 'brick' or 'wood' or 'concrete' claim",
+        "guessing based on construction year"
+      ],
+      "notes": "missing_data — ODEN's EPC fields don't include construction material. Agent fetches the building's full row but the requested field is absent. Tests refusal/uncertainty when data is unavailable.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q012",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "question": "When was the building at Astrakangatan 180 last renovated?",
+      "hint_address": "Astrakangatan 180",
+      "expected_facts": [
+        "indicate that renovation history is not available in the EPC data",
+        "do not fabricate a renovation date"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not state a specific renovation year as fact"
+      ],
+      "must_avoid": [
+        "fabricated renovation year",
+        "treating epc_egennybyggar (construction year) as a renovation year"
+      ],
+      "notes": "missing_data — ODEN tracks construction year (epc_egennybyggar) but no renovation history. Tests that the agent doesn't conflate adjacent fields. Anchor: byggnadsid 01-80-AVKOPPLINGEN4-1, year=1957.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q013",
+      "category": "constraint_filtering",
+      "difficulty": "medium",
+      "question": "Is the building at Förridargränd 5 less than 75 years old?",
+      "hint_address": "Förridargränd 5",
+      "expected_facts": [
+        "the building was built in 1957",
+        "answer yes, the building is less than 75 years old"
+      ],
+      "expected_numeric": {
+        "year_built": 1957
+      },
+      "expected_constraints": [
+        "(current_year - 1957) < 75"
+      ],
+      "must_avoid": [
+        "answering no",
+        "claiming the building is older than 75 years"
+      ],
+      "notes": "Constraint check: yes/no answer requires computing age (current year minus 1957=69 years as of 2026) and comparing to 75. Tests numeric reasoning under temporal context.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q014",
+      "category": "edge_case",
+      "difficulty": "easy",
+      "question": "What is the heated area of the building at Nonexistentgatan 999?",
+      "hint_address": "Nonexistentgatan 999",
+      "expected_facts": [
+        "indicate that no building was found at the given address",
+        "do not fabricate any numeric heated area value"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not return any numeric Atemp"
+      ],
+      "must_avoid": [
+        "fabricated heated area number",
+        "treating the address as real"
+      ],
+      "notes": "unknown_address — ODEN single_filter on this epc_idadr returns []. validate_dataset.py Check 7 will skip this record because the notes contain 'unknown_address'. Tests refusal/uncertainty handling.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q015",
+      "category": "edge_case",
+      "difficulty": "easy",
+      "question": "What is the heated area?",
+      "hint_address": null,
+      "expected_facts": [
+        "ask for an address or clarification rather than answering"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not return any numeric Atemp without an address being specified"
+      ],
+      "must_avoid": [
+        "fabricated heated area for an unspecified building",
+        "picking an arbitrary building"
+      ],
+      "notes": "missing_data — no address, no specific target. Tests the ambiguity path: intent classifier should mark ambigious=true; route_after_ambiguity should send to request_address. Expected behavior: agent asks for clarification.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q016",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "question": "What is the average rent for apartments in Stockholm?",
+      "hint_address": null,
+      "expected_facts": [
+        "indicate that rent data is not available in the building registry",
+        "do not fabricate a numeric rent value"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not return a numeric rent figure"
+      ],
+      "must_avoid": [
+        "fabricated rent in SEK",
+        "treating rent as an EPC field"
+      ],
+      "notes": "Out-of-scope question — rent is not in ODEN or the vector store. Tests that the system handles out-of-domain queries without fabricating. Intent classifier may route to vector database; the summarizer should refuse.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q017",
+      "category": "edge_case",
+      "difficulty": "medium",
+      "question": "What is the heated area of the building at Loviselundsvägen?",
+      "hint_address": "Loviselundsvägen",
+      "expected_facts": [
+        "indicate that the address is incomplete (no street number)",
+        "either ask for the full address or return multiple matches if found"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not return a single Atemp value without disambiguating the building"
+      ],
+      "must_avoid": [
+        "silently picking one of several matches and reporting its Atemp as the answer"
+      ],
+      "notes": "missing_data — partial address (street name only, no number). ODEN building_by_address tiered fallback (eq → istartswith → icontains) returns 0 rows. validate_dataset.py Check 7 bypasses this record via the missing_data marker. Tests how the agent handles unresolvable partial addresses.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q018",
+      "category": "constraint_filtering",
+      "difficulty": "medium",
+      "question": "Was the building at Loviselundsvägen 81 built before 1970?",
+      "hint_address": "Loviselundsvägen 81",
+      "expected_facts": [
+        "the building was built in 1947",
+        "answer yes, the building was built before 1970"
+      ],
+      "expected_numeric": {
+        "year_built": 1947
+      },
+      "expected_constraints": [
+        "year_built < 1970"
+      ],
+      "must_avoid": [
+        "answering no without justification",
+        "claiming the building was built after 1970"
+      ],
+      "notes": "Constraint check: yes/no answer requires comparing epc_egennybyggar=1947 to threshold 1970. Tests constraint_satisfaction_score axis.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q019",
+      "category": "constraint_filtering",
+      "difficulty": "medium",
+      "question": "Is the building at Astrakangatan 180 a detached (Friliggande) house?",
+      "hint_address": "Astrakangatan 180",
+      "expected_facts": [
+        "the building type (epc_egenbyggnadstyp) is Mellanliggande, not Friliggande",
+        "answer no, the building is not detached"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "byggnadstyp == 'Friliggande' must evaluate to false"
+      ],
+      "must_avoid": [
+        "answering yes",
+        "claiming the building type is Friliggande"
+      ],
+      "notes": "Constraint check expecting NO. epc_egenbyggnadstyp='Mellanliggande' (middle row), not 'Friliggande' (detached). Tests both fact retrieval and constraint reasoning.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q020",
+      "category": "constraint_filtering",
+      "difficulty": "medium",
+      "question": "Is the heated area of the building at Friherregatan 132 larger than 200 m²?",
+      "hint_address": "Friherregatan 132",
+      "expected_facts": [
+        "heated area (Atemp) is 152 m²",
+        "answer no, 152 m² is not larger than 200 m²"
+      ],
+      "expected_numeric": {
+        "atemp_m2": 152
+      },
+      "expected_constraints": [
+        "atemp_m2 > 200 must evaluate to false"
+      ],
+      "must_avoid": [
+        "answering yes",
+        "claiming heated area exceeds 200 m²"
+      ],
+      "notes": "Constraint check expecting NO. Anchor byggnadsid 01-80-BLOMLISTEN4-1, Atemp=152. Tests numeric comparison reasoning in addition to fact retrieval.",
       "created_at": "2026-05-10T00:00:00Z"
     }
   ]

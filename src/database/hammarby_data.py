@@ -3,7 +3,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import psycopg2
 
-load_dotenv(override=True)  # pulls server, database, username, password, port from your .env (or real env)
+load_dotenv()  # pulls server, database, username, password, port from .env when not already in os.environ. Do NOT use override=True — it silently clobbers EVALUATOR_MODE / EVALUATOR_MAX_RETRIES / EVALUATOR_PROMPT_VERSION that run_arm.py sets per-arm before import, which invalidates arm A1's no-evaluator config (plan-eil-v3.md Phase 1 appendix).
 
 SERVER = os.getenv('server', 'localhost')
 DBNAME = os.getenv('database', 'hammarbydata')

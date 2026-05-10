@@ -1,0 +1,107 @@
+{
+  "dataset_version": "1.0.0-option3",
+  "created_at": "2026-05-10T00:00:00Z",
+  "description": "5-question smoke subset (strict subset of questions.json): 2 simple_address + 2 edge_case + 1 constraint_filtering.",
+  "questions": [
+    {
+      "question_id": "Q001",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What is the heated area (Atemp) of the building at Loviselundsvägen 81?",
+      "hint_address": "Loviselundsvägen 81",
+      "expected_facts": [
+        "heated area (Atemp) is 270 m²",
+        "the building is at Loviselundsvägen 81"
+      ],
+      "expected_numeric": {
+        "atemp_m2": 270
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Step 0.5.2 baseline. ODEN single_filter on epc_idadr → 1 row (byggnadsid 01-80-BERBERISEN7-1). Routes: SQL database → generic_sql_agent → ODEN building_by_address. Walkthrough A passed 10/10 on both runs.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q010",
+      "category": "simple_address",
+      "difficulty": "easy",
+      "question": "What year was the building at Förridargränd 11 built?",
+      "hint_address": "Förridargränd 11",
+      "expected_facts": [
+        "the building at Förridargränd 11 was built in 1957"
+      ],
+      "expected_numeric": {
+        "year_built": 1957
+      },
+      "expected_constraints": [],
+      "must_avoid": [],
+      "notes": "Anchor: byggnadsid 01-80-AVSKILDHETEN6-1, Atemp=117, year=1957. Same shape as Q002/Q008.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q012",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "question": "When was the building at Astrakangatan 180 last renovated?",
+      "hint_address": "Astrakangatan 180",
+      "expected_facts": [
+        "indicate that renovation history is not available in the EPC data",
+        "do not fabricate a renovation date"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not state a specific renovation year as fact"
+      ],
+      "must_avoid": [
+        "fabricated renovation year",
+        "treating epc_egennybyggar (construction year) as a renovation year"
+      ],
+      "notes": "missing_data — ODEN tracks construction year (epc_egennybyggar) but no renovation history. Tests that the agent doesn't conflate adjacent fields. Anchor: byggnadsid 01-80-AVKOPPLINGEN4-1, year=1957.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q014",
+      "category": "edge_case",
+      "difficulty": "easy",
+      "question": "What is the heated area of the building at Nonexistentgatan 999?",
+      "hint_address": "Nonexistentgatan 999",
+      "expected_facts": [
+        "indicate that no building was found at the given address",
+        "do not fabricate any numeric heated area value"
+      ],
+      "expected_numeric": {},
+      "expected_constraints": [
+        "must not return any numeric Atemp"
+      ],
+      "must_avoid": [
+        "fabricated heated area number",
+        "treating the address as real"
+      ],
+      "notes": "unknown_address — ODEN single_filter on this epc_idadr returns []. validate_dataset.py Check 7 will skip this record because the notes contain 'unknown_address'. Tests refusal/uncertainty handling.",
+      "created_at": "2026-05-10T00:00:00Z"
+    },
+    {
+      "question_id": "Q018",
+      "category": "constraint_filtering",
+      "difficulty": "medium",
+      "question": "Was the building at Loviselundsvägen 81 built before 1970?",
+      "hint_address": "Loviselundsvägen 81",
+      "expected_facts": [
+        "the building was built in 1947",
+        "answer yes, the building was built before 1970"
+      ],
+      "expected_numeric": {
+        "year_built": 1947
+      },
+      "expected_constraints": [
+        "year_built < 1970"
+      ],
+      "must_avoid": [
+        "answering no without justification",
+        "claiming the building was built after 1970"
+      ],
+      "notes": "Constraint check: yes/no answer requires comparing epc_egennybyggar=1947 to threshold 1970. Tests constraint_satisfaction_score axis.",
+      "created_at": "2026-05-10T00:00:00Z"
+    }
+  ]
+}

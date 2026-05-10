@@ -11,7 +11,7 @@ Eight checks (each prints PASS/FAIL with detail):
   2. Each record has all required fields.
   3. Field types are correct (lists, dicts, ISO 8601 dates).
   4. question_id values are unique and match Q\\d{3}.
-  5. Category counts match the experimental design (8/5/4/3 = 20 under Option 2).
+  5. Category counts match the experimental design (10/6/4 = 20 under Option 3).
   6. Difficulty distribution sanity (≥2 of each easy/medium/hard).
   7. (Skipped with --no-db) Every record's hint_address resolves in the live DB.
   8. (Skipped without --smoke) The smoke subset is a strict subset of the
@@ -57,19 +57,24 @@ VALID_CATEGORIES = {
 VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
 # Fixed by the experimental design.
-# Rebalanced 2026-05-10 (plan-eil-v3.md Step 0.5.2 Option 2 fallback):
-# numeric_aggregation and comparative dropped because the intent classifier
-# routes DeSO-scoped questions to Specialized SQL (Postgres path not populated)
-# and the ODEN single_filter API caps results at 50 rows, making counts/comparisons
-# over a DeSO non-viable without system changes. Counts redistributed to the
-# four ODEN-friendly categories. Total stays at N=20.
+# Rebalanced 2026-05-10 (plan-eil-v3.md):
+#   Option 2 dropped numeric_aggregation + comparative (intent classifier routes
+#     DeSO-scoped questions to Specialized SQL, single_filter capped at 50 rows).
+#   Option 3 dropped vector_sql_hybrid after Phase 1 dry-run revealed two pre-existing
+#     routing bugs in building_flow_graph.py: (1) understand_context_node does not
+#     populate intent_list from intents → compound 'SQL database ; vector database'
+#     only fires the vector agent via loose-match; (2) vector_db_agent_node writes
+#     results to agent_outputs_vector (text) but never to agent_vector_sources /
+#     agent_vector_snippets, so vector hits never enter aggregated_data and the
+#     evaluator scores groundedness=0 across all hybrid questions.
+# Final Option 3 split: 10 simple_address + 6 edge_case + 4 constraint_filtering = 20.
 EXPECTED_CATEGORY_COUNTS = {
-    "simple_address": 8,
+    "simple_address": 10,
     "numeric_aggregation": 0,
-    "constraint_filtering": 3,
-    "vector_sql_hybrid": 5,
+    "constraint_filtering": 4,
+    "vector_sql_hybrid": 0,
     "comparative": 0,
-    "edge_case": 4,
+    "edge_case": 6,
 }
 EXPECTED_TOTAL = sum(EXPECTED_CATEGORY_COUNTS.values())  # 20
 QUESTION_ID_PATTERN = re.compile(r"^Q\d{3}$")
@@ -382,7 +387,7 @@ def run(args: argparse.Namespace) -> int:
                                 check_field_types(records))
     all_passed &= _print_check("4. question_id uniqueness + pattern",
                                 check_question_ids(records))
-    all_passed &= _print_check("5. Category counts (8/0/3/5/0/4 = 20, Option 2)",
+    all_passed &= _print_check("5. Category counts (10/0/4/0/0/6 = 20, Option 3)",
                                 check_category_counts(records))
     all_passed &= _print_check("6. Difficulty distribution sanity",
                                 check_difficulty_distribution(records))
