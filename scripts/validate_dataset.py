@@ -11,7 +11,7 @@ Eight checks (each prints PASS/FAIL with detail):
   2. Each record has all required fields.
   3. Field types are correct (lists, dicts, ISO 8601 dates).
   4. question_id values are unique and match Q\\d{3}.
-  5. Category counts match the experimental design (5/4/3/3/3/2 = 20).
+  5. Category counts match the experimental design (8/5/4/3 = 20 under Option 2).
   6. Difficulty distribution sanity (≥2 of each easy/medium/hard).
   7. (Skipped with --no-db) Every record's hint_address resolves in the live DB.
   8. (Skipped without --smoke) The smoke subset is a strict subset of the
@@ -56,14 +56,20 @@ VALID_CATEGORIES = {
 }
 VALID_DIFFICULTIES = {"easy", "medium", "hard"}
 
-# Fixed by the experimental design (plan-eil-v2 §B.3 — trimmed from v1's 40 to 20).
+# Fixed by the experimental design.
+# Rebalanced 2026-05-10 (plan-eil-v3.md Step 0.5.2 Option 2 fallback):
+# numeric_aggregation and comparative dropped because the intent classifier
+# routes DeSO-scoped questions to Specialized SQL (Postgres path not populated)
+# and the ODEN single_filter API caps results at 50 rows, making counts/comparisons
+# over a DeSO non-viable without system changes. Counts redistributed to the
+# four ODEN-friendly categories. Total stays at N=20.
 EXPECTED_CATEGORY_COUNTS = {
-    "simple_address": 5,
-    "numeric_aggregation": 4,
+    "simple_address": 8,
+    "numeric_aggregation": 0,
     "constraint_filtering": 3,
-    "vector_sql_hybrid": 3,
-    "comparative": 3,
-    "edge_case": 2,
+    "vector_sql_hybrid": 5,
+    "comparative": 0,
+    "edge_case": 4,
 }
 EXPECTED_TOTAL = sum(EXPECTED_CATEGORY_COUNTS.values())  # 20
 QUESTION_ID_PATTERN = re.compile(r"^Q\d{3}$")
@@ -376,7 +382,7 @@ def run(args: argparse.Namespace) -> int:
                                 check_field_types(records))
     all_passed &= _print_check("4. question_id uniqueness + pattern",
                                 check_question_ids(records))
-    all_passed &= _print_check("5. Category counts (5/4/3/3/3/2 = 20)",
+    all_passed &= _print_check("5. Category counts (8/0/3/5/0/4 = 20, Option 2)",
                                 check_category_counts(records))
     all_passed &= _print_check("6. Difficulty distribution sanity",
                                 check_difficulty_distribution(records))
