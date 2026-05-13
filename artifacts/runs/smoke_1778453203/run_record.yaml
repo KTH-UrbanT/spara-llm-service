@@ -1,0 +1,20 @@
+run_family_id: 'smoke_1778453203'
+git_commit_at_run_start: null
+protocol_sha256: 'fa4c2ec775169b130529832378744f5bfb342e78db4cf3c6429b9bacdcd11358'
+dataset_sha256: '5cc9de6f2b45e45fdb22fc1d7388d2957460e8df76b20b6b9e49df64832c1fb2'
+prompt_v1_sha256: '170726cdea9bd9a15356901075e1e58b2e438c10e51a1c442a314b3096235d6c'
+prompt_v2_sha256: '0afb82b60df8ff8e197c99e7f27e4ee82ae3b23c5d34de740cac062f852e7f62'
+start_time_utc: '2026-05-10T22:46:43Z'
+end_time_utc: '2026-05-10T22:48:48Z'
+azure_api_version: null
+summarizer_deployment: null
+evaluator_deployment: null
+arms_executed:
+  - 'A1'
+  - 'A2'
+total_questions_processed_per_arm:
+  A1: 5
+  A2: 5
+fail_open_count_per_arm:
+  A1: 0
+  A2: 0
