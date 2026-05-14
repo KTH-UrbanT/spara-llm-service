@@ -109,85 +109,141 @@ class SQL_Mapper_Layer:
         """
         Execute an op. Always return: {"ok": bool, "data": Any, "message": str}
         """
+        trace = {
+            "query_type": op,
+            "operation": op,
+            "filters_used": {},
+            "building_id": kwargs.get("building_id"),
+            "address": kwargs.get("address"),
+            "execution_status": "unknown",
+            "rows_returned": 0,
+            "returned_values_used": {},
+            "error_message": None,
+        }
         try:
             if op == "noop":
-                return self._result(True, None, "noop")
+                trace["execution_status"] = "noop"
+                return self._result(True, None, "noop", trace=trace)
 
             if op in ("fetch_building_data", "building_by_uuid"):
                 building_id = kwargs.get("building_id")
                 if not building_id:
-                    return self._result(False, None, "Missing required 'building_id'.")
+                    trace["execution_status"] = "error"
+                    trace["error_message"] = "Missing required 'building_id'."
+                    return self._result(False, None, "Missing required 'building_id'.", trace=trace)
+                trace["filters_used"] = {"building_id": building_id}
                 payload = self.sql.building_by_uuid(building_id)
                 if payload is None:
-                    return self._result(False, None, f"No building found for uuid '{building_id}'.")
-                return self._result(True, payload, "OK")
+                    trace["execution_status"] = "not_found"
+                    trace["error_message"] = f"No building found for uuid '{building_id}'."
+                    return self._result(False, None, f"No building found for uuid '{building_id}'.", trace=trace)
+                trace["execution_status"] = "success"
+                trace["rows_returned"] = 1
+                trace["returned_values_used"] = payload if isinstance(payload, dict) else {}
+                return self._result(True, payload, "OK", trace=trace)
 
             if op == "building_by_address":
                 address = kwargs.get("address")
                 if not address:
-                    return self._result(False, None, "Missing required 'address'.")
+                    trace["execution_status"] = "error"
+                    trace["error_message"] = "Missing required 'address'."
+                    return self._result(False, None, "Missing required 'address'.", trace=trace)
+                trace["filters_used"] = {"address": address}
                 rows = self.sql.building_by_address(address)
                 if not rows:
-                    return self._result(False, [], f"No buildings matched address '{address}'.")
-                return self._result(True, rows, "OK")
+                    trace["execution_status"] = "not_found"
+                    trace["error_message"] = f"No buildings matched address '{address}'."
+                    return self._result(False, [], f"No buildings matched address '{address}'.", trace=trace)
+                trace["execution_status"] = "success"
+                trace["rows_returned"] = len(rows)
+                trace["returned_values_used"] = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+                return self._result(True, rows, "OK", trace=trace)
 
             if op == "buildings_by_single_filter":
                 field = kwargs["field"]
                 operator = kwargs.get("op", "eq")
                 value = kwargs["value"]
+                trace["filters_used"] = {field: value, "operator": operator}
                 rows = self.sql.buildings_by_single_filter(field, operator, value)
-                return self._result(True, rows, "OK")
+                trace["execution_status"] = "success"
+                trace["rows_returned"] = len(rows or [])
+                trace["returned_values_used"] = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+                return self._result(True, rows, "OK", trace=trace)
 
             if op == "fetch_energy_class":
-                return self._resolve_then_get_field(kwargs, self.ENERGY_CLASS_KEYS)
+                return self._resolve_then_get_field(kwargs, self.ENERGY_CLASS_KEYS, trace=trace)
 
             if op == "fetch_heated_area":
-                return self._resolve_then_get_field(kwargs, self.HEATED_AREA_KEYS)
+                return self._resolve_then_get_field(kwargs, self.HEATED_AREA_KEYS, trace=trace)
 
             if op == "fetch_tariff":
-                return self._resolve_then_get_field(kwargs, self.TARIFF_KEYS)
+                return self._resolve_then_get_field(kwargs, self.TARIFF_KEYS, trace=trace)
 
-            return self._result(False, None, f"Unknown op '{op}'.")
+            trace["execution_status"] = "error"
+            trace["error_message"] = f"Unknown op '{op}'."
+            return self._result(False, None, f"Unknown op '{op}'.", trace=trace)
 
         except Exception as e:
-            return self._result(False, None, f"exception: {type(e).__name__}: {e}")
+            trace["execution_status"] = "error"
+            trace["error_message"] = f"exception: {type(e).__name__}: {e}"
+            return self._result(False, None, f"exception: {type(e).__name__}: {e}", trace=trace)
 
     # ----------------------------
     # Internals
     # ----------------------------
-    def _resolve_then_get_field(self, kwargs: Dict[str, Any], candidates: List[str]) -> Dict[str, Any]:
+    def _resolve_then_get_field(self, kwargs: Dict[str, Any], candidates: List[str], *, trace: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Used by fetch_energy_class / fetch_heated_area / fetch_tariff.
         Accepts building_id; if only address is given, resolve to first match.
         """
         building_id = kwargs.get("building_id")
         address = kwargs.get("address")
+        trace = trace or {}
+        trace["filters_used"] = {
+            key: value
+            for key, value in {"building_id": building_id, "address": address}.items()
+            if value not in (None, "")
+        }
 
         if not building_id and address:
             rows = self.sql.building_by_address(address) or []
             first = self._first(rows)
             building_id = self._extract_field(first or {}, ["50a_uuid", "uuid", "building_id", "oden_uuid", "byggnadsid"])
+            trace["rows_returned"] = len(rows)
 
         if not building_id:
             target = f"address '{address}'" if address else "unknown target"
-            return self._result(False, None, f"Could not resolve building_id from {target}.")
+            trace["execution_status"] = "error"
+            trace["error_message"] = f"Could not resolve building_id from {target}."
+            return self._result(False, None, f"Could not resolve building_id from {target}.", trace=trace)
 
         payload = self.sql.building_by_uuid(building_id)
         if not payload:
-            return self._result(False, None, f"No building found for uuid '{building_id}'.")
+            trace["execution_status"] = "not_found"
+            trace["error_message"] = f"No building found for uuid '{building_id}'."
+            return self._result(False, None, f"No building found for uuid '{building_id}'.", trace=trace)
 
         value = self._extract_field(payload, candidates)
         if value is None:
             value = self._search_deep(payload, candidates)
 
         if value is None:
-            return self._result(False, None, f"Field not found. Tried keys: {candidates}")
+            trace["execution_status"] = "error"
+            trace["error_message"] = f"Field not found. Tried keys: {candidates}"
+            return self._result(False, None, f"Field not found. Tried keys: {candidates}", trace=trace)
 
-        return self._result(True, {"building_id": building_id, "value": value}, "OK")
+        trace["building_id"] = building_id
+        trace["execution_status"] = "success"
+        trace["rows_returned"] = max(int(trace.get("rows_returned") or 0), 1)
+        trace["returned_values_used"] = {"building_id": building_id, "value": value}
+        return self._result(True, {"building_id": building_id, "value": value}, "OK", trace=trace)
 
     @staticmethod
-    def _result(ok: bool, data: Any, message: str) -> Dict[str, Any]:
-        return {"ok": ok, "data": data, "message": message}
+    def _result(ok: bool, data: Any, message: str, *, trace: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        result = {"ok": ok, "data": data, "message": message}
+        if trace is not None:
+            result["trace"] = trace
+        return result
 
     @staticmethod
     def _first(items: Optional[List[Row]]) -> Optional[Row]:

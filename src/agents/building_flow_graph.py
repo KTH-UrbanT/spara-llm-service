@@ -19,6 +19,14 @@ from src.agents.evaluator_agent import EvaluatorAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
 from src.database.hammarby_data import query_address
 from src.evaluation import append_evaluation_trace, build_evaluation_trace, truncate_for_trace
+from src.pipeline.safety_analysis import (
+    apply_response_safety_notes,
+    assess_building_identity,
+    build_clarification_question,
+    compute_data_freshness,
+    compute_uncertainty,
+    extract_retrieved_facts,
+)
 from typing import Annotated
 import operator
 
@@ -796,6 +804,9 @@ def route_after_wait(state: "GraphState") -> str:
     Router for `wait_for_replies`: if all required flags are present, proceed to aggregator;
     otherwise branch to await_more (END) and try again next turn.
     """
+    if state.get("identity_gate_blocked"):
+        print("[route_after_wait] identity gate blocked → clarification", flush=True)
+        return "clarification"
     required = state.get("waiting_required_flags") or _required_flags_for_wait(state)
     all_done = all(bool(state.get(flag)) for flag in required) if required else True
     next_hop = "aggregator" if all_done else "await_more"
@@ -869,25 +880,90 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
         if key is not None:
             value = md[key]
             print(f"[generic_sql_agent] single_filter key={key} value={value!r}", flush=True)
-            result = sql_mapper_layer.execute("single_filter", key=key, value=value)
+            result = sql_mapper_layer.execute("buildings_by_single_filter", field=key, value=value)
 
     updates: Dict[str, Any] = {"done_generic_sql": True}
     outs: List[str] = []
+    trace = (result or {}).get("trace") or {
+        "query_type": "generic_sql",
+        "execution_status": "not_run",
+    }
+    metadata_updates = _deep_merge(
+        md,
+        {
+            "generic_sql_trace": trace,
+            "query_traces": {"generic_sql": trace},
+        },
+    )
 
     if result and result.get("ok"):
-        updates["agent_data_generic"] = result.get("data")
-        outs.append("generic_sql: ok")
-        try:
-            n = len(result.get("data") or [])
-        except Exception:
-            n = "?"
-        print(f"[generic_sql_agent] SUCCESS rows={n}", flush=True)
+        identity_check = assess_building_identity(md, result.get("data"))
+        metadata_updates = _deep_merge(
+            metadata_updates,
+            {
+                "building_identity_check": identity_check,
+            },
+        )
+
+        if identity_check.get("status") == "passed":
+            updates["agent_data_generic"] = result.get("data")
+            metadata_updates = merge_identifier_metadata(metadata_updates, result.get("data"))
+            outs.append("generic_sql: ok")
+            try:
+                n = len(result.get("data") or [])
+            except Exception:
+                n = "?"
+            print(f"[generic_sql_agent] SUCCESS rows={n}", flush=True)
+        else:
+            clarification_reason = (
+                "ambiguous_address"
+                if identity_check.get("ambiguous")
+                else "missing_building_data"
+            )
+            metadata_updates = _deep_merge(
+                metadata_updates,
+                {
+                    "clarification": {
+                        "needed": True,
+                        "reason": clarification_reason,
+                        "question_asked": build_clarification_question(clarification_reason),
+                        "resolved": False,
+                        "resolved_after_turns": None,
+                    },
+                    "building_candidate_matches": result.get("data")[:5] if isinstance(result.get("data"), list) else result.get("data"),
+                },
+            )
+            updates["identity_gate_blocked"] = True
+            outs.append("generic_sql: ambiguous or conflicting building match detected.")
+            print(f"[generic_sql_agent] IDENTITY BLOCK status={identity_check.get('status')}", flush=True)
     else:
         if addr:
             outs.append(f"generic_sql: no rows for address {addr!r} (ASCII fallback tried if applicable).")
+            metadata_updates = _deep_merge(
+                metadata_updates,
+                {
+                    "clarification": {
+                        "needed": True,
+                        "reason": "missing_building_data",
+                        "question_asked": build_clarification_question("missing_building_data"),
+                        "resolved": False,
+                        "resolved_after_turns": None,
+                    },
+                    "building_identity_check": {
+                        "status": "missing",
+                        "matched_building_id": None,
+                        "matched_address": addr,
+                        "ambiguous": False,
+                        "multiple_matches": False,
+                        "conflicting_metadata": False,
+                    },
+                },
+            )
+            updates["identity_gate_blocked"] = True
         else:
             outs.append("generic_sql: no address/supported single-filter provided.")
         print("[generic_sql_agent] NO DATA", flush=True)
+    updates["metadata"] = metadata_updates
     updates["agent_outputs_generic"] = outs
     print("[generic_sql_agent] EXIT", flush=True)
     return updates
@@ -934,6 +1010,14 @@ def specialized_sql_agent_node(state: GraphState) -> GraphState:
             kwargs["address"] = str(md.get("address"))
 
         result = specialized_layer.execute(op, kwargs)
+        trace = result.get("sql_trace") or {}
+        updates["metadata"] = _deep_merge(
+            md,
+            {
+                "sql_trace": trace,
+                "query_traces": {"specialized_sql": trace},
+            },
+        )
 
         sql = result.get("sql")
         if sql:
@@ -942,6 +1026,7 @@ def specialized_sql_agent_node(state: GraphState) -> GraphState:
         if result.get("ok"):
             if "data" in result and result["data"] is not None:
                 updates["agent_data_specialized"] = result["data"]
+                updates["metadata"] = merge_identifier_metadata(updates.get("metadata") or md, result["data"])
                 outs.append(_describe_payload_for_aggregation(result["data"]))
             elif "message" in result and result["message"]:
                 outs.append(f"Specialized SQL message: {result['message']}")
@@ -1179,8 +1264,41 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         # ensures the counter reflects summarizer re-runs, not eval invocations.
         eval_retry_count += 1
 
+    metadata = state.get("metadata") or {}
+    identity_check = metadata.get("building_identity_check") or assess_building_identity(
+        metadata,
+        state.get("agent_data_generic"),
+        state.get("agent_data_specialized"),
+        state.get("aggregated_data"),
+        state.get("agent_data"),
+    )
+    retrieved_facts = extract_retrieved_facts(
+        metadata,
+        state.get("aggregated_data"),
+        state.get("agent_data"),
+    )
+    metadata = _deep_merge(
+        metadata,
+        {
+            "building_identity_check": identity_check,
+            "retrieved_facts": retrieved_facts,
+        },
+    )
+    metadata["data_freshness"] = compute_data_freshness(
+        metadata,
+        state.get("aggregated_data"),
+        state.get("agent_data"),
+    )
+    route_hint = "clarification" if (metadata.get("clarification") or {}).get("needed") else "building_specific"
+    metadata["uncertainty"] = compute_uncertainty(
+        metadata,
+        retrieved_facts,
+        route=route_hint,
+    )
+
     try:
         answer = llm_summarizer.generate_response(prompt, message_list=(state.get('messages') or []))
+        answer = apply_response_safety_notes(answer, metadata)
         print("[llm_summarizer] generate_response ✓", flush=True)
     except Exception as e:
         answer = "Sorry, summarizer error."
@@ -1211,6 +1329,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         summarizer_temperature_requested = None
 
     sess = {**(state.get("session_state") or {})}
+    sess["metadata"] = metadata
+    sess["context"] = ctx
     if ctx.get("intent"):
         sess["last_intent"] = ctx.get("intent")
     if ctx.get("intent_list") is not None:
@@ -1237,7 +1357,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         # Temperature provenance is written to state so the trace node can include it.
         "summarizer_temperature_requested": summarizer_temperature_requested,
         "summarizer_temperature_unsupported": summarizer_temperature_unsupported,
-        "metadata": _deep_merge(md, {"debug": debug}),
+        "metadata": _deep_merge(metadata, {"debug": debug}),
     }
     updates.update(_ensure_evaluator_state_defaults(state))
     return updates
@@ -1562,11 +1682,47 @@ def route_after_evaluation(state: GraphState) -> str:
 # ======================
 def request_address_node(state: GraphState) -> GraphState:
     print("[request_address] ENTER → END", flush=True)
-    return {"final_response": "Can you please provide the building address?"}
+    md = state.get("metadata", {}) or {}
+    clarification = md.get("clarification") or {}
+    reason = clarification.get("reason") or "missing_address"
+    question = build_clarification_question(reason)
+    return {
+        "final_response": question,
+        "metadata": _deep_merge(
+            md,
+            {
+                "clarification": {
+                    "needed": True,
+                    "reason": reason,
+                    "question_asked": question,
+                    "resolved": False,
+                    "resolved_after_turns": None,
+                }
+            },
+        ),
+    }
 
 def clarification_node(state: GraphState) -> GraphState:
     print("[clarification] ENTER → END", flush=True)
-    return {"final_response": "Could you clarify your request?"}
+    md = state.get("metadata", {}) or {}
+    clarification = md.get("clarification") or {}
+    reason = clarification.get("reason") or "incomplete_question"
+    question = build_clarification_question(reason)
+    return {
+        "final_response": question,
+        "metadata": _deep_merge(
+            md,
+            {
+                "clarification": {
+                    "needed": True,
+                    "reason": reason,
+                    "question_asked": question,
+                    "resolved": False,
+                    "resolved_after_turns": None,
+                }
+            },
+        ),
+    }
 
 # ====================
 # Graph wiring (NEW)
@@ -1645,7 +1801,7 @@ def build_building_flow_graph() -> StateGraph:
     builder.add_conditional_edges(
         "wait_for_replies",
         route_after_wait,
-        {"aggregator": "aggregator", "await_more": "await_more"},
+        {"aggregator": "aggregator", "await_more": "await_more", "clarification": "clarification"},
     )
 
     builder.add_edge("aggregator", "llm_summarizer")
