@@ -2,7 +2,6 @@
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
-import pandas as pd
 Row = Dict[str, Any]
 Filter = Tuple[str, str, Union[str, List[str]]]
 
@@ -18,6 +17,7 @@ class SQLClient:
 
     Endpoints:
       - GET /buildings/{building_uuid}/
+      - GET /buildings/address?address=<address>&case_sensitive=<bool>
       - GET /buildings/single_filter?filter_name=<field>&filter_value=<value>[&op=<op>]
       - GET /buildings/?<field>=... or <field>__<lookup>=... (AND filters)
 
@@ -33,6 +33,7 @@ class SQLClient:
     """
 
     BASE_PATH = "/buildings/"
+    ADDRESS_PATH = "/buildings/address"
     SINGLE_FILTER_PATH = "/buildings/single_filter"
 
     ALLOWED_FIELDS = {
@@ -102,29 +103,26 @@ class SQLClient:
     def building_by_id(self, building_uuid: str) -> Optional[Row]:
         return self.building_by_uuid(building_uuid)
 
-    # 2) Get buildings by address (tiered single_filter on epc_idadr) -> list
+    # 2) Get buildings by address (dedicated address endpoint) -> list
     def building_by_address(
         self,
         address: str,
         limit: int = 10,
         offset: int = 0,
         ordering: Optional[str] = None,
+        case_sensitive: bool = False,
     ) -> List[Row]:
-        tiers: List[str] = ["eq", "istartswith", "icontains"]
-        for op in tiers:
-            rows = self.buildings_by_single_filter(
-                field="epc_idadr",
-                op=op,
-                value=address,
-                limit=limit,
-                offset=offset,
-                ordering=ordering,
-            )
-            if rows:
-                return rows
-        return []
-        #value = self.data[self.data['IdAdrAggregerad']==address].to_json(orient='records')
-        #return value
+        params: Dict[str, Any] = {
+            "address": str(address).strip(),
+            "case_sensitive": str(case_sensitive).lower(),
+        }
+
+        url = f"{self.base_url}{self.ADDRESS_PATH}"
+        r = self.session.get(url, params=params, timeout=self.timeout)
+        r.raise_for_status()
+
+        rows = self._json_to_list(r.json())
+        return self._apply_local_list_options(rows, limit=limit, offset=offset, ordering=ordering)
 
     # 3) Get buildings by a single filter (exactly /buildings/single_filter) -> list
     def buildings_by_single_filter(
@@ -212,6 +210,35 @@ class SQLClient:
         if op not in self.OP_TO_LOOKUP:
             raise ValueError(f"Unsupported lookup op '{op}'. Allowed: {sorted(self.OP_TO_LOOKUP.keys())}")
         return self.OP_TO_LOOKUP[op]
+
+    @staticmethod
+    def _apply_local_list_options(
+        rows: List[Row],
+        limit: Optional[int],
+        offset: int,
+        ordering: Optional[str],
+    ) -> List[Row]:
+        items = list(rows)
+
+        if ordering:
+            reverse = ordering.startswith("-")
+            field = ordering[1:] if reverse else ordering
+            present = [row for row in items if row.get(field) is not None]
+            missing = [row for row in items if row.get(field) is None]
+            try:
+                present.sort(key=lambda row: row.get(field), reverse=reverse)
+                items = present + missing
+            except TypeError:
+                pass
+
+        start = max(int(offset), 0)
+        if start:
+            items = items[start:]
+
+        if limit is not None:
+            items = items[: max(int(limit), 0)]
+
+        return items
 
     @staticmethod
     def _json_to_list(payload: Union[List[Row], Dict[str, Any], None]) -> List[Row]:

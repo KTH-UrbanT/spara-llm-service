@@ -46,20 +46,42 @@ def test_building_by_uuid_returns_none_when_response_is_not_ok():
     assert client.building_by_uuid("missing") is None
 
 
-def test_building_by_address_tries_progressive_match_tiers():
-    session = FakeSession(
-        [
-            FakeResponse([]),
-            FakeResponse([]),
-            FakeResponse([{"epc_idadr": "Main Street 1"}]),
-        ]
-    )
+def test_building_by_address_calls_dedicated_endpoint_case_insensitively():
+    session = FakeSession([FakeResponse([{"epc_idadr": "Main Street 1"}])])
     client = SQLClient(session=session)
 
     result = client.building_by_address("Main Street 1")
 
     assert result == [{"epc_idadr": "Main Street 1"}]
-    assert [call["params"]["op"] for call in session.calls] == ["eq", "istartswith", "icontains"]
+    assert session.calls[0]["url"] == "https://oden.abe.kth.se/api/v1/buildings/address"
+    assert session.calls[0]["params"] == {
+        "address": "Main Street 1",
+        "case_sensitive": "false",
+    }
+
+
+def test_building_by_address_applies_local_ordering_and_pagination():
+    session = FakeSession(
+        [
+            FakeResponse(
+                [
+                    {"byggnadsid": "b3", "epc_egenantalplan": 3},
+                    {"byggnadsid": "b1", "epc_egenantalplan": 1},
+                    {"byggnadsid": "b2", "epc_egenantalplan": 2},
+                ]
+            )
+        ]
+    )
+    client = SQLClient(session=session)
+
+    result = client.building_by_address(
+        "Main Street 1",
+        limit=1,
+        offset=1,
+        ordering="epc_egenantalplan",
+    )
+
+    assert result == [{"byggnadsid": "b2", "epc_egenantalplan": 2}]
 
 
 def test_buildings_by_single_filter_normalizes_paginated_payload():

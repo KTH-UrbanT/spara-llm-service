@@ -151,9 +151,10 @@ def test_routes_generic_requests_with_structured_sources():
     assert metadata == {"kept": True}
 
 
-def test_routes_through_building_agent_when_switching_from_building_to_generic():
+def test_routes_generic_requests_even_after_building_specific_turn():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = "generic answer"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -166,19 +167,17 @@ def test_routes_through_building_agent_when_switching_from_building_to_generic()
         thread_id="thread-2",
     )
 
-    assert response["content"] == "building answer"
-    assert response["classification"] == "building_specific"
-    assert response["agent_answered"] == "building"
+    assert response["content"] == "generic answer"
+    assert response["classification"] == "generic"
+    assert response["agent_answered"] == "generic"
     assert response["role"] == "assistant"
-    assert metadata == {"address": ["street 1"]}
-    assert StubBuildingAgent.last_call == (
+    assert metadata == {"existing": 1}
+    assert StubGenericAgent.last_call == (
         "and more broadly?",
         [
             {"role": "assistant", "classification": "building_specific"},
             {"role": "user", "content": "and more broadly?"},
         ],
-        {"existing": 1},
-        "thread-2",
     )
 
 

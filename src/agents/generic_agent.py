@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
 from typing import Any, List, Dict, Optional, Union
 from src.database.vector_client import VectorClient , VectorClientConfig
@@ -42,6 +43,75 @@ logging.getLogger("azure.ai.inference").setLevel(logging.WARNING)
 # Also suppress HTTP client logs if using httpx or requests
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+SITE_SPECIFIC_PATTERNS = (
+    r"\bmy building\b",
+    r"\bour building\b",
+    r"\bmy property\b",
+    r"\bour property\b",
+    r"\bmy brf\b",
+    r"\bour brf\b",
+    r"\bthis building\b",
+    r"\bfor (?:my|our|this) building\b",
+    r"\bi live at\b",
+    r"\bmy address is\b",
+)
+
+BUILDING_DATA_TERMS = (
+    "energy performance",
+    "energiprestanda",
+    "household eui",
+    "primary energy",
+    "tap hot water",
+    "värme konstant",
+    "total property energy electricity",
+    "fastighetsenergi",
+    "kwh/m",
+    "kwh/m³",
+    "kwh/m2",
+    "kwh/m²",
+    "deduction_",
+)
+
+
+def _message_mentions_specific_building(message: str) -> bool:
+    lowered = str(message or "").lower()
+    if not lowered.strip():
+        return False
+
+    if any(re.search(pattern, lowered) for pattern in SITE_SPECIFIC_PATTERNS):
+        return True
+
+    # Simple street-number heuristic for addresses like "Main Street 12".
+    return bool(re.search(r"\b[\wåäöÅÄÖ.-]+\s+\d+[A-Za-z]?(?:,\s*[\wåäöÅÄÖ\s.-]+)?\b", message or ""))
+
+
+def _looks_like_building_data_snippet(text: str) -> bool:
+    snippet = str(text or "")
+    lowered = snippet.lower()
+    if not lowered.strip():
+        return False
+
+    metric_hits = sum(1 for term in BUILDING_DATA_TERMS if term in lowered)
+    numeric_hits = len(re.findall(r"\b\d[\d.,]*\b", snippet))
+    colon_lines = sum(1 for line in snippet.splitlines() if ":" in line)
+
+    return (metric_hits >= 2 and numeric_hits >= 2) or (colon_lines >= 3 and numeric_hits >= 2)
+
+
+def _filter_generic_results(
+    last_message: str,
+    results: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    items = list(results or [])
+    if _message_mentions_specific_building(last_message):
+        return items
+
+    filtered = [
+        item for item in items
+        if not _looks_like_building_data_snippet((item or {}).get("page_content", ""))
+    ]
+    return filtered
 
 class GenericAgent(BaseAgent):
     DEFAULT_PROMPT_RELATIVE_PATH = os.path.join("..", "prompts", "generic_prompt.txt")
@@ -131,7 +201,8 @@ class GenericAgent(BaseAgent):
         
     def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[Dict[str, Any]]:
         start_time = time.time()  
-        results = self.vector_client.query(last_message)
+        raw_results = self.vector_client.query(last_message)
+        results = _filter_generic_results(last_message, raw_results)
         raw_sources = []
         for item in results or []:
             source_key = str((item or {}).get("source") or "").strip()
@@ -168,12 +239,30 @@ class GenericAgent(BaseAgent):
         # 1. System message from prompt_template
         # 2. Historical messages from message_list (extracting only role and content)
         messages_for_api: List[Dict[str, str]] = [{"role": "system", "content": self.prompt_template}]
+        messages_for_api.append(
+            {
+                "role": "system",
+                "content": (
+                    "Retrieved context may include example buildings or unrelated building records. "
+                    "Unless the user explicitly provided an address or building identifier, do not present "
+                    "retrieved figures as the user's own building or data."
+                ),
+            }
+        )
 
         for i, msg in enumerate(message_list):
             if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
                 messages_for_api.append({'role': msg['role'], 'content': msg['content']})
             else:
                 logger.warning(f"Skipping malformed message at index {i} in message_list: {msg}")
+
+        if content_from_doc:
+            messages_for_api.append(
+                {
+                    "role": "system",
+                    "content": f"Reference context:\n{content_from_doc}",
+                }
+            )
 
         # The 'last_message' string itself is the new user input.
         # We need to ensure it's added as the final user message for the API call.
@@ -189,7 +278,6 @@ class GenericAgent(BaseAgent):
 
         logger.info(f"Sending final message to Azure OpenAI API for completion: '{messages_for_api[-1]['content'][:70]}...'")
         logger.debug(f"Full message list sent to API: {messages_for_api}")
-        messages_for_api[-1]['content'] = last_message + "\n Context : " + content_from_doc
         try:
             completion = self.client.chat.completions.create(
                 model=self.deployment,

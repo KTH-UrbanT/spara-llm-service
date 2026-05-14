@@ -127,18 +127,6 @@ class AgentRouter:
                 "agent_answered": "expert_handoff",
             }, updated_metadata
 
-        # If user switched from building_specific to generic, confirm their intent
-        if classified == "generic" and previous_classification == "building_specific":
-            # return {
-            #     'role' : 'assistant' , 
-            #     'content' : "Would you like building-specific advice or generic advice?" , 
-            #     'classification' : classified 
-            # } , metadata
-            out , metadata_updated  = self.building.handle_building_query(last_message, messages, base_metadata, thread_id)
-            out['role'] = 'assistant'
-            out['classification'] = "building_specific"
-            return out , metadata_updated
-
         if classified == "generic":
             generic_response = self.generic.handle_generic_input(last_message, messages)
             if isinstance(generic_response, dict):
