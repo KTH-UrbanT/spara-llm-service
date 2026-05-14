@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from tests.support import fresh_import, stub_module
 
 
@@ -88,7 +90,8 @@ def test_handle_generic_input_keeps_reference_context_out_of_user_message(monkey
     ]
     FakeCompletions.last_kwargs = None
 
-    agent = module.GenericAgent(prompt_path="c:\\Users\\shada\\Documents\\spara\\llm-service\\src\\prompts\\generic_prompt.txt")
+    prompt_path = Path(module.__file__).resolve().parent.parent / "prompts" / "generic_prompt.txt"
+    agent = module.GenericAgent(prompt_path=str(prompt_path))
     response = agent.handle_generic_input(
         "what does energy performance in a building look like?",
         [{"role": "user", "content": "what does energy performance in a building look like?"}],
