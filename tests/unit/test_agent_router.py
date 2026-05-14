@@ -34,6 +34,7 @@ class StubBuildingAgent:
             "content": "building answer",
             "agent_answered": "building",
             "parsed_intent": "retrofit",
+            "route": "combined",
         }, {"address": ["street 1"]}
 
 
@@ -91,6 +92,10 @@ def import_agent_router_module():
         "src.services.draft_report_service",
         generate_draft_report_response=StubDraftReportService.generate_draft_report_response,
     )
+    stub_module(
+        "src.services.expert_handoff_email",
+        send_expert_handoff_email=lambda thread_id, messages, metadata: True,
+    )
     return fresh_import("src.pipeline.agent_router")
 
 
@@ -110,6 +115,7 @@ def test_routes_generic_requests():
     assert response["content"] == "generic answer"
     assert response["classification"] == "generic"
     assert response["agent_answered"] == "generic"
+    assert response["route"] == "generic"
     assert response["role"] == "assistant"
     assert metadata == {"kept": True}
     assert StubGenericAgent.last_call == ("hello", [{"role": "user", "content": "hello"}])
@@ -140,6 +146,7 @@ def test_routes_generic_requests_with_structured_sources():
     assert response["content"] == "generic answer"
     assert response["classification"] == "generic"
     assert response["agent_answered"] == "generic"
+    assert response["route"] == "generic"
     assert response["role"] == "assistant"
     assert response["sources"] == [
         {
@@ -170,6 +177,7 @@ def test_routes_generic_requests_even_after_building_specific_turn():
     assert response["content"] == "generic answer"
     assert response["classification"] == "generic"
     assert response["agent_answered"] == "generic"
+    assert response["route"] == "generic"
     assert response["role"] == "assistant"
     assert metadata == {"existing": 1}
     assert StubGenericAgent.last_call == (
@@ -196,6 +204,7 @@ def test_routes_building_specific_requests():
     assert response["content"] == "building answer"
     assert response["classification"] == "building_specific"
     assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
     assert response["role"] == "assistant"
     assert metadata == {"address": ["street 1"]}
     assert StubBuildingAgent.last_call[3] == "thread-3"
@@ -216,6 +225,7 @@ def test_routes_cluster_requests():
     assert response["content"] == "cluster answer"
     assert response["classification"] == "cluster"
     assert response["agent_answered"] == "cluster"
+    assert response["route"] == "combined"
     assert response["role"] == "assistant"
     assert metadata == {"simulation_results": ["done"]}
 
@@ -235,6 +245,7 @@ def test_routes_conversational_requests():
     assert response["content"] == "conversation answer"
     assert response["classification"] == "conversational"
     assert response["agent_answered"] == "conversationalist"
+    assert response["route"] == "generic"
     assert response["role"] == "assistant"
     assert metadata == {"session": "x"}
 
@@ -254,6 +265,7 @@ def test_routes_draft_report_requests():
     assert response["content"] == "report answer"
     assert response["classification"] == "draft_energy_report"
     assert response["agent_answered"] == "draft_energy_report"
+    assert response["route"] == "report_generation"
     assert response["downloadable_report"] == {"report_id": "rep-1"}
     assert metadata == {"address": "Main Street 1"}
     assert StubDraftReportService.last_call == (
@@ -276,6 +288,7 @@ def test_report_requests_clear_stale_expert_handoff_confirmation():
     )
 
     assert response["classification"] == "draft_energy_report"
+    assert response["route"] == "report_generation"
     assert metadata["expert_handoff_pending_confirmation"] is False
 
 
@@ -296,5 +309,24 @@ def test_unknown_classification_falls_back_cleanly():
         "content": "Unknown classification: mystery",
         "classification": "mystery",
         "agent_answered": "unknown",
+        "route": "generic",
     }
     assert metadata == {}
+
+
+def test_out_of_scope_questions_are_handled_safely():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "Can our BRF legally force residents to pay?"}],
+        last_message="Can our BRF legally force residents to pay?",
+        metadata={},
+        thread_id="thread-9",
+    )
+
+    assert response["classification"] == "out_of_scope"
+    assert response["route"] == "out_of_scope"
+    assert metadata["out_of_scope"] is True
+    assert metadata["out_of_scope_type"] == "legal_advice"

@@ -92,7 +92,11 @@ def test_execute_returns_dataframe_rows():
 
     result = layer.execute("answer_query", {"question": "show data", "building_id": "42", "address": "Main"})
 
-    assert result == {"ok": True, "data": [{"id": 1}, {"id": 2}], "sql": "SELECT * FROM demo;"}
+    assert result["ok"] is True
+    assert result["data"] == [{"id": 1}, {"id": 2}]
+    assert result["sql"] == "SELECT * FROM demo;"
+    assert result["sql_trace"]["generated_sql"] == "SELECT * FROM demo;"
+    assert result["sql_trace"]["rows_returned"] == 2
     assert FakeDBModule.last_sql == "SELECT * FROM demo;"
     assert FakeCompletions.last_kwargs["model"] == "gpt-test"
     assert FakeCompletions.last_kwargs["messages"][0]["content"].endswith("building_id=42 | address='Main'")
@@ -108,7 +112,10 @@ def test_execute_returns_write_message_for_string_db_result():
 
     result = layer.execute("answer_query", {"question": "update", "building_id": None, "address": None})
 
-    assert result == {"ok": True, "message": "OK - 1 row updated", "sql": "UPDATE demo SET value = 1;"}
+    assert result["ok"] is True
+    assert result["message"] == "OK - 1 row updated"
+    assert result["sql"] == "UPDATE demo SET value = 1;"
+    assert result["sql_trace"]["execution_status"] == "success"
 
 
 def test_execute_handles_model_and_db_failures():
@@ -118,18 +125,26 @@ def test_execute_handles_model_and_db_failures():
     FakeCompletions.error = RuntimeError("model down")
 
     model_error = layer.execute("answer_query", {"question": "show data"})
-    assert model_error == {"ok": False, "message": "Model error: model down"}
+    assert model_error["ok"] is False
+    assert model_error["message"] == "Model error: model down"
+    assert model_error["sql_trace"]["execution_status"] == "model_error"
 
     FakeCompletions.error = None
     FakeCompletions.content = "SELECT 2;"
     layer._safe_import_hammarby = lambda: (_ for _ in ()).throw(ImportError("missing db"))
     import_error = layer.execute("answer_query", {"question": "show data"})
-    assert import_error == {"ok": False, "message": "Import error: missing db", "sql": "SELECT 2;"}
+    assert import_error["ok"] is False
+    assert import_error["message"] == "Import error: missing db"
+    assert import_error["sql"] == "SELECT 2;"
+    assert import_error["sql_trace"]["execution_status"] == "import_error"
 
     layer._safe_import_hammarby = lambda: FakeDBModule
     FakeDBModule.result = None
     db_none = layer.execute("answer_query", {"question": "show data"})
-    assert db_none == {"ok": False, "message": "DB returned no result.", "sql": "SELECT 2;"}
+    assert db_none["ok"] is False
+    assert db_none["message"] == "DB returned no result."
+    assert db_none["sql"] == "SELECT 2;"
+    assert db_none["sql_trace"]["execution_status"] == "empty_result"
 
 
 def test_extract_sql_handles_fenced_and_plain_content():

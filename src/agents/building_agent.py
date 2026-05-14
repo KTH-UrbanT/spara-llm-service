@@ -1,6 +1,7 @@
 # src/agents/building_agent.py
 from typing import Any, Dict
 from src.agents.building_flow_graph import build_building_flow_graph
+from src.agents.building_response_prompt import merge_identifier_metadata
 from src.redis.redis_session_store import get_session_state, update_session_state
 from src.services.source_link_registry import resolve_source_links
 
@@ -22,6 +23,19 @@ def _vector_source_keys(final_state: Dict[str, Any]) -> list:
 class BuildingAgent:
     def __init__(self):
         self.building_flow =  ''
+
+    @staticmethod
+    def _derive_route(final_state: Dict[str, Any], response_text: str) -> str:
+        lowered = (response_text or "").strip().lower()
+        if "provide the building address" in lowered or "could you clarify your request" in lowered:
+            return "clarification"
+
+        if final_state.get("done_vector") and (
+            final_state.get("done_generic_sql") or final_state.get("done_specialized_sql")
+        ):
+            return "combined"
+
+        return "building_specific"
 
     def handle_building_query(
         self,
@@ -99,11 +113,39 @@ class BuildingAgent:
         agent_answered = ((md.get('debug') or {}).get('agent_answered')) or ""  # empty string if missing
         source_keys = _vector_source_keys(final_state)
         sources = resolve_source_links(source_keys)
+        route = self._derive_route(final_state, response)
         print(response)
+
+        metadata_payload = merge_identifier_metadata(
+            md,
+            final_state.get("aggregated_data"),
+            final_state.get("agent_data"),
+            final_state.get("session_state"),
+        )
+        if final_state.get("aggregated_data"):
+            metadata_payload["aggregated_data"] = final_state.get("aggregated_data")
+        if final_state.get("agent_data"):
+            metadata_payload["agent_data"] = final_state.get("agent_data")
+        if ctx:
+            metadata_payload["context"] = ctx
+        if route == "clarification":
+            clarification_reason = (
+                "ambiguous_brf"
+                if ctx.get("ambiguous") or ctx.get("ambigious")
+                else "missing_address"
+            )
+            metadata_payload["clarification"] = {
+                "needed": True,
+                "reason": clarification_reason,
+                "question_asked": response,
+                "resolved": False,
+                "resolved_after_turns": None,
+            }
 
         payload = {
             "content": response,
             "classification": "building_specific",     # router-level classification
+            "route": route,
             "parsed_intent": parsed_intent,   # parsed intent label
             'intent_list' : intent_list , 
             "agent_answered": agents_used,        # helpful for hybrid/vector QA
@@ -111,4 +153,4 @@ class BuildingAgent:
         if sources:
             payload["sources"] = sources
 
-        return payload , md
+        return payload , metadata_payload

@@ -171,3 +171,50 @@ def test_understand_context_keeps_stored_address_when_new_turn_omits_it():
     assert result["context"]["intent_list"] == ["SQL database"]
     assert result["metadata"]["address"] == "Professorsslingan 51"
     assert result["metadata"]["address_from_user"] == "Professorsslingan 51"
+
+
+def test_generic_sql_agent_blocks_ambiguous_building_matches():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {"50a_uuid": "uuid-1", "epc_idadr": "Main Street 1"},
+            {"50a_uuid": "uuid-2", "epc_idadr": "Main Street 2"},
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {"address": "Main Street"},
+            "parallel": {},
+        }
+    )
+
+    assert result["identity_gate_blocked"] is True
+    assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
+    assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
+
+
+def test_llm_summarizer_adds_freshness_and_uncertainty_metadata():
+    module = import_building_flow_graph_module()
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what should our building prioritize?",
+            "messages": [{"role": "user", "content": "what should our building prioritize?"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {"address": "Main Street 1"},
+            "aggregated_data": {
+                "generic_sql": {
+                    "building_id": "uuid-1",
+                    "energy_declaration_year": 2016,
+                    "heating_system": "district heating",
+                }
+            },
+        }
+    )
+
+    assert result["metadata"]["data_freshness"]["freshness_status"] == "old"
+    assert result["metadata"]["uncertainty"]["confidence"] in {"medium", "low", "high"}
+    assert "Note:" in result["final_response"]

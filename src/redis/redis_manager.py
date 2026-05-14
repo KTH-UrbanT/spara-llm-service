@@ -5,6 +5,10 @@ from datetime import datetime
 import uuid
 import json
 from src.pipeline.agent_router import *
+from src.pipeline.evaluation_metadata import (
+    build_message_evidence,
+    build_message_metadata,
+)
 # from src.pipeline.agent_router_langgraph import *
 
 '''
@@ -215,6 +219,12 @@ class RedisQueueManager:
 
             response['timestamp'] = time.time()
             response['added_to_database'] = 0
+            response_metadata = build_message_metadata(response, metadata)
+            response["metadata"] = {
+                **(response.get("metadata") or {}),
+                **response_metadata,
+            }
+            response["evidence"] = build_message_evidence(response["metadata"])
 
             # ---- Write metadata back so cross-turn state like expert handoff confirmation persists
             if metadata:

@@ -9,6 +9,7 @@ from src.agents.aggregator_agent import AggregatorAgent  # imported if you use i
 from src.agents.conversationalist_agent import ConversationalAgent
 from src.services.draft_report_service import generate_draft_report_response
 from src.services.expert_handoff_email import send_expert_handoff_email
+from src.pipeline.safety_analysis import build_out_of_scope_response, detect_out_of_scope
 
 
 def _normalize_response(
@@ -64,6 +65,7 @@ class AgentRouter:
                         "content": "The email was sent successfully to the EKR expert.",
                         "classification": "expert_handoff",
                         "agent_answered": "expert_handoff",
+                        "route": "expert_handoff",
                     }, updated_metadata
             except Exception as exc:
                 updated_metadata = {
@@ -78,6 +80,7 @@ class AgentRouter:
                 "content": "I could not send the email to the EKR expert right now. Please try again later.",
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
+                "route": "expert_handoff",
             }, updated_metadata
 
         if pending_handoff and self.router.is_rejection(last_message):
@@ -91,6 +94,32 @@ class AgentRouter:
                 "content": "Okay, I will not send the conversation to an expert. We can continue here.",
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
+                "route": "expert_handoff",
+            }, updated_metadata
+
+        boundary_case = detect_out_of_scope(last_message)
+        if boundary_case:
+            updated_metadata = {
+                **base_metadata,
+                "out_of_scope": True,
+                "out_of_scope_type": boundary_case["out_of_scope_type"],
+                "redirect_to": boundary_case["redirect_to"],
+                "boundary_handling": {
+                    "out_of_scope": True,
+                    "out_of_scope_type": boundary_case["out_of_scope_type"],
+                    "redirect_to": boundary_case["redirect_to"],
+                    "safe_general_information_provided": True,
+                },
+            }
+            return {
+                "role": "assistant",
+                "content": build_out_of_scope_response(
+                    boundary_case["out_of_scope_type"],
+                    boundary_case["redirect_to"],
+                ),
+                "classification": "out_of_scope",
+                "agent_answered": "boundary",
+                "route": "out_of_scope",
             }, updated_metadata
 
         # Try to read prior classification if present
@@ -113,7 +142,9 @@ class AgentRouter:
             }
 
         if classified == "draft_energy_report":
-            return generate_draft_report_response(thread_id, messages, base_metadata), base_metadata
+            report_response = generate_draft_report_response(thread_id, messages, base_metadata)
+            report_response.setdefault("route", "report_generation")
+            return report_response, base_metadata
 
         if classified == "expert_handoff":
             updated_metadata = {
@@ -125,6 +156,7 @@ class AgentRouter:
                 "content": "I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
+                "route": "expert_handoff",
             }, updated_metadata
 
         if classified == "generic":
@@ -140,7 +172,8 @@ class AgentRouter:
                 'role' : 'assistant' , 
                 'content' :response_text , 
                 'classification' : classified  , 
-                'agent_answered' : "generic"
+                'agent_answered' : "generic",
+                'route': "generic",
             }
             if sources:
                 payload["sources"] = sources
@@ -181,6 +214,7 @@ class AgentRouter:
             out  ,  metadata_updated = self.cluster.handle_cluster_query(last_message, messages, base_metadata, thread_id)
             out['role'] = 'assistant'
             out['classification']=classified 
+            out.setdefault("route", "combined")
             return out , metadata_updated
 
         elif classified == "conversational":
@@ -189,7 +223,8 @@ class AgentRouter:
                 'role' : 'assistant' , 
                 'content' :response_text, 
                 'classification' : classified  , 
-                'agent_answered' : "conversationalist"
+                'agent_answered' : "conversationalist",
+                'route': "generic",
             } , base_metadata
             # return _normalize_response(
             #     content=response_text,
@@ -211,5 +246,6 @@ class AgentRouter:
                 'role' : 'assistant' , 
                 'content' :f"Unknown classification: {classified}" , 
                 'classification' :  str(classified) , 
-                'agent_answered' : "unknown"
+                'agent_answered' : "unknown",
+                'route': "generic",
             } , base_metadata

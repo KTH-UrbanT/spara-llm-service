@@ -88,11 +88,18 @@ def test_handle_building_query_returns_composed_response_and_updates_session():
     assert response == {
         "content": "Use insulation and heat recovery.",
         "classification": "building_specific",
+        "route": "combined",
         "parsed_intent": "SQL database ; vector database",
         "intent_list": ["SQL database", "vector database"],
         "agent_answered": ["ODEN API", "Documents stored in Vector database used"],
     }
-    assert metadata == {"debug": {"agent_answered": "hybrid"}}
+    assert metadata == {
+        "debug": {"agent_answered": "hybrid"},
+        "context": {
+            "parsed_intent": "SQL database ; vector database",
+            "intent_list": ["SQL database", "vector database"],
+        },
+    }
 
 
 def test_handle_building_query_falls_back_across_response_fields():
@@ -115,6 +122,7 @@ def test_handle_building_query_falls_back_across_response_fields():
     )
 
     assert response["content"] == "Fallback response"
+    assert response["route"] == "building_specific"
     assert response["agent_answered"] == ["Hammarby dataset used"]
     assert metadata == {}
 
@@ -151,8 +159,15 @@ def test_handle_building_query_includes_vector_sources_from_merged_agent_data():
     )
 
     assert response["sources"] == SourceLinkResolver.result
+    assert response["route"] == "building_specific"
     assert SourceLinkResolver.calls == [[r"C:\docs\brfenergieffektiv_2015.pdf"]]
-    assert metadata == {}
+    assert metadata == {
+        "agent_data": {
+            "vector": {
+                "sources": [r"C:\docs\brfenergieffektiv_2015.pdf"],
+            }
+        }
+    }
 
 
 def test_handle_building_query_loads_session_state_when_not_provided():

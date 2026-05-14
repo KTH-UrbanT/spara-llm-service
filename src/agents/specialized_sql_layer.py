@@ -29,7 +29,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, List
 import json
 from collections import defaultdict
 
@@ -237,6 +237,24 @@ class SpecializedSQLLayer:
         question = kwargs.get("question", "")
         building_id = kwargs.get("building_id")
         address = kwargs.get("address")
+        trace = {
+            "query_type": "specialized_sql",
+            "generated_sql": None,
+            "executed_sql": None,
+            "tables_used": [],
+            "fields_used": [],
+            "filters_used": {
+                key: value
+                for key, value in {"building_id": building_id, "address": address}.items()
+                if value is not None
+            },
+            "building_id": building_id,
+            "address": address,
+            "rows_returned": 0,
+            "execution_status": "unknown",
+            "error_message": None,
+            "returned_values_used": {},
+        }
 
         meta_lines = []
         if building_id is not None:
@@ -276,7 +294,9 @@ class SpecializedSQLLayer:
                     f"AZURE_ENDPOINT='{self._conf.endpoint}', and that AZURE_DEPLOYMENT="
                     f"'{self._conf.model_or_deployment}' exists."
                 )
-            return {"ok": False, "message": f"Model error: {msg}"}
+            trace["execution_status"] = "model_error"
+            trace["error_message"] = f"Model error: {msg}"
+            return {"ok": False, "message": f"Model error: {msg}", "sql_trace": trace}
 
         try:
             content = resp.choices[0].message.content  # type: ignore[attr-defined]
@@ -285,18 +305,28 @@ class SpecializedSQLLayer:
 
         sql = self._extract_sql(content)
         if not sql:
-            return {"ok": False, "message": "Model did not return SQL."}
+            trace["execution_status"] = "model_error"
+            trace["error_message"] = "Model did not return SQL."
+            return {"ok": False, "message": "Model did not return SQL.", "sql_trace": trace}
+        trace["generated_sql"] = sql
+        trace["executed_sql"] = sql
+        trace["tables_used"] = self._extract_tables(sql)
+        trace["fields_used"] = self._extract_fields(sql)
 
         # ALWAYS execute via hammarby_data
         try:
             db = self._safe_import_hammarby()
         except Exception as e:
-            return {"ok": False, "message": f"Import error: {e}", "sql": sql}
+            trace["execution_status"] = "import_error"
+            trace["error_message"] = f"Import error: {e}"
+            return {"ok": False, "message": f"Import error: {e}", "sql": sql, "sql_trace": trace}
 
         try:
             result = db.query_executor(sql)  # SELECT -> DataFrame; writes -> str; errors -> None
         except Exception as e:
-            return {"ok": False, "message": f"DB error: {e}", "sql": sql}
+            trace["execution_status"] = "db_error"
+            trace["error_message"] = f"DB error: {e}"
+            return {"ok": False, "message": f"DB error: {e}", "sql": sql, "sql_trace": trace}
 
         # Normalize result
         try:
@@ -305,27 +335,37 @@ class SpecializedSQLLayer:
             pd = None  # type: ignore
 
         if result is None:
-            return {"ok": False, "message": "DB returned no result.", "sql": sql}
+            trace["execution_status"] = "empty_result"
+            trace["error_message"] = "DB returned no result."
+            return {"ok": False, "message": "DB returned no result.", "sql": sql, "sql_trace": trace}
 
         # If it's a pandas DataFrame (read query)
         if (pd is not None) and hasattr(result, "to_dict"):
             try:
                 data = result.to_dict(orient="records")  # type: ignore
-                return {"ok": True, "data": data, "sql": sql}
+                trace["execution_status"] = "success"
+                trace["rows_returned"] = len(data)
+                trace["returned_values_used"] = data[0] if data and isinstance(data[0], dict) else {}
+                return {"ok": True, "data": data, "sql": sql, "sql_trace": trace}
             except Exception:
                 pass  # fall through if not a real DF
 
         # If it's a string (write queries return a message)
         if isinstance(result, str):
-            return {"ok": True, "message": result, "sql": sql}
+            trace["execution_status"] = "success"
+            return {"ok": True, "message": result, "sql": sql, "sql_trace": trace}
 
         # Fallback: try to coerce iterables of rows
         try:
             data = list(result)  # may raise
-            return {"ok": True, "data": data, "sql": sql}
+            trace["execution_status"] = "success"
+            trace["rows_returned"] = len(data)
+            trace["returned_values_used"] = data[0] if data and isinstance(data[0], dict) else {}
+            return {"ok": True, "data": data, "sql": sql, "sql_trace": trace}
         except Exception:
             # As a last resort, just stringify it
-            return {"ok": True, "message": str(result), "sql": sql}
+            trace["execution_status"] = "success"
+            return {"ok": True, "message": str(result), "sql": sql, "sql_trace": trace}
 
     # ---------- Helpers ----------
 
@@ -373,3 +413,38 @@ class SpecializedSQLLayer:
 
         # 4) Fallback: whole text
         return text.strip("`").strip()
+
+    @staticmethod
+    def _extract_tables(sql: str) -> List[str]:
+        if not sql:
+            return []
+        patterns = [
+            r"\bfrom\s+([A-Za-z0-9_\.\[\]]+)",
+            r"\bjoin\s+([A-Za-z0-9_\.\[\]]+)",
+            r"\bupdate\s+([A-Za-z0-9_\.\[\]]+)",
+            r"\binto\s+([A-Za-z0-9_\.\[\]]+)",
+        ]
+        tables: List[str] = []
+        for pattern in patterns:
+            for match in re.findall(pattern, sql, flags=re.IGNORECASE):
+                table = str(match).strip()
+                if table and table not in tables:
+                    tables.append(table)
+        return tables
+
+    @staticmethod
+    def _extract_fields(sql: str) -> List[str]:
+        if not sql:
+            return []
+        match = re.search(r"\bselect\b\s+(.*?)\s+\bfrom\b", sql, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            return []
+        raw = match.group(1).strip()
+        if raw == "*":
+            return ["*"]
+        fields = []
+        for piece in raw.split(","):
+            cleaned = re.sub(r"\s+as\s+.+$", "", piece.strip(), flags=re.IGNORECASE)
+            if cleaned and cleaned not in fields:
+                fields.append(cleaned)
+        return fields

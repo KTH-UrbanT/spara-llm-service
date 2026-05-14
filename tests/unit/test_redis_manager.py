@@ -98,6 +98,12 @@ def test_process_thread_event_routes_latest_user_message_and_persists_metadata()
     assistant_message = json.loads(saved_messages[-1])
     assert assistant_message["content"] == "assistant answer"
     assert assistant_message["added_to_database"] == 0
+    assert assistant_message["metadata"]["route"] == "generic"
+    assert assistant_message["metadata"]["agent"] == "GenericAgent"
+    assert any(
+        evidence["evidence_type"] == "building_match"
+        for evidence in assistant_message["evidence"]
+    )
 
     channel, payload = manager.redis.published[-1]
     assert channel == "thread_events"
