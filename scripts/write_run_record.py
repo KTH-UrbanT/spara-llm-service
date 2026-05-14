@@ -42,6 +42,18 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+# Load .env so OPENAI_RESPONSE_MODEL_API_VERSION / *_DEPLOYMENT_NAME / GIT_COMMIT are
+# visible to os.environ.get below. Do NOT use override=True — it would clobber any
+# arm-specific values already injected by run_arm.py / run_experiment.sh (see the
+# parallel comment in src/database/hammarby_data.py).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except ImportError:
+    # dotenv isn't strictly required; the script degrades to null fields if env
+    # vars aren't already in the process environment.
+    pass
+
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -92,9 +104,21 @@ def sha256_file(path: Path) -> Optional[str]:
 
 
 def git_commit_at(cwd: Optional[Path] = None) -> Optional[str]:
-    """Resolve ``git rev-parse HEAD`` for ``cwd``. Returns ``None`` on any
-    failure (no git, detached non-repo, etc.) so the run record is still
-    written; the absence of a commit is reported, not crashed on."""
+    """Resolve the git commit recorded in the run record.
+
+    Resolution order:
+      1. ``GIT_COMMIT`` env var if set (use this when the script runs inside a
+         container that has no ``.git`` directory; the host computes the commit
+         and passes it through ``docker compose exec -e GIT_COMMIT=$(git ...)``
+         or via ``.env``).
+      2. ``git rev-parse HEAD`` from ``cwd``.
+
+    Returns ``None`` on any failure so the run record is still written; the
+    absence of a commit is reported, not crashed on.
+    """
+    env_commit = os.environ.get("GIT_COMMIT")
+    if env_commit and env_commit.strip():
+        return env_commit.strip()
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],

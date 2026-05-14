@@ -1,0 +1,11 @@
+output_id,annotator_id,timestamp_utc,question_id,arm,groundedness,completeness,numeric_fidelity,constraint_satisfaction,overall_pass,failure_tags,notes
+1f18eb2e,nicolo,2026-05-14T07:48:30.443087+00:00,Q012,A2,3,4,4,4,1,"irrelevant_extras,unsupported_claim",orrectly identifies that the renovation date is absent from the provided EPC evidence and avoids hallucination
+007dfcac,nicolo,2026-05-14T07:49:10.658445+00:00,Q014,A1,4,4,4,4,1,,"no valid information, correct"
+44434f9d,nicolo,2026-05-14T07:49:46.976806+00:00,Q012,A1,4,4,4,4,1,,Accurately states that no renovation date exists in the EPC evidence while correctly reporting the construction year.
+d9834c76,nicolo,2026-05-14T07:50:13.950369+00:00,Q014,A2,4,4,4,4,1,,"no valid information, correct"
+5f56902a,nicolo,2026-05-14T07:50:54.641109+00:00,Q001,A2,4,4,4,4,1,,
+61daad44,nicolo,2026-05-14T07:52:24.119799+00:00,Q010,A2,3,4,4,4,1,irrelevant_extras,
+7ebbebc9,nicolo,2026-05-14T07:56:44.475465+00:00,Q018,A2,4,4,4,4,1,,"correct answer, but too many extra information. irrelevant"
+59c48dba,nicolo,2026-05-14T07:58:53.677664+00:00,Q018,A1,3,4,4,4,1,irrelevant_extras,too many irrelevant things in the answer
+03738e37,nicolo,2026-05-14T07:59:17.114639+00:00,Q001,A1,4,4,4,4,1,,
+e2d2913c,nicolo,2026-05-14T08:00:30.410314+00:00,Q010,A1,4,4,4,4,1,,maybe some irrelevant extras. the answer to the question must be at the beginning not at the end of the answer

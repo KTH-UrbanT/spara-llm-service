@@ -1,7 +1,7 @@
 {
-  "dataset_version": "1.0.0-option3",
+  "dataset_version": "1.0.1-option3",
   "created_at": "2026-05-10T00:00:00Z",
-  "description": "SPARA gold dataset (20 questions, Option 3 split: 10 simple_address / 6 edge_case / 4 constraint_filtering). All questions address-anchored on real ODEN records from DeSO 0180C5810 (Stockholm). Authoring loop: plan-eil-v3.md Phase 1 Step 1.1.",
+  "description": "SPARA gold dataset (20 questions, Option 3 split: 10 simple_address / 6 edge_case / 4 constraint_filtering). All questions address-anchored on real ODEN records from DeSO 0180C5810 (Stockholm). Authoring loop: plan-eil-v3.md Phase 1 Step 1.1. v1.0.1: Q013 wording re-anchored with explicit reference year 'As of January 2026' to eliminate the 2032 verdict-flip risk (plan-eil-v4.md Issue 7).",
   "questions": [
     {
       "question_id": "Q001",
@@ -219,24 +219,26 @@
       "question_id": "Q013",
       "category": "constraint_filtering",
       "difficulty": "medium",
-      "question": "Is the building at Förridargränd 5 less than 75 years old?",
+      "question": "As of January 2026, is the building at Förridargränd 5 less than 75 years old?",
       "hint_address": "Förridargränd 5",
       "expected_facts": [
         "the building was built in 1957",
+        "as of January 2026 the building is 69 years old",
         "answer yes, the building is less than 75 years old"
       ],
       "expected_numeric": {
         "year_built": 1957
       },
       "expected_constraints": [
-        "(current_year - 1957) < 75"
+        "(2026 - 1957) < 75"
       ],
       "must_avoid": [
         "answering no",
-        "claiming the building is older than 75 years"
+        "claiming the building is 75 years old or older",
+        "computing age relative to a year other than 2026"
       ],
-      "notes": "Constraint check: yes/no answer requires computing age (current year minus 1957=69 years as of 2026) and comparing to 75. Tests numeric reasoning under temporal context.",
-      "created_at": "2026-05-10T00:00:00Z"
+      "notes": "Constraint check with fixed reference year: yes/no requires looking up epc_egennybyggar=1957 and computing 2026-1957=69 vs threshold 75. Reference year is anchored in the question text to eliminate verdict-flip risk (originally 'less than 75 years old' relative to 'now', which flips in 2032). Tests age-arithmetic + threshold comparison; distinct from Q018 (year-vs-year) and Q020 (size-vs-threshold).",
+      "created_at": "2026-05-13T00:00:00Z"
     },
     {
       "question_id": "Q014",
@@ -283,22 +285,25 @@
       "question_id": "Q016",
       "category": "edge_case",
       "difficulty": "hard",
-      "question": "What is the average rent for apartments in Stockholm?",
-      "hint_address": null,
+      "question": "What is the average rent for the apartments in the building at Loviselundsvägen 81?",
+      "hint_address": "Loviselundsvägen 81",
       "expected_facts": [
-        "indicate that rent data is not available in the building registry",
-        "do not fabricate a numeric rent value"
+        "indicate that rent data is not available in the EPC registry",
+        "do not fabricate a numeric rent value",
+        "may optionally note that rent figures would come from a different data source than EPC"
       ],
       "expected_numeric": {},
       "expected_constraints": [
-        "must not return a numeric rent figure"
+        "must not return a numeric rent figure",
+        "must not invent rent in SEK/m² or SEK/month"
       ],
       "must_avoid": [
         "fabricated rent in SEK",
-        "treating rent as an EPC field"
+        "treating rent as an EPC field",
+        "guessing a Stockholm-average rent and applying it to this building"
       ],
-      "notes": "Out-of-scope question — rent is not in ODEN or the vector store. Tests that the system handles out-of-domain queries without fabricating. Intent classifier may route to vector database; the summarizer should refuse.",
-      "created_at": "2026-05-10T00:00:00Z"
+      "notes": "Out-of-scope question with a valid hint_address. The building exists in ODEN (byggnadsid 01-80-BERBERISEN7-1) and the agent can fetch its EPC row, but 'rent' is not represented in any field. Tests refusal-on-out-of-scope under conditions where the agent CAN retrieve evidence (so it must reason that the requested field is absent, rather than short-circuit on missing address). Distinct from Q011/Q012 (missing fields on a present building) only by topic — rent is structurally absent rather than just unrecorded.",
+      "created_at": "2026-05-13T00:00:00Z"
     },
     {
       "question_id": "Q017",

@@ -248,22 +248,26 @@ class TestCheckCategoryCounts:
 
     def test_wrong_category_count_fails(self):
         records = _make_full_dataset()["questions"]
-        # Convert one simple_address into vector_sql_hybrid.
-        # Under v2 counts (simple=5, hybrid=3) the result is simple 5→4, hybrid 3→4.
+        # Convert one simple_address into vector_sql_hybrid — both categories now deviate
+        # from EXPECTED_CATEGORY_COUNTS by exactly 1, so validation must fail.
+        # Assertions are derived from the constant so this stays correct under any future
+        # rebalance (e.g. Option 2: simple=8,hybrid=5; Option 3: simple=10,hybrid=0).
         for r in records:
             if r["category"] == "simple_address":
                 r["category"] = "vector_sql_hybrid"
                 break
         ok, errs = vd.check_category_counts(records)
         assert not ok
-        # simple_address actual=4 (expected 5)
-        assert any("simple_address" in e and "found 4" in e for e in errs)
-        # vector_sql_hybrid actual=4 (expected 3)
-        assert any("vector_sql_hybrid" in e and "found 4" in e for e in errs)
+        expected_simple = vd.EXPECTED_CATEGORY_COUNTS["simple_address"]
+        expected_hybrid = vd.EXPECTED_CATEGORY_COUNTS["vector_sql_hybrid"]
+        assert any("simple_address" in e and f"found {expected_simple - 1}" in e for e in errs), \
+            f"expected simple_address mismatch (found {expected_simple - 1}); errs={errs}"
+        assert any("vector_sql_hybrid" in e and f"found {expected_hybrid + 1}" in e for e in errs), \
+            f"expected vector_sql_hybrid mismatch (found {expected_hybrid + 1}); errs={errs}"
 
     def test_total_record_count_off_fails(self):
-        # Under v2 the full dataset is 20 records; slice to fewer than 20 to trip the check.
-        records = _make_full_dataset()["questions"][:15]
+        # Slice the full dataset shorter than EXPECTED_TOTAL to trip the total-records check.
+        records = _make_full_dataset()["questions"][: vd.EXPECTED_TOTAL - 5]
         ok, errs = vd.check_category_counts(records)
         assert not ok
         assert any("total records" in e for e in errs)
