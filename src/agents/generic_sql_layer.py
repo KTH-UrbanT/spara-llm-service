@@ -1,10 +1,12 @@
 # generic_sql_layer.py
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from src.database.sql_client import SQLClient  # type: ignore
+from src.pipeline.telemetry import record_sql_call
 
 Row = Dict[str, Any]
 
@@ -110,6 +112,7 @@ class SQL_Mapper_Layer:
         Execute an op. Always return: {"ok": bool, "data": Any, "message": str}
         """
         trace = {
+            "_started_at": time.perf_counter(),
             "query_type": op,
             "operation": op,
             "filters_used": {},
@@ -242,6 +245,14 @@ class SQL_Mapper_Layer:
     def _result(ok: bool, data: Any, message: str, *, trace: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         result = {"ok": ok, "data": data, "message": message}
         if trace is not None:
+            started_at = trace.pop("_started_at", None)
+            record_sql_call(
+                component="generic_sql",
+                latency_seconds=time.perf_counter() - started_at if started_at else None,
+                row_count=trace.get("rows_returned"),
+                success=ok and trace.get("execution_status") not in {"error", "not_found"},
+                error=None if ok and trace.get("execution_status") not in {"error", "not_found"} else message,
+            )
             result["trace"] = trace
         return result
 

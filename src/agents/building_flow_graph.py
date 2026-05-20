@@ -116,6 +116,164 @@ def _ascii_fold(s: Optional[str]) -> Optional[str]:
         return s
     return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
 
+
+
+def _coerce_intent_list(ctx: Dict[str, Any]) -> List[str]:
+    intent_list = ctx.get("intent_list")
+    if isinstance(intent_list, (list, tuple)):
+        return [str(item).strip() for item in intent_list if str(item).strip()]
+
+    intents = ctx.get("intents")
+    if isinstance(intents, (list, tuple)):
+        return [str(item).strip() for item in intents if str(item).strip()]
+
+    parsed_intent = ctx.get("parsed_intent")
+    if isinstance(parsed_intent, str) and parsed_intent.strip():
+        return [part.strip() for part in re.split(r"\s*;\s*", parsed_intent) if part.strip()]
+
+    return []
+
+
+def _last_assistant_requested_address(messages: List[Dict[str, Any]]) -> bool:
+    for message in reversed(messages or []):
+        if message.get("role") != "assistant":
+            continue
+        content = str(message.get("content") or "").lower()
+        if (
+            "address" in content
+            and any(token in content for token in ("building", "street", "full", "provide", "share", "need"))
+        ):
+            return True
+        return False
+    return False
+
+
+def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+
+    candidate = str(text).strip()
+    if not candidate:
+        return None
+
+    candidate = re.sub(
+        r"^\s*(?:sure|yes|yeah|yep|ok|okay|of course|absolutely|noo?|nej|ja)\s*[,.:;-]*\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+
+    cue_match = re.search(
+        r"(?:i\s+live\s+(?:in|at|on)|i\s+am\s+at|i'm\s+at|my\s+address\s+is|address\s+is|"
+        r"we\s+live\s+(?:in|at|on)|our\s+address\s+is|"
+        r"jag\s+bor\s+p[åa]|vi\s+bor\s+p[åa]|min\s+adress\s+[äa]r|adressen\s+[äa]r)\s+(.+)$",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if cue_match:
+        candidate = cue_match.group(1)
+
+    candidate = re.sub(
+        r"^(?:i live in|i live at|i live on|i'm at|i am at|my address is|address is|it's|it is)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip(" .,:;")
+
+    if not candidate:
+        return None
+
+    if _is_address_recognized(candidate):
+        return candidate
+
+    folded = _ascii_fold(candidate)
+    if folded and _is_address_recognized(folded):
+        return candidate
+
+    if re.search(r"\d", candidate) and re.search(r"[A-Za-zÅÄÖåäö]", candidate):
+        return candidate
+
+    return None
+
+
+def _iter_metadata_address_candidates(metadata: Dict[str, Any]) -> List[Any]:
+    if not isinstance(metadata, dict):
+        return []
+
+    candidates: List[Any] = []
+    for key in ("address", "address_from_user", "matched_address", "input_address", "official_address"):
+        if metadata.get(key) not in (None, ""):
+            candidates.append(metadata.get(key))
+
+    for block_key in ("building_match", "retrieved_facts"):
+        block = metadata.get(block_key)
+        if not isinstance(block, dict):
+            continue
+        for key in ("address", "address_from_user", "matched_address", "input_address", "official_address"):
+            if block.get(key) not in (None, ""):
+                candidates.append(block.get(key))
+
+    query_traces = metadata.get("query_traces")
+    if isinstance(query_traces, dict):
+        for trace in query_traces.values():
+            if not isinstance(trace, dict):
+                continue
+            filters = trace.get("filters_used")
+            if isinstance(filters, dict) and filters.get("address") not in (None, ""):
+                candidates.append(filters.get("address"))
+            returned = trace.get("returned_values_used")
+            if isinstance(returned, dict):
+                for key in ("address", "address_from_user", "matched_address", "epc_idadr"):
+                    if returned.get(key) not in (None, ""):
+                        candidates.append(returned.get(key))
+
+    return candidates
+
+
+def _extract_stored_address_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
+    for candidate in _iter_metadata_address_candidates(metadata or {}):
+        cleaned = _extract_address_candidate_from_text(str(candidate))
+        if cleaned and _is_specific_address(cleaned):
+            return cleaned
+    return None
+
+
+def _promote_stored_address(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    promoted = dict(metadata)
+    if promoted.get("address") and promoted.get("address_from_user"):
+        return promoted
+    stored_address = _extract_stored_address_from_metadata(promoted)
+    if stored_address:
+        promoted.setdefault("address", stored_address)
+        promoted.setdefault("address_from_user", stored_address)
+    return promoted
+
+
+def _looks_like_personal_energy_advice(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+
+    has_personal_energy_subject = bool(
+        re.search(
+            r"\b(?:my|our)\s+(?:energy\s+efficiency|energy\s+use|energy\s+consumption|"
+            r"heating\s+costs?|electricity\s+use|electricity\s+consumption)\b",
+            lowered,
+        )
+    )
+    has_improvement_verb = bool(
+        re.search(r"\b(?:improve|reduce|lower|save|optimi[sz]e|increase|decrease|minska|förbättra)\b", lowered)
+    )
+
+    return has_personal_energy_subject or (
+        has_improvement_verb
+        and bool(re.search(r"\b(?:my|our)\b", lowered))
+        and bool(re.search(r"\b(?:energy|heating|electricity|el|värme)\b", lowered))
+    )
+
+
 # --- replace your _safe_ctx_from_parsed with this ---
 def _safe_ctx_from_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -190,6 +348,12 @@ def _required_flags_for_wait(state: "GraphState") -> list[str]:
     return required
 
 
+def _context_requests_vector(state: "GraphState") -> bool:
+    intents = _normalized_intents_from_context(state)
+    raw = str((state.get("context") or {}).get("parsed_intent") or "").lower()
+    return any("vector" in intent for intent in intents) or "vector" in raw
+
+
 def _is_address_recognized(addr: Optional[str]) -> bool:
     if not addr:
         return False
@@ -256,6 +420,83 @@ def _compute_agent_answered(state: GraphState) -> str:
 
 def _has_single_filter(md: Dict[str, Any]) -> bool:
     return any(md.get(k) not in (None, "") for k in SINGLE_FILTER_KEYS)
+
+
+def _is_specific_address(addr: Optional[str]) -> bool:
+    if not addr:
+        return False
+    text = str(addr).strip()
+    return bool(re.search(r"\d", text) and re.search(r"[A-Za-zÅÄÖåäö]", text))
+
+
+def _extract_row_address(row: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(row, dict):
+        return None
+    for key in ("address", "Address", "official_address", "epc_idadr"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _extract_row_identifier(row: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(row, dict):
+        return None
+    for key in ("byggnadsid", "building_id", "50a_uuid", "uuid", "oden_uuid", "01a_fnr"):
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _enrich_building_fact_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(row, dict):
+        return row
+    enriched = dict(row)
+    facts = extract_retrieved_facts(row)
+    for key in ("heating_system", "district_heating_use", "energy_class", "energy_performance"):
+        if key not in enriched and facts.get(key) not in (None, "", [], {}):
+            enriched[key] = facts[key]
+    return enriched
+
+
+def _enrich_building_data(data: Any) -> Any:
+    if isinstance(data, list):
+        return [_enrich_building_fact_aliases(row) if isinstance(row, dict) else row for row in data]
+    if isinstance(data, dict):
+        return _enrich_building_fact_aliases(data)
+    return data
+
+
+def _dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for row in rows or []:
+        identifier = _extract_row_identifier(row)
+        normalized_address = _normalize_address(_extract_row_address(row))
+        fingerprint = (identifier or "", normalized_address or "", tuple(sorted(row.keys())))
+        if fingerprint in seen:
+            continue
+        deduped.append(row)
+        seen.add(fingerprint)
+    return deduped
+
+
+def _narrow_address_matches(address: Optional[str], rows: Any) -> Any:
+    if not address or not isinstance(rows, list):
+        return rows
+
+    normalized_input = _normalize_address(address)
+    if not normalized_input:
+        return rows
+
+    deduped_rows = _dedupe_rows(rows)
+    exact_matches = [
+        row
+        for row in deduped_rows
+        if _normalize_address(_extract_row_address(row)) == normalized_input
+    ]
+    return exact_matches or deduped_rows
 
 # =================
 # Canonicalization
@@ -560,6 +801,18 @@ def understand_context_node(state: GraphState) -> GraphState:
     """
     print("[understand_context] ENTER", flush=True)
 
+    prior_state = _latest_session_state(state.get("session_state"))
+    prior_metadata = prior_state.get("metadata") if isinstance(prior_state, dict) else {}
+    prior_context = prior_state.get("context") if isinstance(prior_state, dict) else {}
+    incoming_metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+    merged_metadata = dict(prior_metadata or {})
+    for key, value in (incoming_metadata or {}).items():
+        if value not in (None, "", [], {}):
+            merged_metadata[key] = value
+    merged_metadata = _promote_stored_address(merged_metadata)
+    if merged_metadata:
+        state["metadata"] = merge_identifier_metadata(merged_metadata, prior_state)
+
     # Parse on a SAFE subset to avoid in-place mutation of the live state
     parse_input = {
         "last_message": state.get("last_message"),
@@ -578,15 +831,52 @@ def understand_context_node(state: GraphState) -> GraphState:
     if "intent_list" not in ctx or ctx["intent_list"] is None:
         ctx["intent_list"] = []
 
-    # Preserve effective_query for address-only followups (logic kept as requested)
-    if ctx["parsed_intent"] == "" and  ctx.get("address") != "":
-        message_list = state.get("messages", [])
-        if len(message_list) >= 3:
-            try:
-                ctx["intent_list"], ctx["parsed_intent"] = message_list[-2]['intent_list'], message_list[-2]['parsed_intent']
-                print("[understand_context] restored intent from -3 message", flush=True)
-            except Exception as e:
-                print(f"[understand_context] restore intent failed: {e}", flush=True)
+    if _looks_like_personal_energy_advice(state.get("last_message")):
+        normalized_intents = [str(item).strip().lower() for item in (ctx.get("intent_list") or [])]
+        if not normalized_intents or normalized_intents == ["vector database"]:
+            ctx["intent_list"] = ["SQL database", "vector database"]
+            ctx["parsed_intent"] = "SQL database ; vector database"
+            ctx["ambiguous"] = False
+            ctx["ambigious"] = False
+            print("[understand_context] promoted personal energy advice to SQL + vector intent", flush=True)
+
+    # If the parser missed an address on an address-only follow-up, recover it heuristically.
+    if ctx.get("address"):
+        cleaned_address = _extract_address_candidate_from_text(ctx.get("address"))
+        if cleaned_address and cleaned_address != ctx.get("address"):
+            ctx["address"] = cleaned_address
+            print(f"[understand_context] cleaned parsed address to: {cleaned_address!r}", flush=True)
+
+    if not ctx.get("address") and _last_assistant_requested_address(state.get("messages", [])):
+        recovered_address = _extract_address_candidate_from_text(state.get("last_message"))
+        if recovered_address:
+            ctx["address"] = recovered_address
+            print(f"[understand_context] recovered address from raw message: {recovered_address!r}", flush=True)
+
+    # Preserve intent for address-only followups by using the latest stored building context.
+    if not ctx.get("parsed_intent") and ctx.get("address"):
+        prior_intent_list = _coerce_intent_list(prior_context or {})
+        prior_parsed_intent = (prior_context or {}).get("parsed_intent")
+        if prior_intent_list:
+            ctx["intent_list"] = copy.deepcopy(prior_intent_list)
+        if prior_parsed_intent:
+            ctx["parsed_intent"] = prior_parsed_intent
+        elif ctx.get("intent_list"):
+            ctx["parsed_intent"] = " ; ".join(ctx["intent_list"])
+        print(
+            f"[understand_context] restored prior intent parsed={ctx.get('parsed_intent')!r} intent_list={ctx.get('intent_list')}",
+            flush=True,
+        )
+
+    # Keep any previously stored address available across turns even when the parser omits it.
+    stored_address = (
+        (state.get("metadata") or {}).get("address")
+        or (state.get("metadata") or {}).get("address_from_user")
+        or (prior_metadata or {}).get("address")
+        or (prior_metadata or {}).get("address_from_user")
+        or _extract_stored_address_from_metadata(state.get("metadata") or {})
+        or _extract_stored_address_from_metadata(prior_metadata or {})
+    )
 
     # Metadata: if address present in parsed input, set both fields
     print(ctx)
@@ -875,12 +1165,34 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                 res2 = sql_mapper_layer.execute("building_by_address", address=folded)
                 if res2.get("ok") and res2.get("data"):
                     result = res2
+        if result.get("ok") and isinstance(result.get("data"), list):
+            original_rows = result.get("data") or []
+            narrowed_rows = _narrow_address_matches(addr, original_rows)
+            result["data"] = narrowed_rows
+            trace = result.get("trace") or {}
+            trace["rows_returned"] = len(narrowed_rows or [])
+            trace["match_strategy"] = (
+                "exact_address"
+                if narrowed_rows and len(narrowed_rows) < len(original_rows)
+                else "address_lookup"
+            )
+            result["trace"] = trace
     else:
         key = next((k for k in SINGLE_FILTER_KEYS if md.get(k) not in (None, "")), None)
         if key is not None:
             value = md[key]
             print(f"[generic_sql_agent] single_filter key={key} value={value!r}", flush=True)
             result = sql_mapper_layer.execute("buildings_by_single_filter", field=key, value=value)
+
+    if result and result.get("ok"):
+        result["data"] = _enrich_building_data(result.get("data"))
+        trace = result.get("trace") or {}
+        data = result.get("data")
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            trace["returned_values_used"] = data[0]
+        elif isinstance(data, dict):
+            trace["returned_values_used"] = data
+        result["trace"] = trace
 
     updates: Dict[str, Any] = {"done_generic_sql": True}
     outs: List[str] = []
@@ -898,6 +1210,24 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         identity_check = assess_building_identity(md, result.get("data"))
+        if (
+            identity_check.get("status") == "ambiguous"
+            and addr
+            and _is_specific_address(addr)
+            and isinstance(result.get("data"), list)
+            and result.get("data")
+        ):
+            identity_check = _deep_merge(
+                identity_check,
+                {
+                    "status": "passed",
+                    "ambiguous": False,
+                    "multiple_matches": False,
+                    "matched_address": addr,
+                    "multiple_records_same_address": True,
+                    "accepted_multiple_records_for_specific_address": True,
+                },
+            )
         metadata_updates = _deep_merge(
             metadata_updates,
             {
@@ -939,13 +1269,18 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
     else:
         if addr:
             outs.append(f"generic_sql: no rows for address {addr!r} (ASCII fallback tried if applicable).")
+            clarification_reason = (
+                "building_not_found"
+                if ((trace or {}).get("execution_status") == "not_found" or result)
+                else "missing_building_data"
+            )
             metadata_updates = _deep_merge(
                 metadata_updates,
                 {
                     "clarification": {
                         "needed": True,
-                        "reason": "missing_building_data",
-                        "question_asked": build_clarification_question("missing_building_data"),
+                        "reason": clarification_reason,
+                        "question_asked": build_clarification_question(clarification_reason),
                         "resolved": False,
                         "resolved_after_turns": None,
                     },
@@ -959,7 +1294,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     },
                 },
             )
-            updates["identity_gate_blocked"] = True
+            if not _context_requests_vector(state):
+                updates["identity_gate_blocked"] = True
         else:
             outs.append("generic_sql: no address/supported single-filter provided.")
         print("[generic_sql_agent] NO DATA", flush=True)

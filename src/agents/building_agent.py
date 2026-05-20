@@ -1,7 +1,9 @@
 # src/agents/building_agent.py
+import time
 from typing import Any, Dict
 from src.agents.building_flow_graph import build_building_flow_graph
 from src.agents.building_response_prompt import merge_identifier_metadata
+from src.pipeline.telemetry import record_component_latency
 from src.redis.redis_session_store import get_session_state, update_session_state
 from src.services.source_link_registry import resolve_source_links
 
@@ -25,7 +27,13 @@ class BuildingAgent:
     @staticmethod
     def _derive_route(final_state: Dict[str, Any], response_text: str) -> str:
         lowered = (response_text or "").strip().lower()
-        if "provide the building address" in lowered or "could you clarify your request" in lowered:
+        if (
+            "provide the building address" in lowered
+            or "full building address" in lowered
+            or "full street address" in lowered
+            or "need the full building address" in lowered
+            or "could you clarify your request" in lowered
+        ):
             return "clarification"
 
         if final_state.get("done_vector") and (
@@ -57,7 +65,8 @@ class BuildingAgent:
               "vector_sources": Optional[list],   # deduped source identifiers from vector retrieval (if any)
             }
         """
-        session_state = _session_state 
+        started_at = time.perf_counter()
+        session_state = _session_state if _session_state is not None else get_session_state(thread_id)
 
         initial_state = {
             "thread_id": thread_id,
@@ -71,6 +80,7 @@ class BuildingAgent:
             #print(initial_state)
             final_state = self.graph.invoke(initial_state)
         except Exception as e:
+            record_component_latency("building_agent", time.perf_counter() - started_at)
             return {
                 "content": f"An error occurred while handling your building-related request: {e}",
                 "agent_answered": "unknown",
@@ -151,4 +161,5 @@ class BuildingAgent:
         if sources:
             payload["sources"] = sources
 
+        record_component_latency("building_agent", time.perf_counter() - started_at)
         return payload , metadata_payload

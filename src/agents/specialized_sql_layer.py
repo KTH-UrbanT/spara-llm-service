@@ -28,10 +28,13 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple, List
 import json
 from collections import defaultdict
+
+from src.pipeline.telemetry import record_model_call, record_sql_call
 
 # OpenAI clients (1.x SDK)
 try:
@@ -230,7 +233,33 @@ class SpecializedSQLLayer:
     # ---------- Execution ----------
 
     def execute(self, op: str, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        started_at = time.perf_counter()
+
+        def finish(payload: Dict[str, Any]) -> Dict[str, Any]:
+            trace_payload = payload.get("sql_trace") or {}
+            success = bool(payload.get("ok")) and trace_payload.get("execution_status") not in {
+                "db_error",
+                "empty_result",
+                "import_error",
+                "model_error",
+            }
+            record_sql_call(
+                component="specialized_sql",
+                latency_seconds=time.perf_counter() - started_at,
+                row_count=trace_payload.get("rows_returned"),
+                success=success,
+                error=None if success else payload.get("message"),
+            )
+            return payload
+
         if op != "answer_query":
+            record_sql_call(
+                component="specialized_sql",
+                latency_seconds=time.perf_counter() - started_at,
+                row_count=0,
+                success=False,
+                error=f"Unknown operation: {op}",
+            )
             return {"ok": False, "message": f"Unknown operation: {op}"}
 
         # inside SpecializedSQLLayer.execute(...)
@@ -279,6 +308,7 @@ class SpecializedSQLLayer:
 
         # Ask the model for ONE SQL statement
         try:
+            model_started_at = time.perf_counter()
             resp = self._client.chat.completions.create(
                 model=self._conf.model_or_deployment,
                 messages=messages,
@@ -296,18 +326,35 @@ class SpecializedSQLLayer:
                 )
             trace["execution_status"] = "model_error"
             trace["error_message"] = f"Model error: {msg}"
-            return {"ok": False, "message": f"Model error: {msg}", "sql_trace": trace}
+            record_model_call(
+                component="specialized_sql_sql_generation",
+                model=self._conf.model_or_deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=False,
+                error=e,
+            )
+            return finish({"ok": False, "message": f"Model error: {msg}", "sql_trace": trace})
 
         try:
             content = resp.choices[0].message.content  # type: ignore[attr-defined]
         except Exception:
             content = str(resp)
+        record_model_call(
+            component="specialized_sql_sql_generation",
+            model=self._conf.model_or_deployment,
+            input_messages=messages,
+            output_text=content,
+            response=resp,
+            latency_seconds=time.perf_counter() - model_started_at,
+            success=True,
+        )
 
         sql = self._extract_sql(content)
         if not sql:
             trace["execution_status"] = "model_error"
             trace["error_message"] = "Model did not return SQL."
-            return {"ok": False, "message": "Model did not return SQL.", "sql_trace": trace}
+            return finish({"ok": False, "message": "Model did not return SQL.", "sql_trace": trace})
         trace["generated_sql"] = sql
         trace["executed_sql"] = sql
         trace["tables_used"] = self._extract_tables(sql)
@@ -319,14 +366,14 @@ class SpecializedSQLLayer:
         except Exception as e:
             trace["execution_status"] = "import_error"
             trace["error_message"] = f"Import error: {e}"
-            return {"ok": False, "message": f"Import error: {e}", "sql": sql, "sql_trace": trace}
+            return finish({"ok": False, "message": f"Import error: {e}", "sql": sql, "sql_trace": trace})
 
         try:
             result = db.query_executor(sql)  # SELECT -> DataFrame; writes -> str; errors -> None
         except Exception as e:
             trace["execution_status"] = "db_error"
             trace["error_message"] = f"DB error: {e}"
-            return {"ok": False, "message": f"DB error: {e}", "sql": sql, "sql_trace": trace}
+            return finish({"ok": False, "message": f"DB error: {e}", "sql": sql, "sql_trace": trace})
 
         # Normalize result
         try:
@@ -337,7 +384,7 @@ class SpecializedSQLLayer:
         if result is None:
             trace["execution_status"] = "empty_result"
             trace["error_message"] = "DB returned no result."
-            return {"ok": False, "message": "DB returned no result.", "sql": sql, "sql_trace": trace}
+            return finish({"ok": False, "message": "DB returned no result.", "sql": sql, "sql_trace": trace})
 
         # If it's a pandas DataFrame (read query)
         if (pd is not None) and hasattr(result, "to_dict"):
@@ -346,14 +393,14 @@ class SpecializedSQLLayer:
                 trace["execution_status"] = "success"
                 trace["rows_returned"] = len(data)
                 trace["returned_values_used"] = data[0] if data and isinstance(data[0], dict) else {}
-                return {"ok": True, "data": data, "sql": sql, "sql_trace": trace}
+                return finish({"ok": True, "data": data, "sql": sql, "sql_trace": trace})
             except Exception:
                 pass  # fall through if not a real DF
 
         # If it's a string (write queries return a message)
         if isinstance(result, str):
             trace["execution_status"] = "success"
-            return {"ok": True, "message": result, "sql": sql, "sql_trace": trace}
+            return finish({"ok": True, "message": result, "sql": sql, "sql_trace": trace})
 
         # Fallback: try to coerce iterables of rows
         try:
@@ -361,11 +408,11 @@ class SpecializedSQLLayer:
             trace["execution_status"] = "success"
             trace["rows_returned"] = len(data)
             trace["returned_values_used"] = data[0] if data and isinstance(data[0], dict) else {}
-            return {"ok": True, "data": data, "sql": sql, "sql_trace": trace}
+            return finish({"ok": True, "data": data, "sql": sql, "sql_trace": trace})
         except Exception:
             # As a last resort, just stringify it
             trace["execution_status"] = "success"
-            return {"ok": True, "message": str(result), "sql": sql, "sql_trace": trace}
+            return finish({"ok": True, "message": str(result), "sql": sql, "sql_trace": trace})
 
     # ---------- Helpers ----------
 

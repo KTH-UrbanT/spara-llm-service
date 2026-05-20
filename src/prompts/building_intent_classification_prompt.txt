@@ -20,6 +20,7 @@ INTENT RULES (map MESSAGE → parsed_intent)
 
 1️⃣ SQL database
 Use when the user asks for basic building facts or metadata stored directly in the building table:
+- Energy performance / energiprestanda
 - Energy class (A–G)
 - Atemp / heated area
 - Year built, address, property ID
@@ -49,6 +50,8 @@ Use when the user requests general advice, best practices, or optimization tips 
 If advice depends on the building’s own data:
 - Facts-based advice → "SQL database ; vector database"
 - Electricity/PV/analytics-based advice → "Specialized SQL database ; vector database"
+- First-person requests such as "my energy efficiency", "our energy use", or "my heating costs"
+  should be treated as building/site-specific advice, even if the word "building" is omitted.
 
 If advice is general (no reference to user’s data):
 → parsed_intent = "vector database"
@@ -96,22 +99,30 @@ OUTPUT: {"parsed_intent":"SQL database","address":null,"ambigious":false}
 INPUT: "How can I improve the energy class of my building?"
 OUTPUT: {"parsed_intent":"SQL database ; vector database","address":null,"ambigious":false}
 
+#2b
+INPUT: "How do I improve my energy efficiency?"
+OUTPUT: {"parsed_intent":"SQL database ; vector database","address":null,"ambigious":false}
+
 #3
+INPUT: "I'd like to know the energy performance of my building."
+OUTPUT: {"parsed_intent":"SQL database","address":null,"ambigious":false}
+
+#4
 INPUT: "Does my building use solar power?"
 OUTPUT: {"parsed_intent":"Specialized SQL database","address":null,"ambigious":false}
 
-#4
-INPUT: "How can I reduce electricity consumption in our BRF?"
+#5
+INPUT: "How can I reduce electricity consumption in our building?"
 OUTPUT: {"parsed_intent":"Specialized SQL database ; vector database","address":null,"ambigious":false}
 
-#5
+#6
 INPUT: "My address is Storgatan 12, Stockholm"
 OUTPUT: {"parsed_intent":"","address":"Storgatan 12, Stockholm","ambigious":true}
 
-#6
-INPUT: "Hur kan vi minska elförbrukningen i vår brf?"
+#7
+INPUT: "Hur kan vi minska elförbrukningen i vår byggnad?"
 OUTPUT: {"parsed_intent":"Specialized SQL database ; vector database","address":null,"ambigious":false}
 
-#7
+#8
 INPUT: "Give me general tips to save energy in apartment buildings"
 OUTPUT: {"parsed_intent":"vector database","address":null,"ambigious":false}

@@ -1,6 +1,8 @@
 import os
 from typing import Any, Dict, List, Optional
 
+from src.pipeline.safety_analysis import assess_boundary_safety
+
 
 ROUTE_LABELS = {
     "generic",
@@ -310,6 +312,12 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
     building_id = _extract_building_id(session_metadata)
     vector_sources = _extract_vector_sources(response, session_metadata)
     retrieved_facts = _extract_retrieved_facts(session_metadata)
+    safety_boundary = assess_boundary_safety(
+        user_message=session_metadata.get("last_user_message") or "",
+        response_text=response.get("content") or "",
+        route=route,
+        metadata=session_metadata,
+    )
 
     payload = {
         "route": route,
@@ -334,6 +342,8 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
         "uncertainty": session_metadata.get("uncertainty"),
         "clarification": clarification,
         "boundary_handling": boundary_handling,
+        "safety_boundary": safety_boundary,
+        "telemetry": session_metadata.get("telemetry"),
         "model_config": _build_model_config(),
     }
 
@@ -358,6 +368,7 @@ def build_message_evidence(message_metadata: Dict[str, Any]) -> List[Dict[str, A
         "uncertainty",
         "clarification",
         "boundary_handling",
+        "safety_boundary",
         "model_config",
     ):
         payload = message_metadata.get(evidence_type)

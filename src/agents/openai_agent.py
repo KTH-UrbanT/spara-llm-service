@@ -4,6 +4,7 @@ import time
 from typing import List, Dict, Optional, Union
 from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
 from dotenv import load_dotenv
+from src.pipeline.telemetry import record_model_call
 
 # Load environment variables
 load_dotenv()
@@ -175,6 +176,7 @@ class OpenAIResponseAgent:
         start_time = time.time()
         temperature = self._get_summarizer_temperature()
         temperature_unsupported = False
+        started_perf = time.perf_counter()
 
         # Reset side-channel meta so callers always see THIS call's data, never stale.
         self._last_call_meta = {
@@ -210,6 +212,7 @@ class OpenAIResponseAgent:
             params["presence_penalty"] = 0
 
         try:
+            model_started_at = time.perf_counter()
             response = self.client.chat.completions.create(**params)
         except BadRequestError as e:
             # Auto-recover common param mismatch: swap max_tokens -> max_completion_tokens.
@@ -222,7 +225,20 @@ class OpenAIResponseAgent:
                 # with a 400 error; strip them before retrying.
                 for k in ("top_p", "frequency_penalty", "presence_penalty"):
                     params.pop(k, None)
-                response = self.client.chat.completions.create(**params)
+                model_started_at = time.perf_counter()
+                try:
+                    response = self.client.chat.completions.create(**params)
+                except Exception as retry_exc:
+                    logger.error(f"Retry after BadRequestError failed: {retry_exc}", exc_info=True)
+                    record_model_call(
+                        component="openai_response_agent",
+                        model=self.deployment,
+                        input_messages=messages,
+                        latency_seconds=time.perf_counter() - model_started_at,
+                        success=False,
+                        error=retry_exc,
+                    )
+                    return "Error: An unexpected issue occurred."
             elif self._is_temperature_unsupported_error(e):
                 # o-series deployments reject explicit temperature — retry without it.
                 logger.warning(
@@ -241,6 +257,14 @@ class OpenAIResponseAgent:
                     temperature_unsupported=temperature_unsupported,
                 )
                 logger.error(f"BadRequestError: {e}", exc_info=True)
+                record_model_call(
+                    component="openai_response_agent",
+                    model=self.deployment,
+                    input_messages=messages,
+                    latency_seconds=time.perf_counter() - started_perf,
+                    success=False,
+                    error=e,
+                )
                 return f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}"
         except APIConnectionError as e:
             self._record_call_meta(
@@ -248,6 +272,14 @@ class OpenAIResponseAgent:
                 temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
             )
             logger.error(f"Connection error: {e}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return "Error: Cannot connect to AI service."
         except RateLimitError as e:
             self._record_call_meta(
@@ -255,6 +287,14 @@ class OpenAIResponseAgent:
                 temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
             )
             logger.error(f"Rate limit exceeded: {e}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return "Error: Rate limit exceeded. Please retry shortly."
         except APIStatusError as e:
             self._record_call_meta(
@@ -262,6 +302,14 @@ class OpenAIResponseAgent:
                 temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
             )
             logger.error(f"API status error: {e.status_code} - {e.response}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return f"Error: API returned status code {e.status_code}."
         except Exception as e:
             self._record_call_meta(
@@ -269,6 +317,14 @@ class OpenAIResponseAgent:
                 temperature_requested=temperature, temperature_unsupported=temperature_unsupported,
             )
             logger.error(f"Unexpected error: {e}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return "Error: An unexpected issue occurred."
 
         try:
@@ -282,6 +338,15 @@ class OpenAIResponseAgent:
             latency_ms, token_usage,
             temperature_requested=temperature,
             temperature_unsupported=temperature_unsupported,
+        )
+        record_model_call(
+            component="openai_response_agent",
+            model=self.deployment,
+            input_messages=messages,
+            output_text=response_content,
+            response=response,
+            latency_seconds=time.perf_counter() - model_started_at,
+            success=True,
         )
         logger.info(
             "Response generated in %d ms (tokens: %s, temperature_requested=%s, "

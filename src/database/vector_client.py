@@ -1,14 +1,18 @@
 import os
 import json
 import sys
+import time
+from typing import Optional
+
+
 from dotenv import load_dotenv
 from typing import List, Tuple, Optional, Union
 # ✅ Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.knowledge_base.vector_database_pinecone import VectorDataBase
-from src.context_retrieval.main_content_retrieval_pinecone import *
-# ----------------- Config -----------------
+from src.pipeline.telemetry import record_retrieval_call
+
 TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
 # Optionally pass a Pinecone metadata filter as JSON (e.g., {"source_type":"policy"})
 RETRIEVAL_FILTER_JSON = os.getenv("RETRIEVAL_FILTER_JSON", "").strip()
@@ -118,16 +122,34 @@ class VectorClient:
         Returns:
             list[dict]: List of results with page_content and metadata.
         """
+        started_at = time.perf_counter()
         try:
-            #docs = self.context_retriever.search_vector(question)
-            docs = self.context_retriever.search_vector(question, top_k=TOP_K, metadata_filter=self.metadata_filter)
-            return [
+            docs = self.context_retriever.search_vector(
+                question,
+                top_k=TOP_K,
+                metadata_filter=self.metadata_filter,
+            )
+            results = [
                 {
                     "page_content": doc['metadata']['text'],
                     "metadata": doc['metadata']['source']
                 }
                 for doc in docs
             ]
+            record_retrieval_call(
+                component="vector_retrieval",
+                latency_seconds=time.perf_counter() - started_at,
+                result_count=len(results),
+                success=True,
+            )
+            return results
         except Exception as e:
             print(f"[VectorClient Error] Failed to retrieve documents: {e}")
+            record_retrieval_call(
+                component="vector_retrieval",
+                latency_seconds=time.perf_counter() - started_at,
+                result_count=0,
+                success=False,
+                error=e,
+            )
             return []

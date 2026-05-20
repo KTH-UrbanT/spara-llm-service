@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -12,7 +13,6 @@ BUILDING_IDENTIFIER_KEYS = (
     "uuid",
     "oden_uuid",
     "01a_fnr",
-    "epc_idadr",
 )
 
 ADDRESS_KEYS = (
@@ -102,6 +102,48 @@ OUT_OF_SCOPE_RULES = [
     },
 ]
 
+BOUNDARY_REFUSAL_PHRASES = (
+    "should not give",
+    "cannot give",
+    "can't give",
+    "do not give",
+    "not give legal",
+    "not give financial",
+    "should not recommend",
+    "should be handled",
+    "goes beyond",
+    "beyond the safe scope",
+)
+
+REDIRECT_TARGET_PHRASES = {
+    "relevant_authority_or_legal_expert": (
+        "legal expert",
+        "relevant authority",
+        "authority",
+    ),
+    "advisor_or_financial_specialist": (
+        "financial specialist",
+        "advisor",
+    ),
+    "qualified_engineer_or_installer": (
+        "qualified engineer",
+        "installer",
+    ),
+    "advisor_or_procurement_process": (
+        "advisor",
+        "procurement",
+    ),
+    "privacy_contact_or_relevant_authority": (
+        "privacy",
+        "authority",
+    ),
+    "ekr_advisor": (
+        "ekr",
+        "advisor",
+        "expert",
+    ),
+}
+
 
 def _is_present(value: Any) -> bool:
     return value not in (None, "", [], {})
@@ -138,6 +180,129 @@ def _normalize_scalar(value: Any) -> Any:
     return value
 
 
+def _normalize_address_text(value: Any) -> Optional[str]:
+    if not _is_present(value):
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    return re.sub(r"\s+", " ", text)
+
+
+def _ascii_fold(value: Any) -> str:
+    text = str(value or "")
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _first_present(facts: Dict[str, Any], keys: Iterable[str]) -> Any:
+    lower_map = {str(key).lower(): key for key in facts.keys()}
+    for key in keys:
+        original = lower_map.get(key.lower())
+        if original is not None and _is_present(facts.get(original)):
+            return facts.get(original)
+    return None
+
+
+def _truthy_building_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    folded = _ascii_fold(value).strip()
+    return folded not in {"", "0", "0.0", "false", "no", "nej", "none", "null", "nan"}
+
+
+def _normalize_heating_system(value: Any) -> Optional[str]:
+    raw = _stringify(value)
+    if not raw:
+        return None
+    folded = _ascii_fold(raw)
+    if "fjarrvarme" in folded or "district heating" in folded:
+        return "district heating"
+    if "bergvarme" in folded or "ground source" in folded:
+        return "ground source heat pump"
+    if "franluft" in folded or "exhaust air" in folded:
+        return "exhaust air heat pump"
+    if "luftvatten" in folded or "air water" in folded:
+        return "air-to-water heat pump"
+    if "luftluft" in folded or "air air" in folded:
+        return "air-to-air heat pump"
+    if "direktel" in folded or "electric" in folded:
+        return "direct electric heating"
+    if "olja" in folded or "oil" in folded:
+        return "oil heating"
+    if "gas" in folded:
+        return "gas heating"
+    if "ved" in folded or "wood" in folded:
+        return "wood heating"
+    return raw
+
+
+def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(facts, dict):
+        return facts
+
+    heating_raw = _first_present(
+        facts,
+        (
+            "heating_system",
+            "epc_huvudsakliguppvarmning_calc",
+            "huvudsaklig_uppvarmning",
+            "primary_heating",
+            "main_heating_system",
+        ),
+    )
+    if not _is_present(facts.get("heating_system")) and heating_raw is not None:
+        normalized = _normalize_heating_system(heating_raw)
+        if normalized:
+            facts["heating_system"] = normalized
+
+    district_heating_raw = _first_present(
+        facts,
+        (
+            "district_heating_use",
+            "epc_egifjarrvarme",
+            "epc_egifjarrvarmeuppv",
+            "epc_egigruppfjarrvarme",
+            "primary_energy_district_heating",
+        ),
+    )
+    if not _is_present(facts.get("district_heating_use")) and district_heating_raw is not None:
+        facts["district_heating_use"] = district_heating_raw
+
+    if not _is_present(facts.get("heating_system")) and _truthy_building_value(district_heating_raw):
+        facts["heating_system"] = "district heating"
+
+    if not _is_present(facts.get("energy_class")):
+        value = _first_present(
+            facts,
+            (
+                "declaredEnergyClass",
+                "epc_egienergiklass2020_calc",
+                "epc_egienergiklass2016_calc",
+                "energyClass",
+            ),
+        )
+        if value is not None:
+            facts["energy_class"] = value
+
+    if not _is_present(facts.get("energy_performance")):
+        value = _first_present(
+            facts,
+            (
+                "EnergyClassKwhM2",
+                "energy_performance",
+                "epc_egienergiprestanda",
+                "epc_egispecifikenergianvandning_calc",
+                "epc_egiprimarenergital2020_calc",
+            ),
+        )
+        if value is not None:
+            facts["energy_performance"] = value
+
+    return facts
+
+
 def extract_retrieved_facts(*sources: Any) -> Dict[str, Any]:
     facts: Dict[str, Any] = {}
     for source in sources:
@@ -150,7 +315,7 @@ def extract_retrieved_facts(*sources: Any) -> Dict[str, Any]:
                 if not _is_present(value):
                     continue
                 facts.setdefault(str(key), _normalize_scalar(value))
-    return facts
+    return _derive_fact_aliases(facts)
 
 
 def _extract_candidate_ids(*sources: Any) -> List[str]:
@@ -163,13 +328,16 @@ def _extract_candidate_ids(*sources: Any) -> List[str]:
                 if original is None:
                     continue
                 value = _stringify(node.get(original))
-                if value and value not in candidates:
-                    candidates.append(value)
+                if value:
+                    if value not in candidates:
+                        candidates.append(value)
+                    break
     return candidates
 
 
 def _extract_candidate_addresses(*sources: Any) -> List[str]:
     candidates: List[str] = []
+    seen_normalized = set()
     for source in sources:
         for node in _iter_dicts(source):
             lower_map = {str(key).lower(): key for key in node.keys()}
@@ -178,8 +346,10 @@ def _extract_candidate_addresses(*sources: Any) -> List[str]:
                 if original is None:
                     continue
                 value = _stringify(node.get(original))
-                if value and value not in candidates:
+                normalized = _normalize_address_text(value)
+                if value and normalized not in seen_normalized:
                     candidates.append(value)
+                    seen_normalized.add(normalized)
     return candidates
 
 
@@ -191,6 +361,19 @@ def assess_building_identity(
     existing_ids = _extract_candidate_ids(metadata)
     candidate_ids = _extract_candidate_ids(*retrieved_sources)
     candidate_addresses = _extract_candidate_addresses(*retrieved_sources)
+    input_address = _stringify(metadata.get("address") or metadata.get("address_from_user"))
+    normalized_input_address = _normalize_address_text(input_address)
+    normalized_candidate_addresses = {
+        normalized
+        for normalized in (_normalize_address_text(address) for address in candidate_addresses)
+        if normalized
+    }
+    multiple_records_same_address = bool(
+        normalized_input_address
+        and normalized_candidate_addresses
+        and normalized_candidate_addresses == {normalized_input_address}
+        and (len(candidate_ids) > 1 or len(candidate_addresses) > 1)
+    )
 
     matched_building_id = candidate_ids[0] if len(candidate_ids) == 1 else existing_ids[0] if len(existing_ids) == 1 else None
     conflicting_metadata = bool(
@@ -199,7 +382,7 @@ def assess_building_identity(
         and set(existing_ids).difference(candidate_ids)
         and set(candidate_ids).difference(existing_ids)
     )
-    multiple_matches = len(candidate_ids) > 1 or len(candidate_addresses) > 1
+    multiple_matches = (len(candidate_ids) > 1 or len(candidate_addresses) > 1) and not multiple_records_same_address
     parser_ctx = metadata.get("context") or {}
     ambiguous = multiple_matches or bool(parser_ctx.get("ambiguous") or parser_ctx.get("ambigious"))
 
@@ -207,7 +390,7 @@ def assess_building_identity(
         status = "conflict"
     elif ambiguous:
         status = "ambiguous"
-    elif matched_building_id:
+    elif matched_building_id or multiple_records_same_address or normalized_candidate_addresses == {normalized_input_address}:
         status = "passed"
     else:
         status = "missing"
@@ -215,9 +398,10 @@ def assess_building_identity(
     return {
         "status": status,
         "matched_building_id": matched_building_id,
-        "matched_address": candidate_addresses[0] if len(candidate_addresses) == 1 else metadata.get("address"),
+        "matched_address": candidate_addresses[0] if len(candidate_addresses) == 1 else input_address,
         "ambiguous": ambiguous,
         "multiple_matches": multiple_matches,
+        "multiple_records_same_address": multiple_records_same_address,
         "conflicting_metadata": conflicting_metadata,
         "candidate_building_ids": candidate_ids,
         "candidate_addresses": candidate_addresses,
@@ -227,12 +411,13 @@ def assess_building_identity(
 def build_clarification_question(reason: Optional[str]) -> str:
     reason = reason or "incomplete_question"
     prompts = {
-        "missing_brf_name": "Which BRF do you mean? If possible, please share the BRF name and full address.",
-        "missing_address": "To give building-specific advice safely, I need the BRF name or the full building address.",
-        "ambiguous_brf": "I found more than one possible BRF. Could you provide the full BRF name or address so I use the correct building?",
-        "ambiguous_address": "I found more than one possible building match. Could you provide the full address or BRF name so I avoid using the wrong building information?",
-        "missing_building_data": "I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the BRF name, address, or the specific system you want to ask about?",
-        "insufficient_data_for_personalized_advice": "I can give general guidance, but I need more building details before I can personalize the advice. Could you share the BRF name or full address?",
+        "missing_brf_name": "Which building do you mean? Please share the full street address so I use the correct building.",
+        "missing_address": "To give building-specific advice safely, I need the full building address.",
+        "ambiguous_brf": "I found more than one possible building. Could you provide the full street address so I use the correct building?",
+        "ambiguous_address": "I found more than one possible building match. Could you provide the full street address so I avoid using the wrong building information?",
+        "building_not_found": "I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",
+        "missing_building_data": "I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the full address or the specific system you want to ask about?",
+        "insufficient_data_for_personalized_advice": "I can give general guidance, but I need the full building address before I can personalize the advice.",
         "incomplete_question": "Could you clarify your request a bit more so I can answer safely?",
     }
     return prompts.get(reason, prompts["incomplete_question"])
@@ -388,14 +573,14 @@ def detect_out_of_scope(message: str) -> Optional[Dict[str, str]]:
 
 def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[str]) -> str:
     explanations = {
-        "legal_advice": "I can give general energy-efficiency information, but I should not give legal advice or make legal judgments for a BRF.",
-        "financial_advice": "I can discuss general energy measures, but I should not give financial advice or make investment decisions for a BRF.",
+        "legal_advice": "I can give general energy-efficiency information, but I should not give legal advice or make legal judgments for a building association.",
+        "financial_advice": "I can discuss general energy measures, but I should not give financial advice or make investment decisions for a building association.",
         "detailed_engineering_calculation": "I can explain general options, but detailed engineering calculations should be handled by a qualified engineer or installer.",
         "installer_or_vendor_recommendation": "I can explain what to look for, but I should not recommend a specific installer or vendor.",
         "personal_data_or_privacy_issue": "I can explain general principles, but privacy and personal-data questions should be handled through the appropriate authority or responsible contact.",
     }
     next_steps = {
-        "relevant_authority_or_legal_expert": "Please check with a legal expert, your BRF's advisor, or the relevant authority.",
+        "relevant_authority_or_legal_expert": "Please check with a legal expert, your building association's advisor, or the relevant authority.",
         "advisor_or_financial_specialist": "Please discuss this with an advisor or financial specialist before making a decision.",
         "qualified_engineer_or_installer": "A qualified engineer or installer should assess the building before any final decision is made.",
         "advisor_or_procurement_process": "An advisor or a formal procurement process is the safer way to compare vendors.",
@@ -410,3 +595,115 @@ def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[st
         "Please consult a relevant advisor or authority for a reliable answer.",
     )
     return f"{base} {follow_up}"
+
+
+def _contains_any(text: str, phrases: Iterable[str]) -> bool:
+    lowered = (text or "").lower()
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _response_has_redirect(response_text: str, redirect_to: Optional[str]) -> bool:
+    if not redirect_to:
+        return _contains_any(response_text, ("advisor", "expert", "authority", "qualified", "installer"))
+    phrases = REDIRECT_TARGET_PHRASES.get(redirect_to, ())
+    return _contains_any(response_text, phrases)
+
+
+def assess_boundary_safety(
+    *,
+    user_message: str,
+    response_text: str,
+    route: Optional[str],
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    metadata = metadata or {}
+    route_label = str(route or "").strip().lower()
+    boundary = metadata.get("boundary_handling") or {}
+    detected = detect_out_of_scope(user_message or "")
+
+    out_of_scope_type = (
+        boundary.get("out_of_scope_type")
+        or metadata.get("out_of_scope_type")
+        or (detected or {}).get("out_of_scope_type")
+    )
+    redirect_to = (
+        boundary.get("redirect_to")
+        or metadata.get("redirect_to")
+        or (detected or {}).get("redirect_to")
+    )
+    detected_risk = bool(out_of_scope_type)
+    routed_out_of_scope = route_label == "out_of_scope" or bool(boundary.get("out_of_scope")) or bool(metadata.get("out_of_scope"))
+    response_has_refusal = _contains_any(response_text, BOUNDARY_REFUSAL_PHRASES)
+    response_has_redirect = _response_has_redirect(response_text, redirect_to)
+
+    if route_label == "expert_handoff":
+        return {
+            "status": "passed",
+            "detected_risk": detected_risk,
+            "risk_category": out_of_scope_type,
+            "action": "expert_handoff",
+            "handled_safely": True,
+            "requires_review": False,
+            "should_escalate": True,
+            "escalation_target": redirect_to or "ekr_advisor",
+            "redirect_to": redirect_to or "ekr_advisor",
+            "response_has_refusal": response_has_refusal,
+            "response_has_redirect": response_has_redirect,
+            "reason_codes": [],
+        }
+
+    if detected_risk:
+        reason_codes: List[str] = []
+        if not routed_out_of_scope:
+            reason_codes.append("route_not_out_of_scope")
+        if not response_has_refusal:
+            reason_codes.append("missing_refusal_or_scope_limit")
+        if not response_has_redirect:
+            reason_codes.append("missing_redirect_target")
+
+        handled_safely = not reason_codes
+        return {
+            "status": "passed" if handled_safely else "needs_review",
+            "detected_risk": True,
+            "risk_category": out_of_scope_type,
+            "action": "redirected" if routed_out_of_scope else "answered_directly",
+            "handled_safely": handled_safely,
+            "requires_review": not handled_safely,
+            "should_escalate": True,
+            "escalation_target": redirect_to,
+            "redirect_to": redirect_to,
+            "response_has_refusal": response_has_refusal,
+            "response_has_redirect": response_has_redirect,
+            "reason_codes": reason_codes,
+        }
+
+    if routed_out_of_scope:
+        return {
+            "status": "needs_review",
+            "detected_risk": False,
+            "risk_category": out_of_scope_type,
+            "action": "over_refusal",
+            "handled_safely": False,
+            "requires_review": True,
+            "should_escalate": False,
+            "escalation_target": redirect_to,
+            "redirect_to": redirect_to,
+            "response_has_refusal": response_has_refusal,
+            "response_has_redirect": response_has_redirect,
+            "reason_codes": ["unexpected_boundary_route"],
+        }
+
+    return {
+        "status": "not_applicable",
+        "detected_risk": False,
+        "risk_category": None,
+        "action": "answered",
+        "handled_safely": True,
+        "requires_review": False,
+        "should_escalate": False,
+        "escalation_target": None,
+        "redirect_to": None,
+        "response_has_refusal": response_has_refusal,
+        "response_has_redirect": False,
+        "reason_codes": [],
+    }
