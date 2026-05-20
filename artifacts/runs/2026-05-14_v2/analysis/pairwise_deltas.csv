@@ -1,0 +1,2 @@
+baseline,arm,n_pairs,delta_mean,ci_low,ci_high,wilcoxon_p,mcnemar_p
+A1,A2,20,-0.025,-0.6,0.5125,0.8539232992870668,1.0

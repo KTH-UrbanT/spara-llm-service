@@ -1,0 +1,9 @@
+arm,axis,n_clean,mean,ci_low,ci_high
+A1,groundedness,20,3.75,3.4,4.0
+A1,completeness,20,3.75,3.35,4.0
+A1,numeric_fidelity,20,3.8,3.4,4.0
+A1,constraint_satisfaction,20,3.75,3.3,4.0
+A2,groundedness,20,3.75,3.3,4.0
+A2,completeness,20,3.6,3.1,4.0
+A2,numeric_fidelity,20,3.8,3.4,4.0
+A2,constraint_satisfaction,20,3.8,3.4,4.0

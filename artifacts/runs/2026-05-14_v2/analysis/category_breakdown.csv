@@ -1,0 +1,7 @@
+arm,category,mean_composite,n
+A1,constraint_filtering,4.0,4
+A1,edge_case,3.2916666666666665,6
+A1,simple_address,3.95,10
+A2,constraint_filtering,3.0,4
+A2,edge_case,3.875,6
+A2,simple_address,3.95,10

@@ -1,0 +1,20 @@
+run_family_id: '2026-05-14_v2'
+git_commit_at_run_start: '3c60ee74a6063d6b42ef5b2e0fbdaa689a436194'
+protocol_sha256: 'fa4c2ec775169b130529832378744f5bfb342e78db4cf3c6429b9bacdcd11358'
+dataset_sha256: 'd40c9d01330a2d2312f12d5e4662fe647d4837d1f1698df9f05a31f37912a566'
+prompt_v1_sha256: '170726cdea9bd9a15356901075e1e58b2e438c10e51a1c442a314b3096235d6c'
+prompt_v2_sha256: '0afb82b60df8ff8e197c99e7f27e4ee82ae3b23c5d34de740cac062f852e7f62'
+start_time_utc: '2026-05-14T08:10:48Z'
+end_time_utc: '2026-05-14T08:22:41Z'
+azure_api_version: '2025-01-01-preview'
+summarizer_deployment: 'o4-mini'
+evaluator_deployment: 'o4-mini'
+arms_executed:
+  - 'A1'
+  - 'A2'
+total_questions_processed_per_arm:
+  A1: 20
+  A2: 20
+fail_open_count_per_arm:
+  A1: 0
+  A2: 0

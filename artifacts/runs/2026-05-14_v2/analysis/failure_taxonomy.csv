@@ -1,0 +1,10 @@
+arm,failure_tag,count,rate
+A1,irrelevant_extras,2,0.1
+A1,numeric_mismatch,1,0.05
+A1,partial_answer,1,0.05
+A1,unsupported_claim,1,0.05
+A2,constraint_violation,1,0.05
+A2,irrelevant_extras,2,0.1
+A2,numeric_mismatch,1,0.05
+A2,partial_answer,1,0.05
+A2,unsupported_claim,1,0.05
