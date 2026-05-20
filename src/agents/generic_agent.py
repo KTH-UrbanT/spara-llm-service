@@ -7,6 +7,7 @@ from src.database.vector_client import VectorClient , VectorClientConfig
 from src.services.source_link_registry import resolve_source_links
 from dotenv import load_dotenv
 import time
+from src.pipeline.telemetry import record_model_call
 # Ensure BaseAgent is correctly imported.
 # Assuming src/agents/base_agent.py exists and defines BaseAgent.
 # If BaseAgent is not critical for this specific example's functionality
@@ -279,6 +280,7 @@ class GenericAgent(BaseAgent):
         logger.info(f"Sending final message to Azure OpenAI API for completion: '{messages_for_api[-1]['content'][:70]}...'")
         logger.debug(f"Full message list sent to API: {messages_for_api}")
         try:
+            model_started_at = time.perf_counter()
             completion = self.client.chat.completions.create(
                 model=self.deployment,
                 messages=messages_for_api,
@@ -291,6 +293,15 @@ class GenericAgent(BaseAgent):
                 stream=False
             )
             response_content = completion.choices[0].message.content
+            record_model_call(
+                component="generic_agent",
+                model=self.deployment,
+                input_messages=messages_for_api,
+                output_text=response_content,
+                response=completion,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=True,
+            )
             end_time = time.time()
             print(f"Generic Agent responded in {end_time - start_time} seconds")
             logger.info("Successfully received response from Azure OpenAI.")
@@ -301,13 +312,45 @@ class GenericAgent(BaseAgent):
             }
         except APIConnectionError as e:
             logger.error(f"Could not connect to Azure OpenAI API: {e}", exc_info=True)
+            record_model_call(
+                component="generic_agent",
+                model=self.deployment,
+                input_messages=messages_for_api,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=False,
+                error=e,
+            )
             return {"content": "Error: Unable to connect to the AI service. Please check your network connection.", "sources": []}
         except RateLimitError as e:
             logger.error(f"Azure OpenAI API rate limit exceeded: {e}", exc_info=True)
+            record_model_call(
+                component="generic_agent",
+                model=self.deployment,
+                input_messages=messages_for_api,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=False,
+                error=e,
+            )
             return {"content": "Error: The AI service is currently busy. Please try again shortly.", "sources": []}
         except APIStatusError as e:
             logger.error(f"Azure OpenAI API returned an error status {e.status_code}: {e.response}", exc_info=True)
+            record_model_call(
+                component="generic_agent",
+                model=self.deployment,
+                input_messages=messages_for_api,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=False,
+                error=e,
+            )
             return {"content": f"Error: An issue occurred with the AI service. Status code: {e.status_code}", "sources": []}
         except Exception as e:
             logger.error(f"An unexpected error occurred during API call: {e}", exc_info=True)
+            record_model_call(
+                component="generic_agent",
+                model=self.deployment,
+                input_messages=messages_for_api,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=False,
+                error=e,
+            )
             return {"content": "Error: An unexpected error occurred while processing your request.", "sources": []}

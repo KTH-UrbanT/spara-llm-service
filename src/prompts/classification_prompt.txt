@@ -17,14 +17,16 @@ Expert-handoff note:
 
 A) building_specific  → choose this whenever ANY of the following is true:
   1) The message mentions a concrete LOCATION / ID for a single site, e.g.:
-     • “at <street + number>”, “for <address>”, “I live at <address>”, “BRF <name>”
+     • “at <street + number>”, “for <address>”, “I live at <address>”
      • patterns like: “Main Street 12”, “Hammarby Allé 24”, “Objektidentitet …”
   2) The message uses possessives that imply the user’s site:
      • “my building”, “our building”, “my apartment building”, “our property”
+     • “my energy efficiency”, “our energy use”, “my heating costs”
   3) The question would require per-building data or a per-building calculation:
-     • “what is the energy class…”, “how many kWh…”, “heated area / Atemp…”
+     • “what is the energy performance…”, “what is the energy class…”, “how many kWh…”, “heated area / Atemp…”
      • “HVAC type/ventilation system?”, “end-use breakdown”, “metering rows”
      • what-if / savings questions: “how much would we save if…”, “expected CO2 reduction if…”
+     • If the user asks about “energy performance of my/our building”, this is always building_specific.
   4) The user embeds an address anywhere in the text (even if also asking for advice).
 
 B) generic  → general knowledge or advice not tied to a specific site:
@@ -37,13 +39,13 @@ C) conversational  → greetings, small talk, meta questions about the app/assis
   • “This is too hard, I want human help”
 
 D) cluster  → questions about MULTIPLE buildings, portfolios, or areas.
-  • “Compare all BRFs in Södermalm”, “Top 10 worst performers in our portfolio”, “Average for buildings in …”
+  • “Compare all buildings in Södermalm”, “Top 10 worst performers in our portfolio”, “Average for buildings in …”
 
 E) draft_energy_report → requests to generate, create, prepare, or download a draft energy report.
   • “Create a energy report for my building”
   • “Create a draft energy report for my building”
   • “Generate a report I can download”
-  • “Prepare a draft report for this BRF”
+  • “Prepare a draft report for this building”
   • “Give me a report on this building”
 
 F) expert_handoff → requests to escalate the conversation to a human expert / EKR.
@@ -63,16 +65,26 @@ F) expert_handoff → requests to escalate the conversation to a human expert / 
 
 ## Output
 Return ONLY one word: building_specific | generic | conversational | cluster | draft_energy_report | expert_handoff
+Never output `general`. Use `generic` for general advice that is not tied to a specific building.
 
 ## Examples
 
 Q: What is the energy class of my building at 123 Main Street?
 A: building_specific
 
+Q: I'd like to know the energy performance of my building.
+A: building_specific
+
+Q: What is the energy performance of our building?
+A: building_specific
+
 Q: I live at Exempelgatan 12. How can I improve the insulation?
 A: building_specific
 
 Q: How much energy would we save if we upgrade insulation?
+A: building_specific
+
+Q: How do I improve my energy efficiency?
 A: building_specific
 
 Q: What are best ways to reduce heat loss in old apartments?
@@ -90,5 +102,5 @@ A: expert_handoff
 Q: This is too complicated. I want an expert to look at it.
 A: expert_handoff
 
-Q: Compare electricity use for all BRFs in Hammarby Sjöstad.
+Q: Compare electricity use for all buildings in Hammarby Sjöstad.
 A: cluster

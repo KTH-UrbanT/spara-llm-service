@@ -9,6 +9,7 @@ from src.pipeline.evaluation_metadata import (
     build_message_evidence,
     build_message_metadata,
 )
+from src.pipeline.telemetry import telemetry_context, telemetry_snapshot
 # from src.pipeline.agent_router_langgraph import *
 
 '''
@@ -209,9 +210,15 @@ class RedisQueueManager:
 
             start_time = time.time()
 
-            response, metadata = self.agent_router.route_message(
-                messages, last_message['content'], metadata, thread_id
-            )
+            with telemetry_context("live_chat_turn"):
+                response, metadata = self.agent_router.route_message(
+                    messages, last_message['content'], metadata, thread_id
+                )
+                metadata = {
+                    **(metadata or {}),
+                    "last_user_message": last_message.get("content"),
+                    "telemetry": telemetry_snapshot(),
+                }
 
             if not response:
                 print(f"⚠️ No response from agent for thread {thread_id}.")

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import multiprocessing
 import sys # Import sys for checking if BaseAgent exists
 import time
+from src.pipeline.telemetry import record_model_call
 # Load environment variables from .env file
 load_dotenv()
 
@@ -189,6 +190,11 @@ class RouterAgent(BaseAgent):
             "email ekr",
             "email this conversation",
             "send this conversation",
+            "send the email",
+            "send email",
+            "please send the email",
+            "send it to the expert",
+            "send it to ekr",
             "have an expert look at this",
             "someone should look at this",
             "can an expert help",
@@ -229,7 +235,7 @@ class RouterAgent(BaseAgent):
         return any(phrase in lowered for phrase in explicit_phrases)
 
     def _normalize_binary_reply(self, message: str) -> str:
-        return message.strip().lower().strip(" \t\r\n.,!?")
+        return " ".join(message.strip().lower().strip(" \t\r\n.,!?").split())
 
     def is_confirmation(self, message: str) -> bool:
         if not message:
@@ -239,10 +245,22 @@ class RouterAgent(BaseAgent):
         positive_responses = {
             "yes",
             "yes please",
+            "sure",
+            "sure please",
+            "sure thing",
+            "ok",
+            "okay",
+            "okay please",
+            "yep",
+            "yeah",
+            "absolutely",
             "please do",
             "go ahead",
             "send it",
             "send it please",
+            "please send it",
+            "send email",
+            "please send email",
             "send the email",
             "please send the email",
             "yes send the email",
@@ -278,19 +296,32 @@ class RouterAgent(BaseAgent):
             previous_classification (Optional[str]): The previous classification, returned on timeout or error.
 
         Returns:
-            str: The classification result (e.g., "building_specific", "general"),
+            str: The classification result (e.g., "building_specific", "generic"),
                  or `previous_classification` if the API call fails or times out.
         """
         logger.info(f"Classifying question: '{message[:70]}...'")
         logger.debug(f"Previous classification (fallback): {previous_classification}")
         start_time = time.time()
+        started_perf = time.perf_counter()
+        telemetry_messages = [
+            {"role": "system", "content": self.prompt_template},
+            {"role": "user", "content": message},
+        ]
         if not message:
             logger.warning("Attempted to classify an empty message. Returning previous classification.")
-            return previous_classification if previous_classification is not None else "general" # Default if no previous
+            return previous_classification if previous_classification is not None else "generic" # Default if no previous
 
         if client is None:
             logger.error("OpenAI client is not initialized. Cannot classify question.")
-            return previous_classification if previous_classification is not None else "general"
+            record_model_call(
+                component="router_agent",
+                model=deployment,
+                input_messages=telemetry_messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error="OpenAI client is not initialized.",
+            )
+            return previous_classification if previous_classification is not None else "generic"
 
 
         manager = multiprocessing.Manager()
@@ -313,8 +344,16 @@ class RouterAgent(BaseAgent):
             logger.warning(f"[RouterAgent] Timeout ({process_timeout}s) occurred. Terminating process.")
             p.terminate()
             p.join() # Ensure the process is truly terminated
-            return_value = previous_classification if previous_classification is not None else "general"
+            return_value = previous_classification if previous_classification is not None else "generic"
             logger.info(f"Returning previous_classification due to timeout: {return_value}")
+            record_model_call(
+                component="router_agent",
+                model=deployment,
+                input_messages=telemetry_messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=f"Router classification timed out after {process_timeout}s.",
+            )
             return return_value
         else:
             if "result" in return_dict:
@@ -322,10 +361,26 @@ class RouterAgent(BaseAgent):
                 logger.info(f"Question classified successfully: '{classification_result}' for message: '{message[:70]}...'")
                 end_time = time.time()
                 print(f"Classification Agent responded in {end_time - start_time} seconds")
+                record_model_call(
+                    component="router_agent",
+                    model=deployment,
+                    input_messages=telemetry_messages,
+                    output_text=classification_result,
+                    latency_seconds=time.perf_counter() - started_perf,
+                    success=True,
+                )
                 return classification_result
             else:
                 error_msg = return_dict.get('error', 'Unknown error (no result or error key in return_dict)')
                 logger.error(f"[RouterAgent] Error during classification for message '{message[:70]}...': {error_msg}")
-                return_value = previous_classification if previous_classification is not None else "general"
+                return_value = previous_classification if previous_classification is not None else "generic"
                 logger.info(f"Returning previous_classification due to error: {return_value}")
+                record_model_call(
+                    component="router_agent",
+                    model=deployment,
+                    input_messages=telemetry_messages,
+                    latency_seconds=time.perf_counter() - started_perf,
+                    success=False,
+                    error=error_msg,
+                )
                 return return_value

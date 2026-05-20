@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from tests.support import fresh_import, stub_module
+from src.pipeline.telemetry import telemetry_context, telemetry_snapshot
 
 
 class FakeVectorClient:
@@ -92,10 +93,12 @@ def test_handle_generic_input_keeps_reference_context_out_of_user_message(monkey
 
     prompt_path = Path(module.__file__).resolve().parent.parent / "prompts" / "generic_prompt.txt"
     agent = module.GenericAgent(prompt_path=str(prompt_path))
-    response = agent.handle_generic_input(
-        "what does energy performance in a building look like?",
-        [{"role": "user", "content": "what does energy performance in a building look like?"}],
-    )
+    with telemetry_context("unit_test"):
+        response = agent.handle_generic_input(
+            "what does energy performance in a building look like?",
+            [{"role": "user", "content": "what does energy performance in a building look like?"}],
+        )
+        telemetry = telemetry_snapshot()
 
     messages = FakeCompletions.last_kwargs["messages"]
     assert messages[-1] == {
@@ -107,3 +110,5 @@ def test_handle_generic_input_keeps_reference_context_out_of_user_message(monkey
         for message in messages
     )
     assert response["sources"] == [{"name": "guide.pdf", "filename": "guide.pdf", "link": ""}]
+    assert telemetry["model_call_count"] == 1
+    assert telemetry["component_latency_seconds"]["generic_agent"] >= 0

@@ -89,10 +89,13 @@ def test_process_thread_event_routes_latest_user_message_and_persists_metadata()
     manager.process_thread_event("thread-1")
 
     assert FakeAgentRouter.calls[-1][1] == "How can I retrofit?"
-    assert manager.redis.hashes["thread:thread-1:meta"] == {
-        "address": json.dumps(["Main Street"]),
-        "simulation_results": json.dumps([]),
-    }
+    saved_meta = manager.redis.hashes["thread:thread-1:meta"]
+    assert json.loads(saved_meta["address"]) == ["Main Street"]
+    assert json.loads(saved_meta["simulation_results"]) == []
+    telemetry = json.loads(saved_meta["telemetry"])
+    assert telemetry["operation"] == "live_chat_turn"
+    assert telemetry["model_call_count"] == 0
+    assert "total_latency_seconds" in telemetry
     saved_messages = manager.redis.lists["thread:thread-1:messages"]
     assert len(saved_messages) == 2
     assistant_message = json.loads(saved_messages[-1])
@@ -100,6 +103,7 @@ def test_process_thread_event_routes_latest_user_message_and_persists_metadata()
     assert assistant_message["added_to_database"] == 0
     assert assistant_message["metadata"]["route"] == "generic"
     assert assistant_message["metadata"]["agent"] == "GenericAgent"
+    assert assistant_message["metadata"]["telemetry"]["operation"] == "live_chat_turn"
     assert any(
         evidence["evidence_type"] == "building_match"
         for evidence in assistant_message["evidence"]

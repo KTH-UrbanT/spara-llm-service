@@ -4,6 +4,7 @@ import time
 from typing import List, Dict, Optional, Union
 from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
 from dotenv import load_dotenv
+from src.pipeline.telemetry import record_model_call
 
 # Load environment variables
 load_dotenv()
@@ -89,6 +90,7 @@ class OpenAIResponseAgent:
 
     def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
+        started_perf = time.perf_counter()
 
         # be forgiving about types
         if not isinstance(last_message, str):
@@ -108,6 +110,7 @@ class OpenAIResponseAgent:
             params["presence_penalty"] = 0
 
         try:
+            model_started_at = time.perf_counter()
             response = self.client.chat.completions.create(**params)
         except BadRequestError as e:
             # Auto-recover common param mismatch: swap max_tokens -> max_completion_tokens
@@ -119,21 +122,74 @@ class OpenAIResponseAgent:
                 # Remove legacy sampling params that may cause 400 on o4/o3
                 for k in ("top_p", "frequency_penalty", "presence_penalty"):
                     params.pop(k, None)
-                response = self.client.chat.completions.create(**params)
+                model_started_at = time.perf_counter()
+                try:
+                    response = self.client.chat.completions.create(**params)
+                except Exception as retry_exc:
+                    logger.error(f"Retry after BadRequestError failed: {retry_exc}", exc_info=True)
+                    record_model_call(
+                        component="openai_response_agent",
+                        model=self.deployment,
+                        input_messages=messages,
+                        latency_seconds=time.perf_counter() - model_started_at,
+                        success=False,
+                        error=retry_exc,
+                    )
+                    return "Error: An unexpected issue occurred."
             else:
                 logger.error(f"BadRequestError: {e}", exc_info=True)
+                record_model_call(
+                    component="openai_response_agent",
+                    model=self.deployment,
+                    input_messages=messages,
+                    latency_seconds=time.perf_counter() - started_perf,
+                    success=False,
+                    error=e,
+                )
                 return f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}"
         except APIConnectionError as e:
             logger.error(f"Connection error: {e}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return "Error: Cannot connect to AI service."
         except RateLimitError as e:
             logger.error(f"Rate limit exceeded: {e}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return "Error: Rate limit exceeded. Please retry shortly."
         except APIStatusError as e:
             logger.error(f"API status error: {e.status_code} - {e.response}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return f"Error: API returned status code {e.status_code}."
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
+            record_model_call(
+                component="openai_response_agent",
+                model=self.deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - started_perf,
+                success=False,
+                error=e,
+            )
             return "Error: An unexpected issue occurred."
 
         try:
@@ -144,4 +200,13 @@ class OpenAIResponseAgent:
 
         end_time = time.time()
         logger.info(f"Response generated in {end_time - start_time:.2f} seconds.")
+        record_model_call(
+            component="openai_response_agent",
+            model=self.deployment,
+            input_messages=messages,
+            output_text=response_content,
+            response=response,
+            latency_seconds=time.perf_counter() - model_started_at,
+            success=True,
+        )
         return response_content or "No content returned from the model."

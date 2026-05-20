@@ -1,4 +1,5 @@
 # src/pipeline/agent_router.py
+import re
 from typing import Any, Dict, List, Optional
 
 from src.agents.router_agent import RouterAgent
@@ -10,6 +11,131 @@ from src.agents.conversationalist_agent import ConversationalAgent
 from src.services.draft_report_service import generate_draft_report_response
 from src.services.expert_handoff_email import send_expert_handoff_email
 from src.pipeline.safety_analysis import build_out_of_scope_response, detect_out_of_scope
+
+
+CLASSIFICATION_ALIASES = {
+    "general": "generic",
+    "building": "building_specific",
+    "building-specific": "building_specific",
+    "draft_report": "draft_energy_report",
+}
+
+ROUTER_LABEL_PATTERN = re.compile(
+    r"\b(building_specific|building-specific|building|generic|general|"
+    r"conversational|cluster|draft_energy_report|draft_report|expert_handoff)\b",
+    re.IGNORECASE,
+)
+
+SITE_SPECIFIC_PATTERNS = (
+    r"\bmy building\b",
+    r"\bour building\b",
+    r"\bmy apartment building\b",
+    r"\bour apartment building\b",
+    r"\bmy property\b",
+    r"\bour property\b",
+    r"\bthis building\b",
+    r"\bthe building\b",
+    r"\bmy address\b",
+    r"\bour address\b",
+    r"\bi live at\b",
+    r"\bwe are at\b",
+    r"\bfor my building\b",
+    r"\bfor our building\b",
+    r"\bmy energy efficiency\b",
+    r"\bour energy efficiency\b",
+    r"\bmy energy use\b",
+    r"\bour energy use\b",
+    r"\bmy energy consumption\b",
+    r"\bour energy consumption\b",
+    r"\bmy heating cost(?:s)?\b",
+    r"\bour heating cost(?:s)?\b",
+)
+
+BUILDING_DATA_REQUEST_TERMS = (
+    "energy performance",
+    "energy class",
+    "energiprestanda",
+    "energiklass",
+    "heating system",
+    "ventilation",
+    "atemp",
+    "heated area",
+    "district heating",
+    "electricity use",
+    "energy declaration",
+)
+
+
+def _last_assistant_asked_for_expert_handoff(messages: List[Dict[str, Any]]) -> bool:
+    for message in reversed(messages[:-1]):
+        if message.get("role") != "assistant":
+            continue
+
+        content = str(message.get("content") or "").lower()
+        if any(
+            phrase in content
+            for phrase in (
+                "email was sent successfully",
+                "i will not send",
+                "could not send the email",
+            )
+        ):
+            return False
+
+        return "do you want me to send it" in content and "expert" in content
+
+    return False
+
+
+def _normalize_classification(classified: Any) -> str:
+    text = str(classified or "").strip().lower()
+    match = ROUTER_LABEL_PATTERN.search(text)
+    if match:
+        text = match.group(1).lower()
+    return CLASSIFICATION_ALIASES.get(text, text)
+
+
+def _looks_like_address(message: str) -> bool:
+    return bool(
+        re.search(
+            r"\b[\wåäöÅÄÖ.-]+\s+\d+[A-Za-z]?(?:\s*[-–]\s*\d+[A-Za-z]?)?(?:,\s*[\wåäöÅÄÖ\s.-]+)?\b",
+            message or "",
+        )
+    )
+
+
+def _requires_building_specific_flow(message: str) -> bool:
+    lowered = str(message or "").lower()
+    if not lowered.strip():
+        return False
+
+    if _looks_like_address(message):
+        return True
+
+    if re.search(r"\b(?:my|our)\s+(?:energy|heating|electricity)", lowered):
+        return True
+
+    site_specific = any(re.search(pattern, lowered) for pattern in SITE_SPECIFIC_PATTERNS)
+    if not site_specific:
+        return False
+
+    if any(term in lowered for term in BUILDING_DATA_REQUEST_TERMS):
+        return True
+
+    return any(
+        phrase in lowered
+        for phrase in (
+            "what should",
+            "what is",
+            "what are",
+            "how can",
+            "how much",
+            "which",
+            "does",
+            "do we",
+            "should we",
+        )
+    )
 
 
 def _normalize_response(
@@ -45,9 +171,15 @@ class AgentRouter:
 
     def route_message(self, messages, last_message, metadata, thread_id) -> Dict[str, Any]:
         base_metadata = dict(metadata or {})
-        pending_handoff = bool(base_metadata.get("expert_handoff_pending_confirmation"))
+        last_assistant_asked_handoff = _last_assistant_asked_for_expert_handoff(messages)
+        pending_handoff = bool(base_metadata.get("expert_handoff_pending_confirmation")) or last_assistant_asked_handoff
+        explicit_handoff_send = (
+            self.router.is_confirmation(last_message)
+            and getattr(self.router, "wants_expert_handoff", None)
+            and self.router.wants_expert_handoff(last_message)
+        )
 
-        if pending_handoff and self.router.is_confirmation(last_message):
+        if (pending_handoff or explicit_handoff_send) and self.router.is_confirmation(last_message):
             updated_metadata = {
                 **base_metadata,
                 "expert_handoff_pending_confirmation": False,
@@ -60,9 +192,10 @@ class AgentRouter:
                     "expert_handoff_sent": bool(was_sent),
                 }
                 if was_sent:
+                    cc_note = " and you were CCed" if updated_metadata.get("user_email") else ""
                     return {
                         "role": "assistant",
-                        "content": "The email was sent successfully to the EKR expert.",
+                        "content": f"The email was sent successfully to the EKR expert{cc_note}.",
                         "classification": "expert_handoff",
                         "agent_answered": "expert_handoff",
                         "route": "expert_handoff",
@@ -134,6 +267,10 @@ class AgentRouter:
             classified = "expert_handoff"
         else:
             classified = self.router.classify_question(last_message, previous_classification)
+
+        classified = _normalize_classification(classified)
+        if classified in {"generic", "conversational"} and _requires_building_specific_flow(last_message):
+            classified = "building_specific"
 
         if pending_handoff and classified != "expert_handoff":
             base_metadata = {

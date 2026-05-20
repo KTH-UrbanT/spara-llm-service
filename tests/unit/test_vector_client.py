@@ -2,6 +2,7 @@ import json
 import tempfile
 
 from tests.support import fresh_import, stub_module
+from src.pipeline.telemetry import telemetry_context, telemetry_snapshot
 
 
 CONFIG_JSON = json.dumps(
@@ -93,11 +94,15 @@ def test_vector_client_initializes_connection_and_queries_documents(monkeypatch)
     FakeRetrievalText.should_raise = False
 
     client = module.VectorClient(module.VectorClientConfig(config_path))
-    result = client.query("How do I save energy?")
+    with telemetry_context("unit_test"):
+        result = client.query("How do I save energy?")
+        telemetry = telemetry_snapshot()
 
     assert FakeVectorDataBase.instances[0].setup_calls == 1
     assert FakeRetrievalText.instances[0].vector_search is FakeVectorDataBase.instances[0].vector_search
     assert result == [{"page_content": "district heating", "source": "source-a"}]
+    assert telemetry["retrieval_call_count"] == 1
+    assert telemetry["component_latency_seconds"]["vector_retrieval"] >= 0
 
 
 def test_vector_client_returns_empty_list_when_retrieval_fails(monkeypatch):
@@ -109,4 +114,9 @@ def test_vector_client_returns_empty_list_when_retrieval_fails(monkeypatch):
 
     client = module.VectorClient(module.VectorClientConfig(config_path))
 
-    assert client.query("trigger failure") == []
+    with telemetry_context("unit_test"):
+        assert client.query("trigger failure") == []
+        telemetry = telemetry_snapshot()
+
+    assert telemetry["retrieval_call_count"] == 1
+    assert telemetry["failures"][0]["component"] == "vector_retrieval"

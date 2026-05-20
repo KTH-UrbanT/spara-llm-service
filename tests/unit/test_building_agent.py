@@ -127,6 +127,26 @@ def test_handle_building_query_falls_back_across_response_fields():
     assert metadata == {}
 
 
+def test_handle_building_query_marks_full_address_prompt_as_clarification():
+    module = import_building_agent_module()
+    FakeGraph.result = {
+        "final_response": "To give building-specific advice safely, I need the full building address.",
+        "context": {"parsed_intent": "SQL database ; vector database"},
+        "metadata": {},
+    }
+    FakeGraph.error = None
+
+    response, metadata = module.BuildingAgent().handle_building_query(
+        last_message="How do I improve my energy efficiency?",
+        messages=[],
+        metadata={},
+        thread_id="thread-address",
+    )
+
+    assert response["route"] == "clarification"
+    assert metadata["clarification"]["reason"] == "missing_address"
+
+
 def test_handle_building_query_includes_vector_sources_from_merged_agent_data():
     module = import_building_agent_module()
     SourceLinkResolver.result = [

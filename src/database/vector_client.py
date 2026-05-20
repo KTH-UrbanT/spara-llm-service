@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -10,6 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.context_retrieval.main_content_retrieval_pinecone import RetrievalText
 from src.knowledge_base.vector_database_pinecone import VectorDataBase
+from src.pipeline.telemetry import record_retrieval_call
 
 TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
 RETRIEVAL_FILTER_JSON = os.getenv("RETRIEVAL_FILTER_JSON", "").strip()
@@ -71,19 +73,34 @@ class VectorClient:
         Returns:
             list[dict]: List of results with page_content and source.
         """
+        started_at = time.perf_counter()
         try:
             docs = self.context_retriever.search_vector(
                 question,
                 top_k=TOP_K,
                 metadata_filter=self.metadata_filter,
             )
-            return [
+            results = [
                 {
                     "page_content": doc["metadata"]["text"],
                     "source": doc["metadata"]["source"],
                 }
                 for doc in docs
             ]
+            record_retrieval_call(
+                component="vector_retrieval",
+                latency_seconds=time.perf_counter() - started_at,
+                result_count=len(results),
+                success=True,
+            )
+            return results
         except Exception as e:
             print(f"[VectorClient Error] Failed to retrieve documents: {e}")
+            record_retrieval_call(
+                component="vector_retrieval",
+                latency_seconds=time.perf_counter() - started_at,
+                result_count=0,
+                success=False,
+                error=e,
+            )
             return []

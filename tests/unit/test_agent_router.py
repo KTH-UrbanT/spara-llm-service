@@ -121,6 +121,73 @@ def test_routes_generic_requests():
     assert StubGenericAgent.last_call == ("hello", [{"role": "user", "content": "hello"}])
 
 
+def test_normalizes_general_classifier_label_to_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "general"
+    StubGenericAgent.next_response = "generic answer"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "hello"}],
+        last_message="hello",
+        metadata={"kept": True},
+        thread_id="thread-general",
+    )
+
+    assert response["content"] == "generic answer"
+    assert response["classification"] == "generic"
+    assert response["agent_answered"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {"kept": True}
+
+
+def test_building_data_request_overrides_generic_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "general"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "I'd like to know the energy performance of my building.",
+            }
+        ],
+        last_message="I'd like to know the energy performance of my building.",
+        metadata={},
+        thread_id="thread-building-override",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_personal_energy_efficiency_request_overrides_generic_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "How do I improve my energy efficiency?",
+            }
+        ],
+        last_message="How do I improve my energy efficiency?",
+        metadata={},
+        thread_id="thread-personal-energy",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
 def test_routes_generic_requests_with_structured_sources():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"

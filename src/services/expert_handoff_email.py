@@ -2,14 +2,19 @@ import json
 import os
 import smtplib
 from copy import deepcopy
+from email.utils import parseaddr
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
+
+SERVICE_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(SERVICE_ROOT / ".env", override=False)
 
 SMTP_SERVER = os.getenv("EXPERT_EMAIL_SMTP_SERVER")
-SMTP_PORT = 587
+SMTP_PORT = int(os.getenv("EXPERT_EMAIL_SMTP_PORT", "587"))
 EMAIL_ACCOUNT = os.getenv("EXPERT_EMAIL_ACCOUNT")
 EMAIL_ADDRESS = os.getenv("EXPERT_EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EXPERT_EMAIL_PASSWORD")
@@ -32,6 +37,25 @@ def _sanitize_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
     return deepcopy(metadata or {})
+
+
+def _normalize_email(value: Any) -> Optional[str]:
+    _, parsed_email = parseaddr(str(value or "").strip())
+    if not parsed_email or "@" not in parsed_email:
+        return None
+    return parsed_email.lower()
+
+
+def _extract_user_email(thread_id: str, metadata: Dict[str, Any]) -> Optional[str]:
+    metadata_email = _normalize_email((metadata or {}).get("user_email"))
+    if metadata_email:
+        return metadata_email
+
+    if ":" in str(thread_id or ""):
+        thread_email = str(thread_id).split(":", 1)[0]
+        return _normalize_email(thread_email)
+
+    return None
 
 
 def _build_transcript_payload(
@@ -137,6 +161,9 @@ def build_expert_handoff_email(
     message = MIMEMultipart()
     message["From"] = EMAIL_ADDRESS
     message["To"] = EMAIL_RECIPIENT
+    user_email = _extract_user_email(thread_id, metadata)
+    if user_email:
+        message["Cc"] = user_email
     message["Subject"] = subject
 
     body = (
@@ -163,6 +190,10 @@ def send_expert_handoff_email(
     metadata: Dict[str, Any],
 ) -> bool:
     message = build_expert_handoff_email(thread_id, messages, metadata)
+    recipients = [EMAIL_RECIPIENT]
+    user_email = _extract_user_email(thread_id, metadata)
+    if user_email and user_email not in recipients:
+        recipients.append(user_email)
 
     smtp_session = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
     try:
@@ -170,7 +201,7 @@ def send_expert_handoff_email(
         smtp_session.starttls()
         smtp_session.ehlo()
         smtp_session.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
-        smtp_session.sendmail(EMAIL_ADDRESS, [EMAIL_RECIPIENT], message.as_string())
+        smtp_session.sendmail(EMAIL_ADDRESS, recipients, message.as_string())
         return True
     finally:
         smtp_session.quit()

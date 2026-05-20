@@ -15,17 +15,35 @@ class FakeRouterAgent:
 
     def wants_expert_handoff(self, message):
         lowered = message.lower()
-        return "expert" in lowered or "ekr" in lowered or "human help" in lowered
+        return (
+            "expert" in lowered
+            or "ekr" in lowered
+            or "human help" in lowered
+            or "send the email" in lowered
+            or "send email" in lowered
+        )
 
     def is_confirmation(self, message):
-        normalized = message.strip().lower().strip(" \t\r\n.,!?")
+        normalized = " ".join(message.strip().lower().strip(" \t\r\n.,!?").split())
         return normalized in {
             "yes",
             "yes please",
+            "sure",
+            "sure please",
+            "sure thing",
+            "ok",
+            "okay",
+            "okay please",
+            "yep",
+            "yeah",
+            "absolutely",
             "please do",
             "go ahead",
             "send it",
             "send it please",
+            "please send it",
+            "send email",
+            "please send email",
             "send the email",
             "please send the email",
             "yes send the email",
@@ -140,6 +158,57 @@ def test_route_message_sends_email_after_confirmation():
     assert metadata["expert_handoff_requested"] is True
     assert len(EmailRecorder.calls) == 1
     assert EmailRecorder.calls[0][0] == "thread-2"
+
+
+def test_route_message_accepts_sure_as_handoff_confirmation():
+    module = import_agent_router_module()
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        [
+            {"role": "user", "content": "Can I talk to an expert?"},
+            {
+                "role": "assistant",
+                "content": "I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
+            },
+            {"role": "user", "content": "sure."},
+        ],
+        "sure.",
+        {"expert_handoff_pending_confirmation": True},
+        "thread-sure",
+    )
+
+    assert response["classification"] == "expert_handoff"
+    assert "email was sent successfully" in response["content"]
+    assert metadata["expert_handoff_sent"] is True
+
+
+def test_route_message_sends_explicit_email_command_after_lost_pending_state():
+    module = import_agent_router_module()
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        [
+            {"role": "user", "content": "Can I talk to an expert?"},
+            {
+                "role": "assistant",
+                "content": "I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
+            },
+            {"role": "user", "content": "sure"},
+            {
+                "role": "assistant",
+                "content": "Got it! I'll send this conversation to an EKR expert for you. They'll follow up as needed.",
+            },
+            {"role": "user", "content": "please send the email."},
+        ],
+        "please send the email.",
+        {},
+        "thread-lost-pending",
+    )
+
+    assert response["classification"] == "expert_handoff"
+    assert "email was sent successfully" in response["content"]
+    assert metadata["expert_handoff_sent"] is True
 
 
 def test_route_message_cancels_expert_handoff_on_rejection():

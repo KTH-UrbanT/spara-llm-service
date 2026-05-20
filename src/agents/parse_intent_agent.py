@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from src.agents.base_agent import BaseAgent
+from src.pipeline.telemetry import record_model_call
 
 # Load environment variables
 load_dotenv()
@@ -135,6 +136,7 @@ def openai_call_worker(prompt_template: str, message: str) -> str:
 
     last_err: Optional[Exception] = None
     for attempt in range(MAX_RETRIES + 1):
+        model_started_at = time.perf_counter()
         try:
             completion = client.chat.completions.create(
                 model=deployment,
@@ -147,9 +149,27 @@ def openai_call_worker(prompt_template: str, message: str) -> str:
                 stop=None,
                 stream=False,
             )
-            return completion.choices[0].message.content
+            response_content = completion.choices[0].message.content
+            record_model_call(
+                component="parse_intent_agent",
+                model=deployment,
+                input_messages=messages,
+                output_text=response_content,
+                response=completion,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=True,
+            )
+            return response_content
         except Exception as e:
             last_err = e
+            record_model_call(
+                component="parse_intent_agent",
+                model=deployment,
+                input_messages=messages,
+                latency_seconds=time.perf_counter() - model_started_at,
+                success=False,
+                error=e,
+            )
             # Rate limit or transient? If yes, backoff and retry.
             if _is_rate_limit_error(e):
                 ra = _retry_after_seconds(e)
