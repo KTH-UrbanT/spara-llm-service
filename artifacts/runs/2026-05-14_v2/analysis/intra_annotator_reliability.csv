@@ -1,0 +1,6 @@
+metric,value,n
+groundedness_kappa_linear,1.0,8
+completeness_kappa_linear,0.4285714285714286,8
+numeric_fidelity_kappa_linear,0.6363636363636364,8
+constraint_satisfaction_kappa_linear,0.6363636363636364,8
+overall_pass_kappa_binary,0.6,8

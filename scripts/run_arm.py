@@ -39,6 +39,17 @@ ARM_CONFIGS: Dict[str, Dict[str, str]] = {
            "EVALUATOR_PROMPT_VERSION": "evaluator_prompt.txt"},
     "A4": {"EVALUATOR_MODE": "balanced", "EVALUATOR_MAX_RETRIES": "1",
            "EVALUATOR_PROMPT_VERSION": "evaluator_prompt_v2.txt"},
+    "A2_schema": {
+        "EVALUATOR_MODE": "balanced",
+        "EVALUATOR_MAX_RETRIES": "1",
+        "EVALUATOR_PROMPT_VERSION": "evaluator_prompt_schema.txt",
+    },
+    "A2_judge_A": {"EVALUATOR_MODE": "balanced", "EVALUATOR_MAX_RETRIES": "1",
+                   "EVALUATOR_PROMPT_VERSION": "evaluator_prompt_judge_A.txt"},
+    "A2_judge_B": {"EVALUATOR_MODE": "balanced", "EVALUATOR_MAX_RETRIES": "1",
+                   "EVALUATOR_PROMPT_VERSION": "evaluator_prompt_judge_B.txt"},
+    "A2_judge_C": {"EVALUATOR_MODE": "balanced", "EVALUATOR_MAX_RETRIES": "1",
+                   "EVALUATOR_PROMPT_VERSION": "evaluator_prompt_judge_C.txt"},
 }
 
 
