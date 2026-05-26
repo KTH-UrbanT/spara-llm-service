@@ -173,6 +173,23 @@ class SQL_Mapper_Layer:
                 trace["returned_values_used"] = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
                 return self._result(True, rows, "OK", trace=trace)
 
+            if op == "buildings_by_building_id":
+                building_id = kwargs.get("building_id")
+                if not building_id:
+                    trace["execution_status"] = "error"
+                    trace["error_message"] = "Missing required 'building_id'."
+                    return self._result(False, None, "Missing required 'building_id'.", trace=trace)
+                trace["filters_used"] = {"byggnadsid": building_id}
+                rows = self.sql.buildings_by_building_id(building_id)
+                if not rows:
+                    trace["execution_status"] = "not_found"
+                    trace["error_message"] = f"No buildings matched byggnadsid '{building_id}'."
+                    return self._result(False, [], f"No buildings matched byggnadsid '{building_id}'.", trace=trace)
+                trace["execution_status"] = "success"
+                trace["rows_returned"] = len(rows or [])
+                trace["returned_values_used"] = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+                return self._result(True, rows, "OK", trace=trace)
+
             if op == "fetch_energy_class":
                 return self._resolve_then_get_field(kwargs, self.ENERGY_CLASS_KEYS, trace=trace)
 

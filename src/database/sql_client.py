@@ -34,6 +34,7 @@ class SQLClient:
 
     BASE_PATH = "/buildings/"
     ADDRESS_PATH = "/buildings/address"
+    BRF_ADDRESSES_PATH = "/brfs/addresses"
     SINGLE_FILTER_PATH = "/buildings/single_filter"
 
     ALLOWED_FIELDS = {
@@ -123,6 +124,55 @@ class SQLClient:
 
         rows = self._json_to_list(r.json())
         return self._apply_local_list_options(rows, limit=limit, offset=offset, ordering=ordering)
+
+    def brf_addresses(
+        self,
+        brf_name: str,
+        limit: int = 100,
+        offset: int = 0,
+        ordering: Optional[str] = None,
+    ) -> List[Row]:
+        params: Dict[str, Any] = {
+            "brf_name": str(brf_name).strip(),
+        }
+
+        url = f"{self.base_url}{self.BRF_ADDRESSES_PATH}"
+        r = self.session.get(url, params=params, timeout=self.timeout)
+        r.raise_for_status()
+
+        rows = self._json_to_list(r.json())
+        return self._apply_local_list_options(rows, limit=limit, offset=offset, ordering=ordering)
+
+    def buildings_by_building_id(
+        self,
+        building_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        ordering: Optional[str] = None,
+    ) -> List[Row]:
+        rows = self.buildings_by_single_filter(
+            "byggnadsid",
+            "eq",
+            str(building_id).strip(),
+            limit=limit,
+            offset=offset,
+            ordering=ordering,
+        )
+        if rows:
+            return rows
+
+        params: Dict[str, Any] = {
+            "byggnadsid": str(building_id).strip(),
+            "limit": int(limit),
+            "offset": int(offset),
+        }
+        if ordering:
+            params["ordering"] = ordering
+
+        url = f"{self.base_url}{self.BASE_PATH}"
+        r = self.session.get(url, params=params, timeout=self.timeout)
+        r.raise_for_status()
+        return self._json_to_list(r.json())
 
     # 3) Get buildings by a single filter (exactly /buildings/single_filter) -> list
     def buildings_by_single_filter(

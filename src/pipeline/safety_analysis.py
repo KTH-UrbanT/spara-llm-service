@@ -29,6 +29,8 @@ FRESHNESS_YEAR_KEYS = (
     "epc_year",
     "declaration_year",
     "energy_year",
+    "epc_godkand",
+    "epc_egiversion",
 )
 
 IMPORTANT_FACT_KEYS = (
@@ -238,6 +240,29 @@ def _normalize_heating_system(value: Any) -> Optional[str]:
     return raw
 
 
+def _is_affirmative(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    folded = _ascii_fold(value).strip()
+    return folded in {"yes", "ja", "true", "1", "y"}
+
+
+def _derive_ventilation_type(facts: Dict[str, Any]) -> Optional[str]:
+    if _is_affirmative(_first_present(facts, ("epc_venttypftx", "venttypftx"))):
+        return "FTX"
+    if _is_affirmative(_first_present(facts, ("epc_venttypft", "venttypft"))):
+        return "FT"
+    if _is_affirmative(_first_present(facts, ("epc_venttypfmed", "venttypfmed"))):
+        return "F with heat recovery"
+    if _is_affirmative(_first_present(facts, ("epc_venttypf", "venttypf"))):
+        return "F"
+    if _is_affirmative(_first_present(facts, ("epc_venttypsjalvdrag", "venttypsjalvdrag"))):
+        return "Självdrag"
+    return None
+
+
 def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(facts, dict):
         return facts
@@ -299,6 +324,50 @@ def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
         )
         if value is not None:
             facts["energy_performance"] = value
+
+    if not _is_present(facts.get("ventilation_type")):
+        value = _first_present(
+            facts,
+            (
+                "ventilation_type",
+                "ventilation",
+                "ventilation_system",
+                "epc_ventilation_type",
+            ),
+        )
+        if value is None:
+            value = _derive_ventilation_type(facts)
+        if value is not None:
+            facts["ventilation_type"] = value
+
+    if not _is_present(facts.get("electricity_use")):
+        value = _first_present(
+            facts,
+            (
+                "electricity_use",
+                "epc_el_calc",
+                "epc_egisumma2",
+                "epc_egisumma2_calc",
+                "epc_egifastighet",
+                "electricity_purchased",
+                "electricity_use_property",
+            ),
+        )
+        if value is not None:
+            facts["electricity_use"] = value
+
+    if not _is_present(facts.get("energy_declaration_year")):
+        value = _first_present(
+            facts,
+            (
+                "energy_declaration_year",
+                "epc_godkand",
+                "epc_egiversion",
+            ),
+        )
+        year = _coerce_year(value)
+        if year is not None:
+            facts["energy_declaration_year"] = year
 
     return facts
 
@@ -374,6 +443,12 @@ def assess_building_identity(
         and normalized_candidate_addresses == {normalized_input_address}
         and (len(candidate_ids) > 1 or len(candidate_addresses) > 1)
     )
+    multiple_addresses_same_explicit_building = bool(
+        len(existing_ids) == 1
+        and candidate_ids
+        and set(candidate_ids) == {existing_ids[0]}
+        and len(candidate_addresses) > 1
+    )
 
     matched_building_id = candidate_ids[0] if len(candidate_ids) == 1 else existing_ids[0] if len(existing_ids) == 1 else None
     conflicting_metadata = bool(
@@ -382,7 +457,11 @@ def assess_building_identity(
         and set(existing_ids).difference(candidate_ids)
         and set(candidate_ids).difference(existing_ids)
     )
-    multiple_matches = (len(candidate_ids) > 1 or len(candidate_addresses) > 1) and not multiple_records_same_address
+    multiple_matches = (
+        (len(candidate_ids) > 1 or len(candidate_addresses) > 1)
+        and not multiple_records_same_address
+        and not multiple_addresses_same_explicit_building
+    )
     parser_ctx = metadata.get("context") or {}
     ambiguous = multiple_matches or bool(parser_ctx.get("ambiguous") or parser_ctx.get("ambigious"))
 
@@ -390,7 +469,12 @@ def assess_building_identity(
         status = "conflict"
     elif ambiguous:
         status = "ambiguous"
-    elif matched_building_id or multiple_records_same_address or normalized_candidate_addresses == {normalized_input_address}:
+    elif (
+        matched_building_id
+        or multiple_records_same_address
+        or multiple_addresses_same_explicit_building
+        or normalized_candidate_addresses == {normalized_input_address}
+    ):
         status = "passed"
     else:
         status = "missing"
@@ -402,6 +486,7 @@ def assess_building_identity(
         "ambiguous": ambiguous,
         "multiple_matches": multiple_matches,
         "multiple_records_same_address": multiple_records_same_address,
+        "multiple_addresses_same_explicit_building": multiple_addresses_same_explicit_building,
         "conflicting_metadata": conflicting_metadata,
         "candidate_building_ids": candidate_ids,
         "candidate_addresses": candidate_addresses,
@@ -414,6 +499,9 @@ def build_clarification_question(reason: Optional[str]) -> str:
         "missing_brf_name": "Which building do you mean? Please share the full street address so I use the correct building.",
         "missing_address": "To give building-specific advice safely, I need the full building address.",
         "ambiguous_brf": "I found more than one possible building. Could you provide the full street address so I use the correct building?",
+        "brf_not_found": "I could not find building addresses for that BRF. Please share the full street address so I use the correct building.",
+        "brf_lookup_failed": "I could not look up that BRF right now. Please share the full street address so I use the correct building.",
+        "building_not_found_by_id": "I could not find enough building data for that building ID. Please share one of the building's street addresses so I can try the address lookup.",
         "ambiguous_address": "I found more than one possible building match. Could you provide the full street address so I avoid using the wrong building information?",
         "building_not_found": "I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",
         "missing_building_data": "I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the full address or the specific system you want to ask about?",

@@ -52,6 +52,9 @@ If advice depends on the building’s own data:
 - Electricity/PV/analytics-based advice → "Specialized SQL database ; vector database"
 - First-person requests such as "my energy efficiency", "our energy use", or "my heating costs"
   should be treated as building/site-specific advice, even if the word "building" is omitted.
+- Requests for "relevant ECMs", "relevant measures", "recommended measures", "what should we prioritize",
+  "energy conservation measures", retrofits, upgrades, or energy-efficiency recommendations should be
+  treated as building/site-specific advice when the wording implies relevance to a particular building.
 
 If advice is general (no reference to user’s data):
 → parsed_intent = "vector database"
@@ -126,3 +129,7 @@ OUTPUT: {"parsed_intent":"Specialized SQL database ; vector database","address":
 #8
 INPUT: "Give me general tips to save energy in apartment buildings"
 OUTPUT: {"parsed_intent":"vector database","address":null,"ambigious":false}
+
+#9
+INPUT: "So, what are the relevant ECMs?"
+OUTPUT: {"parsed_intent":"SQL database ; vector database","address":null,"ambigious":false}

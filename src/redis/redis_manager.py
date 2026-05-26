@@ -12,6 +12,43 @@ from src.pipeline.evaluation_metadata import (
 from src.pipeline.telemetry import telemetry_context, telemetry_snapshot
 # from src.pipeline.agent_router_langgraph import *
 
+RESOLVED_BRF_STATUSES = {
+    "resolved_by_user_selection",
+    "resolved_unique_building",
+}
+
+TRANSIENT_METADATA_KEYS = (
+    "pending_brf_resolution",
+)
+
+
+def _is_resolved_brf_metadata(metadata):
+    metadata = metadata or {}
+    resolution = metadata.get("brf_resolution")
+    status = resolution.get("status") if isinstance(resolution, dict) else None
+    return bool(
+        status in RESOLVED_BRF_STATUSES
+        or metadata.get("selected_brf_building_id")
+    )
+
+
+def _metadata_keys_to_delete(metadata):
+    metadata = metadata or {}
+    delete_keys = []
+    for key in TRANSIENT_METADATA_KEYS:
+        if key not in metadata:
+            delete_keys.append(key)
+    if _is_resolved_brf_metadata(metadata) and "pending_brf_resolution" not in delete_keys:
+        delete_keys.append("pending_brf_resolution")
+    return delete_keys
+
+
+def _encode_metadata_value(value):
+    if isinstance(value, (list, dict, bool)):
+        return json.dumps(value)
+    return str(value)
+
+
 '''
 The redis payload will be like this : 
 {
@@ -235,9 +272,13 @@ class RedisQueueManager:
 
             # ---- Write metadata back so cross-turn state like expert handoff confirmation persists
             if metadata:
+                delete_keys = _metadata_keys_to_delete(metadata)
+                if delete_keys:
+                    self.redis.hdel(meta_key, *delete_keys)
                 encoded_metadata = {
-                    k: (json.dumps(v) if isinstance(v, (list, dict, bool)) else str(v))
+                    k: _encode_metadata_value(v)
                     for k, v in metadata.items()
+                    if v is not None
                 }
                 self.redis.hset(meta_key, mapping=encoded_metadata)
 

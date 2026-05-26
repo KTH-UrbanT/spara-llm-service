@@ -57,7 +57,16 @@ class FakeRedisClient:
         return dict(self.hashes.get(key, {}))
 
     def hset(self, key, mapping):
-        self.hashes[key] = dict(mapping)
+        self.hashes.setdefault(key, {}).update(mapping)
+
+    def hdel(self, key, *fields):
+        current = self.hashes.setdefault(key, {})
+        removed = 0
+        for field in fields:
+            if field in current:
+                removed += 1
+                current.pop(field, None)
+        return removed
 
     def pubsub(self):
         return FakePubSub(self.pubsub_events)
@@ -69,6 +78,8 @@ class FakeRedisExceptions:
 
 def import_redis_manager_module():
     FakeAgentRouter.calls = []
+    FakeAgentRouter.response = {"content": "assistant answer", "classification": "generic", "agent_answered": "generic"}
+    FakeAgentRouter.metadata = {"address": ["Main Street"], "simulation_results": []}
     stub_module("src.pipeline.agent_router", AgentRouter=FakeAgentRouter)
     stub_module(
         "redis",
@@ -130,6 +141,39 @@ def test_process_thread_event_skips_non_user_latest_message():
 
     assert FakeAgentRouter.calls == []
     assert manager.redis.published == []
+
+
+def test_process_thread_event_deletes_stale_pending_brf_resolution_after_selection():
+    module = import_redis_manager_module()
+    manager = module.RedisQueueManager()
+    manager.redis.lists["thread:thread-brf:messages"] = [
+        json.dumps({"role": "user", "content": "when was this building built?"})
+    ]
+    manager.redis.hashes["thread:thread-brf:meta"] = {
+        "pending_brf_resolution": json.dumps({"brf_name": "Solgläntan 1"}),
+        "brf_resolution": json.dumps(
+            {
+                "status": "resolved_by_user_selection",
+                "selected_building_id": "01-80-HEDVIG15-1",
+            }
+        ),
+        "selected_brf_building_id": "01-80-HEDVIG15-1",
+    }
+    FakeAgentRouter.metadata = {
+        "brf_resolution": {
+            "status": "resolved_by_user_selection",
+            "selected_building_id": "01-80-HEDVIG15-1",
+        },
+        "selected_brf_building_id": "01-80-HEDVIG15-1",
+        "byggnadsid": "01-80-HEDVIG15-1",
+    }
+
+    manager.process_thread_event("thread-brf")
+
+    saved_meta = manager.redis.hashes["thread:thread-brf:meta"]
+    assert "pending_brf_resolution" not in saved_meta
+    assistant_message = json.loads(manager.redis.lists["thread:thread-brf:messages"][-1])
+    assert "pending_brf_resolution" not in assistant_message["metadata"]
 
 
 def test_event_listener_consumes_pubsub_messages_with_thread_name():

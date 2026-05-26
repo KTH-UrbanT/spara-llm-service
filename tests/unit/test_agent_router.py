@@ -106,8 +106,8 @@ def test_routes_generic_requests():
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
-        messages=[{"role": "user", "content": "hello"}],
-        last_message="hello",
+        messages=[{"role": "user", "content": "give me general energy tips"}],
+        last_message="give me general energy tips",
         metadata={"kept": True},
         thread_id="thread-1",
     )
@@ -118,7 +118,30 @@ def test_routes_generic_requests():
     assert response["route"] == "generic"
     assert response["role"] == "assistant"
     assert metadata == {"kept": True}
-    assert StubGenericAgent.last_call == ("hello", [{"role": "user", "content": "hello"}])
+    assert StubGenericAgent.last_call == (
+        "give me general energy tips",
+        [{"role": "user", "content": "give me general energy tips"}],
+    )
+
+
+def test_fast_conversational_greeting_skips_conversational_agent():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubConversationalAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "hello"}],
+        last_message="hello",
+        metadata={"kept": True},
+        thread_id="thread-fast",
+    )
+
+    assert response["classification"] == "conversational"
+    assert response["agent_answered"] == "fast_conversational"
+    assert "energy advice" in response["content"]
+    assert metadata == {"kept": True}
+    assert StubConversationalAgent.last_call is None
 
 
 def test_normalizes_general_classifier_label_to_generic():
@@ -128,8 +151,8 @@ def test_normalizes_general_classifier_label_to_generic():
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
-        messages=[{"role": "user", "content": "hello"}],
-        last_message="hello",
+        messages=[{"role": "user", "content": "general tips for apartment buildings"}],
+        last_message="general tips for apartment buildings",
         metadata={"kept": True},
         thread_id="thread-general",
     )
@@ -156,6 +179,54 @@ def test_building_data_request_overrides_generic_classifier_label():
         last_message="I'd like to know the energy performance of my building.",
         metadata={},
         thread_id="thread-building-override",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_brf_name_building_data_request_overrides_generic_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "general"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "We are BRF Sjöstaden, what ventilation system do we have?",
+            }
+        ],
+        last_message="We are BRF Sjöstaden, what ventilation system do we have?",
+        metadata={},
+        thread_id="thread-brf-override",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_building_id_message_overrides_generic_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "general"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "use this building 01-80-BRAEDGAARDEN9-2",
+            }
+        ],
+        last_message="use this building 01-80-BRAEDGAARDEN9-2",
+        metadata={},
+        thread_id="thread-building-id",
     )
 
     assert response["content"] == "building answer"
@@ -204,8 +275,8 @@ def test_routes_generic_requests_with_structured_sources():
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
-        messages=[{"role": "user", "content": "hello"}],
-        last_message="hello",
+        messages=[{"role": "user", "content": "general insulation tips"}],
+        last_message="general insulation tips",
         metadata={"kept": True},
         thread_id="thread-1b",
     )
@@ -254,6 +325,192 @@ def test_routes_generic_requests_even_after_building_specific_turn():
             {"role": "user", "content": "and more broadly?"},
         ],
     )
+
+
+def test_relevant_ecm_followup_after_building_context_routes_to_building_flow():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "what are the relevant epc metrics for Öregrundsgatan 9"},
+        {
+            "role": "assistant",
+            "classification": "building_specific",
+            "content": "Building ID: 01-80-LISSABON2-2\n\nEnergy class: F",
+        },
+        {"role": "user", "content": "so, what are the relevant ecms"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="so, what are the relevant ecms",
+        metadata={},
+        thread_id="thread-ecm-followup",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call[0] == "so, what are the relevant ecms"
+
+
+def test_building_info_followup_after_building_context_routes_to_building_flow():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "Do we have district heating? I live in professorsslingan 10"},
+        {
+            "role": "assistant",
+            "classification": "building_specific",
+            "content": "Building ID: 01-80-FYSIKERN1-1\n\nDistrict heating.",
+            "metadata": {
+                "address": "professorsslingan 10",
+                "byggnadsid": "01-80-FYSIKERN1-1",
+            },
+        },
+        {"role": "user", "content": "give me information about building"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="give me information about building",
+        metadata={"address": "professorsslingan 10"},
+        thread_id="thread-building-info-followup",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call[0] == "give me information about building"
+
+
+def test_contentful_followup_after_building_context_routes_to_building_flow():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "I live in Artemisgatan 17. What is the energy class?"},
+        {
+            "role": "assistant",
+            "classification": "building_specific",
+            "content": "Building ID: 01-80-SKYTTEN2-2\n\nEnergy class: F.",
+            "metadata": {
+                "address": "Artemisgatan 17",
+                "byggnadsid": "01-80-SKYTTEN2-2",
+            },
+        },
+        {"role": "user", "content": "please explain more"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="please explain more",
+        metadata={"address": "Artemisgatan 17"},
+        thread_id="thread-contentful-followup",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call[0] == "please explain more"
+
+
+def test_small_talk_after_building_context_stays_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = "you are welcome"
+    router = module.AgentRouter()
+
+    messages = [
+        {
+            "role": "assistant",
+            "classification": "building_specific",
+            "content": "Building ID: 01-80-SKYTTEN2-2\n\nEnergy class: F.",
+            "metadata": {
+                "address": "Artemisgatan 17",
+                "byggnadsid": "01-80-SKYTTEN2-2",
+            },
+        },
+        {"role": "user", "content": "thanks"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="thanks",
+        metadata={"address": "Artemisgatan 17"},
+        thread_id="thread-small-talk-after-building",
+    )
+
+    assert response["content"] == "you are welcome"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {"address": "Artemisgatan 17"}
+
+
+def test_data_explanation_followup_after_building_context_routes_to_building_flow():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    message = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
+    messages = [
+        {"role": "user", "content": "What is the energy class for professorsslingan 10?"},
+        {
+            "role": "assistant",
+            "classification": "building_specific",
+            "content": "Building ID: 01-80-FYSIKERN1-1\nEnergy class 2019: G\nEnergy class 2020: F",
+            "metadata": {
+                "address": "professorsslingan 10",
+                "byggnadsid": "01-80-FYSIKERN1-1",
+            },
+        },
+        {"role": "user", "content": message},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message=message,
+        metadata={"address": "professorsslingan 10"},
+        thread_id="thread-building-data-followup",
+    )
+
+    assert module._looks_like_address(message) is False
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call[0] == message
+
+
+def test_general_ecm_followup_after_building_context_stays_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = "generic ecm answer"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "assistant", "classification": "building_specific", "content": "Building ID: 01-80-LISSABON2-2"},
+        {"role": "user", "content": "what are ECMs in general?"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="what are ECMs in general?",
+        metadata={},
+        thread_id="thread-general-ecm",
+    )
+
+    assert response["content"] == "generic ecm answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
 
 
 def test_routes_building_specific_requests():

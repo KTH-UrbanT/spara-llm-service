@@ -74,6 +74,47 @@ def test_llm_summarizer_accepts_session_state_history_list():
     assert result["session_state"]["last_intent_list"] == []
 
 
+def test_llm_summarizer_marks_same_building_multiple_addresses():
+    module = import_building_flow_graph_module()
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "Show me the data",
+            "messages": [{"role": "user", "content": "Show me the data"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {
+                "address": "Artemisgatan 17",
+                "address_from_user": "Artemisgatan 17",
+                "building_identity_check": {
+                    "status": "passed",
+                    "matched_building_id": "01-80-SKYTTEN2-2",
+                    "matched_address": "Artemisgatan 13",
+                    "ambiguous": False,
+                },
+            },
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-80-SKYTTEN2-2",
+                        "epc_idadr": "Artemisgatan 13",
+                        "epc_egienergiklass2020_calc": "F",
+                        "epc_egiprimarenergital2020_calc": 145,
+                        "epc_egienergiprestanda": 201,
+                    }
+                ]
+            },
+            "done_generic_sql": True,
+        }
+    )
+
+    metadata = result["metadata"]
+    assert metadata["same_building_multiple_addresses"] is True
+    assert metadata["requested_address"] == "Artemisgatan 17"
+    assert metadata["epc_record_address"] == "Artemisgatan 13"
+    assert metadata["retrieved_facts"]["address"] == "Artemisgatan 17"
+    assert metadata["retrieved_facts"]["epc_idadr"] == "Artemisgatan 13"
+
+
 def test_vector_db_agent_persists_structured_hits_for_aggregation():
     module = import_building_flow_graph_module()
     module.vector_database.hits = [
@@ -139,6 +180,36 @@ def test_understand_context_restores_prior_intent_for_address_only_follow_up():
     assert result["context"]["intent_list"] == ["SQL database"]
     assert result["metadata"]["address"] == "Professorsslingan 51"
     assert result["metadata"]["address_from_user"] == "Professorsslingan 51"
+
+
+def test_understand_context_recovers_address_from_initial_i_live_in_turn():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": True,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "so help me with this. I live in professorsslingan 10",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "Hi there! How can I help you today?"},
+                {"role": "user", "content": "so help me with this. I live in professorsslingan 10"},
+            ],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["context"]["address"] == "professorsslingan 10"
+    assert result["context"]["parsed_intent"] == "SQL database"
+    assert result["metadata"]["address"] == "professorsslingan 10"
+    assert result["metadata"]["address_from_user"] == "professorsslingan 10"
 
 
 def test_understand_context_cleans_conversational_address_follow_up():
@@ -207,6 +278,82 @@ def test_understand_context_promotes_personal_energy_advice_to_hybrid_intent():
     assert result["context"]["ambiguous"] is False
 
 
+def test_understand_context_promotes_ecm_followup_with_prior_building_context():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "vector database",
+            "intents": ["vector database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "so, what are the relevant ecms",
+            "messages": [
+                {"role": "user", "content": "what are the EPC metrics for Öregrundsgatan 9"},
+                {
+                    "role": "assistant",
+                    "content": "Building ID: 01-80-LISSABON2-2\n\nEnergy class: F",
+                },
+                {"role": "user", "content": "so, what are the relevant ecms"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Öregrundsgatan 9",
+                    "address_from_user": "Öregrundsgatan 9",
+                    "byggnadsid": "01-80-LISSABON2-2",
+                    "retrieved_facts": {
+                        "energy_class": "F",
+                        "energy_performance": 199,
+                        "heating_system": "district heating",
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "SQL database ; vector database"
+    assert result["context"]["intent_list"] == ["SQL database", "vector database"]
+    assert result["context"]["ambiguous"] is False
+    assert result["metadata"]["address"] == "Öregrundsgatan 9"
+    assert "district heating" in result["context"]["effective_query"]
+    assert "energy class: F" in result["context"]["effective_query"]
+
+
+def test_understand_context_keeps_general_ecm_question_vector_only():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "vector database",
+            "intents": ["vector database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "what are ECMs in general?",
+            "messages": [{"role": "user", "content": "what are ECMs in general?"}],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Öregrundsgatan 9",
+                    "byggnadsid": "01-80-LISSABON2-2",
+                }
+            },
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "vector database"
+    assert result["context"]["intent_list"] == ["vector database"]
+    assert "effective_query" not in result["context"]
+
+
 def test_understand_context_keeps_stored_address_when_new_turn_omits_it():
     module = import_building_flow_graph_module()
     DummyParseIntentAgent.result = {
@@ -237,6 +384,164 @@ def test_understand_context_keeps_stored_address_when_new_turn_omits_it():
     assert result["context"]["intent_list"] == ["SQL database"]
     assert result["metadata"]["address"] == "Professorsslingan 51"
     assert result["metadata"]["address_from_user"] == "Professorsslingan 51"
+
+
+def test_understand_context_does_not_treat_year_comparison_as_address():
+    module = import_building_flow_graph_module()
+    message = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": message,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "classification": "building_specific",
+                    "content": "Building ID: 01-80-FYSIKERN1-1\nEnergy class 2019: G\nEnergy class 2020: F",
+                },
+                {"role": "user", "content": message},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Professorsslingan 10",
+                    "address_from_user": "Professorsslingan 10",
+                    "byggnadsid": "01-80-FYSIKERN1-1",
+                }
+            },
+        }
+    )
+
+    assert module._extract_address_candidate_from_text(message) is None
+    assert result["context"]["address"] == "Professorsslingan 10"
+    assert result["metadata"]["address"] == "Professorsslingan 10"
+    assert result["metadata"]["address_from_user"] == "Professorsslingan 10"
+
+
+def test_understand_context_discards_bad_parser_address_and_uses_stored_address():
+    module = import_building_flow_graph_module()
+    message = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": message,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": message,
+            "messages": [{"role": "user", "content": message}],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Professorsslingan 10",
+                    "address_from_user": "Professorsslingan 10",
+                }
+            },
+        }
+    )
+
+    assert result["context"]["address"] == "Professorsslingan 10"
+    assert result["metadata"]["address"] == "Professorsslingan 10"
+
+
+def test_understand_context_drops_polluted_metadata_address():
+    module = import_building_flow_graph_module()
+    bad_address = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "show me the data",
+            "messages": [{"role": "user", "content": "show me the data"}],
+            "metadata": {
+                "address": bad_address,
+                "address_from_user": bad_address,
+                "byggnadsid": "01-80-FYSIKERN1-1",
+            },
+            "session_state": {},
+        }
+    )
+
+    assert result["context"].get("address") is None
+    assert "address" not in result["metadata"]
+    assert "address_from_user" not in result["metadata"]
+    assert result["metadata"]["byggnadsid"] == "01-80-FYSIKERN1-1"
+
+
+def test_understand_context_extracts_building_id_from_user_text():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "use this building 01-80-BRAEDGAARDEN9-2",
+            "messages": [{"role": "user", "content": "use this building 01-80-BRAEDGAARDEN9-2"}],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["byggnadsid"] == "01-80-BRAEDGAARDEN9-2"
+    assert result["metadata"]["building_id_from_user"] == "01-80-BRAEDGAARDEN9-2"
+
+
+def test_understand_context_prefers_valid_nested_address_over_polluted_address():
+    module = import_building_flow_graph_module()
+    bad_address = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "show me the data",
+            "messages": [{"role": "user", "content": "show me the data"}],
+            "metadata": {
+                "address": bad_address,
+                "address_from_user": bad_address,
+                "building_identity_check": {
+                    "matched_address": "Professorsslingan 10",
+                    "matched_building_id": "01-80-FYSIKERN1-1",
+                },
+            },
+            "session_state": {},
+        }
+    )
+
+    assert result["context"]["address"] == "Professorsslingan 10"
+    assert result["metadata"]["address"] == "Professorsslingan 10"
+    assert result["metadata"]["address_from_user"] == "Professorsslingan 10"
 
 
 def test_understand_context_promotes_nested_building_match_address():
@@ -270,6 +575,184 @@ def test_understand_context_promotes_nested_building_match_address():
     assert result["context"]["address"] == "Artemisgatan 17"
     assert result["metadata"]["address"] == "Artemisgatan 17"
     assert result["metadata"]["address_from_user"] == "Artemisgatan 17"
+
+
+def test_brf_resolution_asks_for_selection_when_brf_has_multiple_buildings():
+    module = import_building_flow_graph_module()
+    module._lookup_brf_addresses = lambda brf_name: [
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden",
+            "byggnadsid": "01-80-CIGARREN2-1",
+            "fastighet": "Cigarren 2",
+            "address": "Tegelviksgatan 71",
+            "postnr": "11647",
+            "postort": "Stockholm",
+        },
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden",
+            "byggnadsid": "01-80-CIGARREN2-2",
+            "fastighet": "Cigarren 2",
+            "address": "Tegelviksgatan 77",
+            "postnr": "11647",
+            "postort": "Stockholm",
+        },
+    ]
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "We are BRF Sjöstaden, what ventilation system do we have?",
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {},
+        }
+    )
+
+    metadata = result["metadata"]
+    assert metadata["brf_name"] == "Sjöstaden"
+    assert metadata["clarification"]["needed"] is True
+    assert metadata["clarification"]["reason"] == "ambiguous_brf"
+    assert "1. 01-80-CIGARREN2-1" in metadata["clarification"]["question_asked"]
+    assert "2. 01-80-CIGARREN2-2" in metadata["clarification"]["question_asked"]
+    assert metadata["pending_brf_resolution"]["original_question"].startswith("We are BRF")
+
+
+def test_brf_resolution_selects_pending_building_and_restores_original_question():
+    module = import_building_flow_graph_module()
+    pending = {
+        "brf_name": "Sjöstaden",
+        "original_question": "We are BRF Sjöstaden, what ventilation system do we have?",
+        "original_context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+        "options": [
+            {
+                "choice": "1",
+                "byggnadsid": "01-80-CIGARREN2-1",
+                "addresses": ["Tegelviksgatan 71, 11647 Stockholm"],
+            },
+            {
+                "choice": "2",
+                "byggnadsid": "01-80-CIGARREN2-2",
+                "addresses": ["Tegelviksgatan 77, 11647 Stockholm"],
+            },
+        ],
+        "question": "Which building?",
+    }
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "2",
+            "context": {"parsed_intent": "", "intent_list": []},
+            "metadata": {"pending_brf_resolution": pending},
+        }
+    )
+
+    assert result["last_message"] == pending["original_question"]
+    assert result["context"]["intent_list"] == ["SQL database"]
+    assert result["metadata"]["byggnadsid"] == "01-80-CIGARREN2-2"
+    assert result["metadata"]["selected_brf_lookup_address"] == "Tegelviksgatan 77"
+    assert result["metadata"]["clarification"]["needed"] is False
+    assert "pending_brf_resolution" not in result["metadata"]
+
+
+def test_brf_resolution_selects_pending_building_from_building_id_reply():
+    module = import_building_flow_graph_module()
+    pending = {
+        "brf_name": "Sjöstaden 2",
+        "original_question": "I live in BRF Sjöstaden 2. What ventilation system do we have?",
+        "original_context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+        "options": [
+            {
+                "choice": "1",
+                "byggnadsid": "01-80-BRAEDGAARDEN9-2",
+                "addresses": ["Aktergatan 11, 12066 Stockholm", "Aktergatan 13, 12066 Stockholm"],
+            },
+            {
+                "choice": "2",
+                "byggnadsid": "01-80-BRAEDGAARDEN9-1",
+                "addresses": ["Lugnets Allé 22, 12066 Stockholm"],
+            },
+        ],
+        "question": "Which building?",
+    }
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "use this building 01-80-BRAEDGAARDEN9-2",
+            "context": {"parsed_intent": "", "intent_list": []},
+            "metadata": {"pending_brf_resolution": pending},
+        }
+    )
+
+    assert result["last_message"] == pending["original_question"]
+    assert result["metadata"]["byggnadsid"] == "01-80-BRAEDGAARDEN9-2"
+    assert result["metadata"]["selected_brf_lookup_address"] == "Aktergatan 11"
+    assert result["metadata"]["clarification"]["needed"] is False
+    assert "pending_brf_resolution" not in result["metadata"]
+
+
+def test_brf_resolution_ignores_stale_pending_resolution_after_building_selected():
+    module = import_building_flow_graph_module()
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "when was this building built?",
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {
+                "byggnadsid": "01-80-HEDVIG15-1",
+                "selected_brf_building_id": "01-80-HEDVIG15-1",
+                "pending_brf_resolution": {
+                    "brf_name": "Solgläntan 1",
+                    "question": "Which building should I use?",
+                    "options": [
+                        {
+                            "choice": "1",
+                            "byggnadsid": "01-80-HEDVIG15-1",
+                            "addresses": ["Bennebolsgatan 34, 16350 Spånga"],
+                        }
+                    ],
+                },
+                "brf_resolution": {
+                    "status": "resolved_by_user_selection",
+                    "selected_building_id": "01-80-HEDVIG15-1",
+                },
+            },
+        }
+    )
+
+    assert result["metadata"]["byggnadsid"] == "01-80-HEDVIG15-1"
+    assert "pending_brf_resolution" not in result["metadata"]
+    assert "clarification" not in result["metadata"]
+    assert "last_message" not in result
+
+
+def test_brf_resolution_uses_unique_building_id_directly():
+    module = import_building_flow_graph_module()
+    module._lookup_brf_addresses = lambda brf_name: [
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden",
+            "byggnadsid": "01-80-CIGARREN2-1",
+            "address": "Tegelviksgatan 71",
+            "postnr": "11647",
+            "postort": "Stockholm",
+        },
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden",
+            "byggnadsid": "01-80-CIGARREN2-1",
+            "address": "Tengdahlsgatan 40",
+            "postnr": "11647",
+            "postort": "Stockholm",
+        },
+    ]
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "I live in BRF Sjöstaden, what is my energy rating?",
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {},
+        }
+    )
+
+    assert result["metadata"]["byggnadsid"] == "01-80-CIGARREN2-1"
+    assert result["metadata"]["brf_resolution"]["status"] == "resolved_unique_building"
+    assert result["metadata"]["clarification"]["needed"] is False
 
 
 def test_generic_sql_agent_blocks_ambiguous_building_matches():
@@ -317,6 +800,147 @@ def test_generic_sql_agent_allows_multiple_records_for_same_exact_address():
     assert result["metadata"]["building_identity_check"]["status"] == "passed"
     assert result["metadata"]["building_identity_check"]["multiple_records_same_address"] is True
     assert result["agent_data_generic"][0]["address"] == "Artemisgatan 17"
+
+
+def test_generic_sql_agent_allows_multiple_addresses_for_explicit_building_id():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {"byggnadsid": "01-80-CIGARREN2-1", "address": "Tegelviksgatan 71", "energy_class": "F"},
+            {"byggnadsid": "01-80-CIGARREN2-1", "address": "Tengdahlsgatan 40", "energy_class": "F"},
+        ],
+        "trace": {"query_type": "buildings_by_single_filter", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {"byggnadsid": "01-80-CIGARREN2-1"},
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["metadata"]["building_identity_check"]["multiple_addresses_same_explicit_building"] is True
+    assert len(result["agent_data_generic"]) == 2
+
+
+def test_generic_sql_agent_uses_brf_selected_address_fallback_for_building_id():
+    module = import_building_flow_graph_module()
+
+    def fake_execute(op, **kwargs):
+        if op == "buildings_by_building_id":
+            return {
+                "ok": False,
+                "data": [],
+                "trace": {"query_type": "buildings_by_building_id", "execution_status": "not_found"},
+            }
+        if op == "building_by_address":
+            assert kwargs["address"] == "Aktergatan 11"
+            return {
+                "ok": True,
+                "data": [
+                    {
+                        "byggnadsid": "01-80-BRAEDGAARDEN9-2",
+                        "address": "Aktergatan 11",
+                        "epc_venttypftx": "Ja",
+                    }
+                ],
+                "trace": {"query_type": "building_by_address", "execution_status": "success"},
+            }
+        raise AssertionError(op)
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "byggnadsid": "01-80-BRAEDGAARDEN9-2",
+                "selected_brf_lookup_address": "Aktergatan 11",
+                "selected_brf_addresses": ["Aktergatan 11, 12066 Stockholm"],
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "brf_selected_address_fallback"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-80-BRAEDGAARDEN9-2"
+
+
+def test_generic_sql_agent_success_clears_stale_clarification_metadata():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "50a_uuid": "uuid-1",
+                "address": "Artemisgatan 17",
+                "energy_class": "D",
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Artemisgatan 17",
+                "clarification": {
+                    "needed": True,
+                    "reason": "ambiguous_brf",
+                    "question_asked": "Could you clarify?",
+                    "resolved": False,
+                },
+            },
+            "parallel": {},
+        }
+    )
+
+    clarification = result["metadata"]["clarification"]
+    assert clarification["needed"] is False
+    assert clarification["resolved"] is True
+    assert clarification["reason"] is None
+
+
+def test_generic_sql_agent_selects_latest_epc_version_for_same_address():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "01-80-LISSABON2-2",
+                "50a_uuid": "same-building",
+                "address": "Öregrundsgatan 9",
+                "epc_egiversion": "2010",
+                "epc_egienergiklass2020_calc": "G",
+            },
+            {
+                "byggnadsid": "01-80-LISSABON2-2",
+                "50a_uuid": "same-building",
+                "address": "Öregrundsgatan 9",
+                "epc_egiversion": "2020",
+                "epc_egienergiklass2020_calc": "F",
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {"address": "Öregrundsgatan 9"},
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert len(result["agent_data_generic"]) == 1
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-80-LISSABON2-2"
+    assert result["agent_data_generic"][0]["epc_egiversion"] == "2020"
+    assert result["agent_data_generic"][0]["energy_class"] == "F"
+    assert result["metadata"]["generic_sql_trace"]["returned_values_used"]["byggnadsid"] == "01-80-LISSABON2-2"
 
 
 def test_generic_sql_agent_prefers_exact_address_over_related_variants():
@@ -472,3 +1096,49 @@ def test_llm_summarizer_treats_epc_heating_as_confirmed_fact():
     assert facts["heating_system"] == "district heating"
     assert "heating_system" in uncertainty["confirmed_facts"]
     assert "heating_system" not in uncertainty["missing_facts"]
+
+
+def test_llm_summarizer_treats_epc_ventilation_electricity_and_date_as_confirmed():
+    module = import_building_flow_graph_module()
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what are the ECMs?",
+            "messages": [{"role": "user", "content": "what are the ECMs?"}],
+            "context": {
+                "parsed_intent": "SQL database ; vector database",
+                "intent_list": ["SQL database", "vector database"],
+            },
+            "metadata": {"address": "Öregrundsgatan 9"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-80-LISSABON2-2",
+                        "address": "Öregrundsgatan 9",
+                        "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                        "epc_egienergiklass2020_calc": "F",
+                        "epc_egispecifikenergianvandning_calc": 199,
+                        "epc_egifjarrvarme": 665500,
+                        "epc_venttypft": "Ja",
+                        "epc_venttypftx": "Nej",
+                        "epc_el_calc": 132000,
+                        "epc_godkand": "2009-11-23",
+                    }
+                ]
+            },
+        }
+    )
+
+    facts = result["metadata"]["retrieved_facts"]
+    uncertainty = result["metadata"]["uncertainty"]
+    assert facts["ventilation_type"] == "FT"
+    assert facts["electricity_use"] == 132000
+    assert facts["energy_declaration_year"] == 2009
+    assert result["metadata"]["data_freshness"]["energy_declaration_year"] == 2009
+    assert "ventilation_type" in uncertainty["confirmed_facts"]
+    assert "electricity_use" in uncertainty["confirmed_facts"]
+    assert "energy_declaration_year" in uncertainty["confirmed_facts"]
+    assert "ventilation_type" not in uncertainty["missing_facts"]
+    assert "electricity_use" not in uncertainty["missing_facts"]
+    assert "energy_declaration_year" not in uncertainty["missing_facts"]
+    assert uncertainty["missing_facts"] == ["renovation_information"]

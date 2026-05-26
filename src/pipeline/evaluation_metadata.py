@@ -24,6 +24,29 @@ BUILDING_IDENTIFIER_KEYS = (
     "epc_idadr",
 )
 
+SESSION_MEMORY_KEYS = (
+    "address",
+    "address_from_user",
+    "requested_address",
+    "epc_record_address",
+    "same_building_multiple_addresses",
+    "address_context_note",
+    "brf_name",
+    "byggnadsid",
+    "selected_brf_building_id",
+    "selected_brf_addresses",
+    "selected_brf_lookup_address",
+    "building_id_from_user",
+    "pending_brf_resolution",
+    "brf_resolution",
+    "brf_candidate_buildings",
+)
+
+RESOLVED_BRF_STATUSES = {
+    "resolved_by_user_selection",
+    "resolved_unique_building",
+}
+
 CLARIFICATION_PATTERNS = {
     "missing_address": (
         "provide the building address",
@@ -236,6 +259,14 @@ def _build_building_match(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
 def _build_clarification_metadata(route: str, response_text: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
     explicit = metadata.get("clarification")
+    if route != "clarification":
+        return {
+            "needed": False,
+            "reason": None,
+            "question_asked": None,
+            "resolved": True,
+            "resolved_after_turns": 0,
+        }
     if isinstance(explicit, dict) and explicit:
         return explicit
     reason = _infer_clarification_reason(response_text, metadata)
@@ -297,6 +328,16 @@ def _normalize_agent_name(classification: str, raw_agent: Any) -> str:
     return "UnknownAgent"
 
 
+def _has_resolved_brf_selection(metadata: Dict[str, Any]) -> bool:
+    metadata = metadata or {}
+    resolution = metadata.get("brf_resolution")
+    status = resolution.get("status") if isinstance(resolution, dict) else None
+    return bool(
+        status in RESOLVED_BRF_STATUSES
+        or metadata.get("selected_brf_building_id")
+    )
+
+
 def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str, Any]) -> Dict[str, Any]:
     response = response or {}
     session_metadata = session_metadata or {}
@@ -346,6 +387,10 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
         "telemetry": session_metadata.get("telemetry"),
         "model_config": _build_model_config(),
     }
+    for key in SESSION_MEMORY_KEYS:
+        if key == "pending_brf_resolution" and _has_resolved_brf_selection(session_metadata):
+            continue
+        payload[key] = session_metadata.get(key)
 
     return {
         key: value

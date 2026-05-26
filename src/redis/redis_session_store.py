@@ -20,6 +20,15 @@ r = redis.StrictRedis(
 )
 
 _schema_ensured = False
+_EVALUATION_SESSION_STATE: dict[str, Any] = {}
+
+
+def _flag_enabled(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _evaluation_mode_enabled() -> bool:
+    return _flag_enabled("EVALUATION_MODE")
 
 
 def _db_env_configured() -> bool:
@@ -183,6 +192,9 @@ def _persist_session_state_to_db(thread_id: str, state: dict) -> None:
 
 
 def get_session_state(thread_id: str) -> dict:
+    if _evaluation_mode_enabled():
+        return _EVALUATION_SESSION_STATE.get(thread_id, {})
+
     key = f"session:{thread_id}"
     raw = r.get(key)
     restored = _normalize_loaded_state(raw)
@@ -199,6 +211,13 @@ def get_session_state(thread_id: str) -> dict:
 
 
 def update_session_state(thread_id: str, state: dict):
+    if _evaluation_mode_enabled():
+        _EVALUATION_SESSION_STATE[thread_id] = _append_state(
+            _EVALUATION_SESSION_STATE.get(thread_id),
+            state,
+        )
+        return
+
     key = f"session:{thread_id}"
     raw = r.get(key)
     existing = _normalize_loaded_state(raw)

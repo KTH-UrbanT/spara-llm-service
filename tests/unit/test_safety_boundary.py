@@ -67,3 +67,81 @@ def test_message_metadata_includes_safety_boundary_evidence():
     assert metadata["safety_boundary"]["status"] == "passed"
     assert metadata["safety_boundary"]["risk_category"] == "detailed_engineering_calculation"
     assert any(entry["evidence_type"] == "safety_boundary" for entry in evidence)
+
+
+def test_message_metadata_clears_stale_clarification_for_successful_route():
+    metadata = build_message_metadata(
+        {
+            "content": "Building ID: 01-80-FYSIKERN1-1\nThe building uses district heating.",
+            "classification": "building_specific",
+            "route": "building_specific",
+        },
+        {
+            "last_user_message": "Do we have district heating?",
+            "building_id": "01-80-FYSIKERN1-1",
+            "clarification": {
+                "needed": True,
+                "reason": "ambiguous_brf",
+                "question_asked": "Could you clarify your request?",
+                "resolved": False,
+            },
+        },
+    )
+
+    assert metadata["needs_clarification"] is False
+    assert metadata["clarification"]["needed"] is False
+    assert metadata["clarification"]["resolved"] is True
+
+
+def test_message_metadata_preserves_session_memory_fields():
+    metadata = build_message_metadata(
+        {
+            "content": "Building ID: 01-80-SKYTTEN2-2\nThe EPC row uses another address for the same building.",
+            "classification": "building_specific",
+            "route": "building_specific",
+        },
+        {
+            "last_user_message": "Show me the data",
+            "building_id": "01-80-SKYTTEN2-2",
+            "address": "Artemisgatan 17",
+            "address_from_user": "Artemisgatan 17",
+            "requested_address": "Artemisgatan 17",
+            "epc_record_address": "Artemisgatan 13",
+            "same_building_multiple_addresses": True,
+            "address_context_note": "Same building ID with multiple registered addresses.",
+        },
+    )
+
+    assert metadata["address"] == "Artemisgatan 17"
+    assert metadata["address_from_user"] == "Artemisgatan 17"
+    assert metadata["requested_address"] == "Artemisgatan 17"
+    assert metadata["epc_record_address"] == "Artemisgatan 13"
+    assert metadata["same_building_multiple_addresses"] is True
+    assert "multiple registered addresses" in metadata["address_context_note"]
+
+
+def test_message_metadata_drops_stale_pending_brf_resolution_after_selection():
+    metadata = build_message_metadata(
+        {
+            "content": "Building ID: 01-80-HEDVIG15-1\nThe building was constructed in 2005.",
+            "classification": "building_specific",
+            "route": "building_specific",
+        },
+        {
+            "last_user_message": "when was this building built?",
+            "byggnadsid": "01-80-HEDVIG15-1",
+            "selected_brf_building_id": "01-80-HEDVIG15-1",
+            "pending_brf_resolution": {
+                "brf_name": "Solgläntan 1",
+                "question": "Which building should I use?",
+            },
+            "brf_resolution": {
+                "status": "resolved_by_user_selection",
+                "selected_building_id": "01-80-HEDVIG15-1",
+            },
+        },
+    )
+
+    assert metadata["brf_resolution"]["status"] == "resolved_by_user_selection"
+    assert metadata["selected_brf_building_id"] == "01-80-HEDVIG15-1"
+    assert "pending_brf_resolution" not in metadata

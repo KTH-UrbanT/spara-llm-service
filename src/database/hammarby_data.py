@@ -11,6 +11,11 @@ USER = os.getenv('username', 'postgres')
 PASSWORD = os.getenv('password', 'postgres')
 PORT = os.getenv('port', '5432')  # string is fine
 
+
+def _evaluation_mode_enabled() -> bool:
+    return str(os.getenv("EVALUATION_MODE", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def get_connection():
     """Create a new PostgreSQL connection."""
     return psycopg2.connect(
@@ -30,9 +35,12 @@ def query_executor(query: str, params: tuple | dict | None = None):
     - Other statements (INSERT/UPDATE/DELETE/DDL) commit and return a short message
     """
     q = query.strip().lower()
+    is_read = q.startswith("select") or q.startswith("with")
+    if _evaluation_mode_enabled() and not is_read:
+        return "Skipped non-read SQL statement because EVALUATION_MODE is enabled."
     try:
         with get_connection() as conn:
-            if q.startswith("select") or q.startswith("with"):
+            if is_read:
                 # pandas handles cursor creation + fetch; params is passed through safely
                 df = pd.read_sql_query(query, conn, params=params)
                 return df

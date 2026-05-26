@@ -26,6 +26,7 @@ A) building_specific  → choose this whenever ANY of the following is true:
      • “what is the energy performance…”, “what is the energy class…”, “how many kWh…”, “heated area / Atemp…”
      • “HVAC type/ventilation system?”, “end-use breakdown”, “metering rows”
      • what-if / savings questions: “how much would we save if…”, “expected CO2 reduction if…”
+     • relevant/site-specific ECMs or recommendations: “what are the relevant ECMs?”, “which measures should we prioritize?”
      • If the user asks about “energy performance of my/our building”, this is always building_specific.
   4) The user embeds an address anywhere in the text (even if also asking for advice).
 
@@ -85,6 +86,9 @@ Q: How much energy would we save if we upgrade insulation?
 A: building_specific
 
 Q: How do I improve my energy efficiency?
+A: building_specific
+
+Q: So, what are the relevant ECMs?
 A: building_specific
 
 Q: What are best ways to reduce heat loss in old apartments?
