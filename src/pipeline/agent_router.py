@@ -63,7 +63,10 @@ def _fast_conversational_response(message: str) -> Optional[str]:
         return None
 
     if re.fullmatch(r"(hi|hello|hey|hej|good\s+morning|good\s+afternoon|good\s+evening)[.!?]*", lowered):
-        return "Hi! I can help with energy advice and building-specific information when you share a BRF name or street address."
+        return (
+            "Hi! I can help with general energy advice. If you want building-specific "
+            "advice, share a BRF name, street address, or building ID."
+        )
 
     if re.search(
         r"\b(what\s+is\s+this\s+(?:app|application|service)|what\s+can\s+you\s+do|"
@@ -72,8 +75,9 @@ def _fast_conversational_response(message: str) -> Optional[str]:
     ):
         return (
             "SPARA helps BRFs and energy advisors answer questions about energy use, EPC data, "
-            "heating, ventilation, and relevant energy-efficiency measures. Share a BRF name or "
-            "street address when you want building-specific answers."
+            "heating, ventilation, and relevant energy-efficiency measures. You can ask general "
+            "questions without identifying a building; share a BRF name, street address, or "
+            "building ID when you want building-specific answers."
         )
 
     return None
@@ -154,20 +158,7 @@ SITE_SPECIFIC_PATTERNS = (
     r"\bour heating cost(?:s)?\b",
 )
 
-BUILDING_DATA_REQUEST_TERMS = (
-    "energy advice",
-    "energy audit",
-    "energy efficiency",
-    "energy measures",
-    "energy efficiency measures",
-    "recommend measures",
-    "recommended measures",
-    "recommendations",
-    "relevant measures",
-    "which measures",
-    "what measures",
-    "ecm",
-    "ecms",
+FACTUAL_BUILDING_DATA_REQUEST_TERMS = (
     "energy performance",
     "energy class",
     "energiprestanda",
@@ -179,6 +170,59 @@ BUILDING_DATA_REQUEST_TERMS = (
     "district heating",
     "electricity use",
     "energy declaration",
+    "construction year",
+    "built",
+    "u-value",
+    "u-values",
+    "ovk",
+    "energy audit",
+)
+
+ADVISORY_REQUEST_TERMS = (
+    "energy advice",
+    "energy efficiency",
+    "heating costs",
+    "heating bills",
+    "reduce heating",
+    "reduce costs",
+    "save energy",
+    "energy measures",
+    "energy efficiency measures",
+    "recommend measures",
+    "recommended measures",
+    "recommendations",
+    "relevant measures",
+    "which measures",
+    "what measures",
+    "prioritize",
+    "prioritise",
+    "ecm",
+    "ecms",
+    "solar pv",
+    "solar panels",
+    "ventilation issues",
+    "geothermal",
+    "bergvärme",
+    "heat pump",
+)
+
+GENERIC_ADVISORY_CONTEXT_TERMS = ADVISORY_REQUEST_TERMS + (
+    "district heating",
+    "fjärrvärme",
+    "heating bill",
+    "heating bills",
+    "renovation priorities",
+    "low-regret",
+)
+
+GENERIC_ADVISORY_CONTINUATION_PATTERNS = (
+    r"\bwhat\s+should\s+(?:we|i)\s+do\s+first\b",
+    r"\bwhat\s+(?:should|can|could)\s+(?:we|i)\s+do\b",
+    r"\b(?:so\s+)?what\s+does\s+that\s+mean\b",
+    r"\bthe\s+building\s+is\s+from\s+the\s+\d{2,4}s?\b",
+    r"\b(?:district heating|fj[äa]rrv[äa]rme)\b",
+    r"\b(?:multi[-\s]?family|apartment building|brf)\b",
+    r"\b(?:courtyard|inner yard|roof|shading|tariff|heating bills?|ventilation issues?)\b",
 )
 
 BUILDING_CONTEXT_METADATA_KEYS = (
@@ -356,18 +400,30 @@ def _has_recent_building_context(messages: List[Dict[str, Any]], metadata: Dict[
     return False
 
 
-def _has_recent_site_specific_user_context(messages: List[Dict[str, Any]]) -> bool:
+def _has_recent_generic_advisory_context(messages: List[Dict[str, Any]]) -> bool:
     for message in reversed((messages or [])[:-1]):
-        if message.get("role") != "user":
-            continue
-
         content = str(message.get("content") or "")
         lowered = content.lower()
-        if BUILDING_ID_RE.search(content):
+
+        if not content.strip():
+            continue
+        if _has_explicit_site_identifier(content):
+            return False
+        if _looks_like_factual_building_data_request(content):
+            continue
+
+        classification = _normalize_classification(message.get("classification"))
+        if classification == "building_specific":
+            return False
+        if classification == "generic" and re.search(
+            r"\b(?:energy|heating|ventilation|solar|geothermal|ecms?|measures?|renovation)\b",
+            lowered,
+        ):
             return True
-        if _looks_like_address(content):
+
+        if _looks_like_advisory_request(content):
             return True
-        if any(re.search(pattern, lowered) for pattern in SITE_SPECIFIC_PATTERNS):
+        if any(term in lowered for term in GENERIC_ADVISORY_CONTEXT_TERMS):
             return True
 
     return False
@@ -411,18 +467,116 @@ def _looks_like_contextual_building_followup(message: str) -> bool:
     return any(re.search(pattern, lowered) for pattern in CONTENTFUL_FOLLOWUP_PATTERNS)
 
 
+def _has_explicit_site_identifier(message: str) -> bool:
+    text = str(message or "")
+    return bool(
+        BUILDING_ID_RE.search(text)
+        or _looks_like_address(text)
+        or STREET_ADDRESS_FRAGMENT_RE.search(text)
+    )
+
+
+def _looks_like_advisory_request(message: str) -> bool:
+    lowered = str(message or "").lower()
+    if not lowered.strip():
+        return False
+    if any(term in lowered for term in ADVISORY_REQUEST_TERMS):
+        return True
+    return bool(
+        re.search(r"\b(?:how|what|which)\b.*\b(?:reduce|lower|save|improve|optimi[sz]e|prioriti[sz]e)\b", lowered)
+        and re.search(r"\b(?:energy|heating|electricity|ventilation|solar|costs?|bills?)\b", lowered)
+    )
+
+
+def _looks_like_factual_building_data_request(message: str) -> bool:
+    lowered = str(message or "").lower()
+    if not lowered.strip():
+        return False
+    has_factual_term = any(term in lowered for term in FACTUAL_BUILDING_DATA_REQUEST_TERMS)
+    asks_for_fact = bool(
+        re.search(r"^\s*(?:what|which|when|where|does|do|is|are)\b", lowered)
+        or re.search(r"\b(?:what|which|when|where)\b", lowered)
+        or re.search(r"\bhow\s+(?:much|many)\b", lowered)
+        or re.search(
+            r"\b(?:know|tell|show|give|provide|find|check|look\s+up|quote|list|calculate|read|explain)\b",
+            lowered,
+        )
+        or re.search(r"\bright\s*\??\s*$", lowered)
+    )
+    if has_factual_term and asks_for_fact:
+        return True
+    return bool(
+        re.search(r"\b(?:what|which|when|does|do|is|are)\b.*\b(?:our|my|this)\b.*\b(?:building|property|brf|declaration|ovk)\b", lowered)
+        or re.search(r"\b(?:do|does)\s+(?:we|our|my)\s+have\b", lowered)
+    )
+
+
+def _asks_for_personalized_priorities_without_identity(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return bool(
+        re.search(r"\bspecifically\b", lowered)
+        or re.search(r"\bgiven\s+(?:our|my)\b", lowered)
+        or re.search(r"\b(?:for|in)\s+(?:our|my|this)\s+(?:building|property|brf)\b", lowered)
+        or re.search(r"\b(?:our|my)\s+(?:building|property|brf)\b.*\b(?:prioriti[sz]e|recommend|measure|ecm)\b", lowered)
+    )
+
+
+def _advisory_without_resolved_building_context(
+    message: str,
+    messages: List[Dict[str, Any]],
+    metadata: Dict[str, Any],
+) -> bool:
+    if not _looks_like_advisory_request(message):
+        return False
+    if _has_explicit_site_identifier(message):
+        return False
+    if _has_recent_building_context(messages, metadata):
+        return False
+    if _looks_like_factual_building_data_request(message):
+        return False
+    if _asks_for_personalized_priorities_without_identity(message):
+        return False
+    return True
+
+
+def _generic_advisory_continuation_without_resolved_building(
+    message: str,
+    messages: List[Dict[str, Any]],
+    metadata: Dict[str, Any],
+) -> bool:
+    lowered = str(message or "").lower()
+    if not lowered.strip():
+        return False
+    if _has_explicit_site_identifier(message):
+        return False
+    if _has_recent_building_context(messages, metadata):
+        return False
+    if _looks_like_factual_building_data_request(message):
+        return False
+    if _asks_for_personalized_priorities_without_identity(message):
+        return False
+    if not _has_recent_generic_advisory_context(messages):
+        return False
+    return bool(
+        _looks_like_advisory_request(message)
+        or _looks_like_contextual_building_followup(message)
+        or any(re.search(pattern, lowered) for pattern in GENERIC_ADVISORY_CONTINUATION_PATTERNS)
+    )
+
+
 def _requires_building_specific_flow(message: str) -> bool:
     lowered = str(message or "").lower()
     if not lowered.strip():
         return False
 
-    if BUILDING_ID_RE.search(message or ""):
+    if _has_explicit_site_identifier(message):
         return True
 
-    if _looks_like_address(message):
-        return True
-
-    if re.search(r"\b(?:my|our)\s+(?:energy|heating|electricity)", lowered):
+    if re.search(
+        r"\b(?:my|our)\s+(?:energy\s+performance|energy\s+class|heating\s+system|"
+        r"ventilation|electricity\s+use|district\s+heating|energy\s+declaration)\b",
+        lowered,
+    ):
         return True
 
     if "energy audit" in lowered and re.search(
@@ -435,22 +589,14 @@ def _requires_building_specific_flow(message: str) -> bool:
     if not site_specific:
         return False
 
-    if any(term in lowered for term in BUILDING_DATA_REQUEST_TERMS):
+    if _looks_like_factual_building_data_request(message):
         return True
 
-    return any(
-        phrase in lowered
-        for phrase in (
-            "what should",
-            "what is",
-            "what are",
-            "how can",
-            "how much",
-            "which",
-            "does",
-            "do we",
-            "should we",
-        )
+    return bool(
+        re.search(r"\bhow much\b", lowered)
+        or re.search(r"\b(?:do|does)\s+(?:we|our|my)\b", lowered)
+        or re.search(r"\bwhat\s+(?:is|are)\s+(?:our|my)\b", lowered)
+        or re.search(r"\bwhich\s+(?:building|address|entrance)\b", lowered)
     )
 
 
@@ -464,10 +610,7 @@ def _requires_building_specific_followup(
         or _looks_like_building_profile_followup(message)
         or _looks_like_building_data_explanation_followup(message)
         or _looks_like_contextual_building_followup(message)
-    ) and (
-        _has_recent_building_context(messages, metadata)
-        or _has_recent_site_specific_user_context(messages)
-    )
+    ) and _has_recent_building_context(messages, metadata)
 
 
 def _normalize_response(
@@ -665,11 +808,27 @@ class AgentRouter:
             classified = self.router.classify_question(last_message, previous_classification)
 
         classified = _normalize_classification(classified)
+        broad_advice_without_identity = _advisory_without_resolved_building_context(
+            last_message,
+            messages,
+            base_metadata,
+        )
+        generic_advisory_continuation = _generic_advisory_continuation_without_resolved_building(
+            last_message,
+            messages,
+            base_metadata,
+        )
         requires_building_specific = (
             _requires_building_specific_flow(last_message)
             or _requires_building_specific_followup(last_message, messages, base_metadata)
         )
-        if classified in {"generic", "conversational"} and requires_building_specific:
+        if (
+            broad_advice_without_identity
+            or generic_advisory_continuation
+        ) and not expert_handoff_requested_by_phrase:
+            if classified in {"building_specific", "expert_handoff", "conversational"}:
+                classified = "generic"
+        elif classified in {"generic", "conversational"} and requires_building_specific:
             classified = "building_specific"
         elif classified == "expert_handoff" and requires_building_specific and not expert_handoff_requested_by_phrase:
             classified = "building_specific"

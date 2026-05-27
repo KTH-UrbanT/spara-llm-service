@@ -19,25 +19,32 @@ A) building_specific  → choose this whenever ANY of the following is true:
   1) The message mentions a concrete LOCATION / ID for a single site, e.g.:
      • “at <street + number>”, “for <address>”, “I live at <address>”
      • patterns like: “Main Street 12”, “Hammarby Allé 24”, “Objektidentitet …”
-  2) The message uses possessives that imply the user’s site:
+  2) The message asks for facts, fields, records, or calculations about the user’s site:
      • “my building”, “our building”, “my apartment building”, “our property”
-     • “my energy efficiency”, “our energy use”, “my heating costs”
+     • “our energy class”, “our energy performance”, “our ventilation”, “our heating system”
   3) The question would require per-building data or a per-building calculation:
      • “what is the energy performance…”, “what is the energy class…”, “how many kWh…”, “heated area / Atemp…”
      • “HVAC type/ventilation system?”, “end-use breakdown”, “metering rows”
      • what-if / savings questions: “how much would we save if…”, “expected CO2 reduction if…”
-     • relevant/site-specific ECMs or recommendations: “what are the relevant ECMs?”, “which measures should we prioritize?”
+     • site-specific ECMs or recommendations when a building is already identified or the user explicitly asks for personalization:
+       “for our building specifically…”, “given our building data…”, “which measures should this building prioritize?”
      • If the user asks about “energy performance of my/our building”, this is always building_specific.
   4) The user embeds an address anywhere in the text (even if also asking for advice).
 
 B) generic  → general knowledge or advice not tied to a specific site:
   • “What does energy class B mean?”  “How to reduce heat loss in old apartments?”
   • “Best ventilation practices?”
+  • “We are a BRF in Stockholm. How can we reduce heating costs?”
+  • “We have district heating. How can we reduce costs without big renovations?”
+  • “Can you recommend common energy-efficiency measures for a BRF?”
+  • “We have high heating bills.”
+  • “The building is from the 60s and has district heating.”
+  • “We’re a multi-family BRF, and the courtyard is small.”
+  A user may mention being a BRF member/board and still want generic advice. In that case,
+  answer generally and invite them to share a BRF name, address, or building ID for tailored advice.
 
 C) conversational  → greetings, small talk, meta questions about the app/assistant.
   • “Hi, what is this?” “Who built you?” “Thanks!”
-  • “Can you send this to an expert?” “Email this conversation to EKR”
-  • “This is too hard, I want human help”
 
 D) cluster  → questions about MULTIPLE buildings, portfolios, or areas.
   • “Compare all buildings in Södermalm”, “Top 10 worst performers in our portfolio”, “Average for buildings in …”
@@ -56,13 +63,14 @@ F) expert_handoff → requests to escalate the conversation to a human expert / 
   • “This is too complicated, I need an expert”
 
 ## Tie-breakers (apply in order)
-1) If both generic and building_specific signals appear, choose **building_specific**.
-   (Any address or “my/our building” ⇒ building_specific.)
-2) If the user’s primary intent is to generate or download a draft report, choose **draft_energy_report**.
-3) If the user’s primary intent is to escalate to an expert or send the conversation to EKR, choose **expert_handoff** even if the prior conversation was about a building.
-4) If both building_specific and cluster signals appear, choose **cluster** (group request wins).
-5) Only choose conversational when the message clearly contains no informational request and is not asking for report generation or expert handoff.
-6) If uncertain between generic and conversational, choose **generic** only if the user asks for energy info.
+1) A concrete address/building ID or a request for the user’s own facts wins → **building_specific**.
+2) Broad advisory questions without a resolved building stay **generic**, even if the user says they
+   represent a BRF. The answer can offer to personalize after receiving a BRF/address/building ID.
+3) If the user’s primary intent is to generate or download a draft report, choose **draft_energy_report**.
+4) If the user’s primary intent is to escalate to an expert or send the conversation to EKR, choose **expert_handoff** even if the prior conversation was about a building.
+5) If both building_specific and cluster signals appear, choose **cluster** (group request wins).
+6) Only choose conversational when the message clearly contains no informational request and is not asking for report generation or expert handoff.
+7) If uncertain between generic and conversational, choose **generic** only if the user asks for energy info.
 
 ## Output
 Return ONLY one word: building_specific | generic | conversational | cluster | draft_energy_report | expert_handoff
@@ -86,9 +94,24 @@ Q: How much energy would we save if we upgrade insulation?
 A: building_specific
 
 Q: How do I improve my energy efficiency?
-A: building_specific
+A: generic
 
-Q: So, what are the relevant ECMs?
+Q: We are a BRF in Stockholm. How can we reduce heating costs?
+A: generic
+
+Q: Can you recommend common ECMs for a BRF?
+A: generic
+
+Q: We have high heating bills.
+A: generic
+
+Q: The building is from the 60s and has district heating.
+A: generic
+
+Q: We’re a multi-family BRF, and the courtyard is small.
+A: generic
+
+Q: So, what are the relevant ECMs for this building?
 A: building_specific
 
 Q: What are best ways to reduce heat loss in old apartments?

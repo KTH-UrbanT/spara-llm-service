@@ -140,6 +140,7 @@ def test_fast_conversational_greeting_skips_conversational_agent():
     assert response["classification"] == "conversational"
     assert response["agent_answered"] == "fast_conversational"
     assert "energy advice" in response["content"]
+    assert "If you want building-specific advice" in response["content"]
     assert metadata == {"kept": True}
     assert StubConversationalAgent.last_call is None
 
@@ -244,6 +245,50 @@ def test_building_data_request_overrides_generic_classifier_label():
     assert metadata == {"address": ["street 1"]}
 
 
+def test_broad_brf_heating_cost_advice_overrides_building_classifier_to_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "general heating cost advice"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "We are a BRF in Stockholm. How can we reduce our heating costs?",
+            }
+        ],
+        last_message="We are a BRF in Stockholm. How can we reduce our heating costs?",
+        metadata={},
+        thread_id="thread-broad-brf-heating-costs",
+    )
+
+    assert response["content"] == "general heating cost advice"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_our_energy_class_still_requires_building_specific_flow():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "What is our energy class?"}],
+        last_message="What is our energy class?",
+        metadata={},
+        thread_id="thread-our-energy-class",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
 def test_brf_name_building_data_request_overrides_generic_classifier_label():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "general"
@@ -268,9 +313,10 @@ def test_brf_name_building_data_request_overrides_generic_classifier_label():
     assert metadata == {"address": ["street 1"]}
 
 
-def test_brf_energy_advice_overrides_expert_handoff_classifier_label():
+def test_brf_energy_advice_overrides_expert_handoff_classifier_label_to_generic_advice():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "expert_handoff"
+    StubGenericAgent.next_response = "general brf energy advice"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -285,11 +331,11 @@ def test_brf_energy_advice_overrides_expert_handoff_classifier_label():
         thread_id="thread-brf-energy-advice",
     )
 
-    assert response["content"] == "building answer"
-    assert response["classification"] == "building_specific"
-    assert response["agent_answered"] == "building"
-    assert response["route"] == "combined"
-    assert metadata == {"address": ["street 1"]}
+    assert response["content"] == "general brf energy advice"
+    assert response["classification"] == "generic"
+    assert response["agent_answered"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
 
 
 def test_explicit_expert_handoff_wins_even_when_brf_is_mentioned():
@@ -314,9 +360,10 @@ def test_explicit_expert_handoff_wins_even_when_brf_is_mentioned():
     assert metadata["expert_handoff_pending_confirmation"] is True
 
 
-def test_brf_measure_recommendation_overrides_generic_classifier_label():
+def test_brf_measure_recommendation_without_building_identity_stays_generic():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = "general measures answer"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -331,16 +378,17 @@ def test_brf_measure_recommendation_overrides_generic_classifier_label():
         thread_id="thread-brf-recommend-measures",
     )
 
-    assert response["content"] == "building answer"
-    assert response["classification"] == "building_specific"
-    assert response["route"] == "combined"
-    assert metadata == {"address": ["street 1"]}
+    assert response["content"] == "general measures answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
 
 
-def test_recommend_measures_followup_after_wrong_handoff_prompt_routes_to_building_agent():
+def test_recommend_measures_followup_after_wrong_handoff_prompt_routes_to_generic_advice():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "expert_handoff"
     StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "generic ecm answer"
     router = module.AgentRouter()
 
     messages = [
@@ -366,12 +414,12 @@ def test_recommend_measures_followup_after_wrong_handoff_prompt_routes_to_buildi
         thread_id="thread-recommend-measures-after-handoff",
     )
 
-    assert response["content"] == "building answer"
-    assert response["classification"] == "building_specific"
-    assert response["route"] == "combined"
-    assert metadata == {"address": ["street 1"]}
-    assert StubBuildingAgent.last_call is not None
-    assert StubBuildingAgent.last_call[2]["expert_handoff_pending_confirmation"] is False
+    assert response["content"] == "generic ecm answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {"expert_handoff_pending_confirmation": False}
+    assert StubBuildingAgent.last_call is None
+    assert StubGenericAgent.last_call[0] == "No, I mean can you recommend measures"
 
 
 def test_our_energy_audit_request_overrides_expert_handoff_classifier_label():
@@ -421,9 +469,10 @@ def test_building_id_message_overrides_generic_classifier_label():
     assert metadata == {"address": ["street 1"]}
 
 
-def test_personal_energy_efficiency_request_overrides_generic_classifier_label():
+def test_personal_energy_efficiency_request_without_building_identity_stays_generic():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
+    StubGenericAgent.next_response = "general efficiency answer"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -438,10 +487,115 @@ def test_personal_energy_efficiency_request_overrides_generic_classifier_label()
         thread_id="thread-personal-energy",
     )
 
-    assert response["content"] == "building answer"
-    assert response["classification"] == "building_specific"
-    assert response["route"] == "combined"
-    assert metadata == {"address": ["street 1"]}
+    assert response["content"] == "general efficiency answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+
+
+def test_generic_heating_bills_constraints_do_not_force_building_identity():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "generic district heating constraints answer"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "We have high heating bills."},
+        {
+            "role": "assistant",
+            "classification": "generic",
+            "content": "Start with meter checks, heating curve review, and radiator balancing.",
+        },
+        {
+            "role": "user",
+            "content": "The building is from the 60s and has district heating.",
+        },
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="The building is from the 60s and has district heating.",
+        metadata={},
+        thread_id="thread-generic-heating-constraints",
+    )
+
+    assert response["content"] == "generic district heating constraints answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_generic_heating_bills_next_step_followup_stays_generic_without_resolved_building():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "generic first step answer"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "We have high heating bills."},
+        {
+            "role": "assistant",
+            "classification": "generic",
+            "content": "Start with a general diagnostic sequence.",
+        },
+        {"role": "user", "content": "The building is from the 60s and has district heating."},
+        {
+            "role": "assistant",
+            "classification": "generic",
+            "content": "That points toward controls, balancing, and substation checks.",
+        },
+        {"role": "user", "content": "What should we do first?"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="What should we do first?",
+        metadata={},
+        thread_id="thread-generic-heating-next-step",
+    )
+
+    assert response["content"] == "generic first step answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_generic_geothermal_constraint_followup_stays_generic_without_resolved_building():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "generic geothermal feasibility answer"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "Can we install geothermal?"},
+        {
+            "role": "assistant",
+            "classification": "generic",
+            "content": "Feasibility depends on ground conditions, space, permits, and heat demand.",
+        },
+        {
+            "role": "user",
+            "content": "We're a multi-family BRF, and the courtyard is small.",
+        },
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="We're a multi-family BRF, and the courtyard is small.",
+        metadata={},
+        thread_id="thread-generic-geothermal-constraints",
+    )
+
+    assert response["content"] == "generic geothermal feasibility answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
 
 
 def test_routes_generic_requests_with_structured_sources():
