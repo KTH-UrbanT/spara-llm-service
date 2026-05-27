@@ -144,6 +144,62 @@ def test_fast_conversational_greeting_skips_conversational_agent():
     assert StubConversationalAgent.last_call is None
 
 
+def test_fast_multi_address_policy_question_skips_classifier_and_building_agent():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubRouterAgent.last_call = None
+    StubBuildingAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "Our property has multiple addresses. Which one do you use?",
+            }
+        ],
+        last_message="Our property has multiple addresses. Which one do you use?",
+        metadata={"kept": True},
+        thread_id="thread-multi-address-policy",
+    )
+
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "fast_multi_address_clarification"
+    assert response["route"] == "clarification"
+    assert "building ID" in response["content"]
+    assert "actual addresses" in response["content"]
+    assert metadata["kept"] is True
+    assert metadata["clarification"]["reason"] == "missing_multi_address_values"
+    assert StubRouterAgent.last_call is None
+    assert StubBuildingAgent.last_call is None
+
+
+def test_multi_address_with_actual_addresses_still_goes_to_building_agent():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "general"
+    StubRouterAgent.last_call = None
+    StubBuildingAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+            }
+        ],
+        last_message="Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+        metadata={},
+        thread_id="thread-multi-address-values",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call is not None
+    assert StubRouterAgent.last_call is None
+
+
 def test_normalizes_general_classifier_label_to_generic():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "general"
@@ -208,6 +264,135 @@ def test_brf_name_building_data_request_overrides_generic_classifier_label():
     assert response["content"] == "building answer"
     assert response["classification"] == "building_specific"
     assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_brf_energy_advice_overrides_expert_handoff_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "expert_handoff"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "I represent brf friskytten. Can you help me with energy advice",
+            }
+        ],
+        last_message="I represent brf friskytten. Can you help me with energy advice",
+        metadata={},
+        thread_id="thread-brf-energy-advice",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_explicit_expert_handoff_wins_even_when_brf_is_mentioned():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "I represent BRF Friskytten. Can you send this to an expert?",
+            }
+        ],
+        last_message="I represent BRF Friskytten. Can you send this to an expert?",
+        metadata={},
+        thread_id="thread-brf-explicit-expert",
+    )
+
+    assert response["classification"] == "expert_handoff"
+    assert response["route"] == "expert_handoff"
+    assert metadata["expert_handoff_pending_confirmation"] is True
+
+
+def test_brf_measure_recommendation_overrides_generic_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "We are BRF Friskytten. Can you recommend measures?",
+            }
+        ],
+        last_message="We are BRF Friskytten. Can you recommend measures?",
+        metadata={},
+        thread_id="thread-brf-recommend-measures",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_recommend_measures_followup_after_wrong_handoff_prompt_routes_to_building_agent():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "expert_handoff"
+    StubBuildingAgent.last_call = None
+    router = module.AgentRouter()
+
+    messages = [
+        {
+            "role": "user",
+            "content": "I represent brf friskytten. Can you help me with energy advice",
+        },
+        {
+            "role": "assistant",
+            "content": "I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
+            "classification": "expert_handoff",
+        },
+        {
+            "role": "user",
+            "content": "No, I mean can you recommend measures",
+        },
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="No, I mean can you recommend measures",
+        metadata={"expert_handoff_pending_confirmation": True},
+        thread_id="thread-recommend-measures-after-handoff",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call is not None
+    assert StubBuildingAgent.last_call[2]["expert_handoff_pending_confirmation"] is False
+
+
+def test_our_energy_audit_request_overrides_expert_handoff_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "expert_handoff"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "Our bed would like to have an energy audit",
+            }
+        ],
+        last_message="Our bed would like to have an energy audit",
+        metadata={},
+        thread_id="thread-energy-audit",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
     assert response["route"] == "combined"
     assert metadata == {"address": ["street 1"]}
 

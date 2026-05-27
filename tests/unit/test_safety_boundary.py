@@ -1,6 +1,7 @@
 from src.pipeline.evaluation_metadata import build_message_evidence, build_message_metadata
 from src.pipeline.safety_analysis import (
     assess_boundary_safety,
+    assess_building_identity,
     build_out_of_scope_response,
 )
 
@@ -118,6 +119,23 @@ def test_message_metadata_preserves_session_memory_fields():
     assert metadata["epc_record_address"] == "Artemisgatan 13"
     assert metadata["same_building_multiple_addresses"] is True
     assert "multiple registered addresses" in metadata["address_context_note"]
+
+
+def test_building_identity_passes_when_many_addresses_share_same_building_id():
+    identity = assess_building_identity(
+        {"context": {"ambiguous": True}},
+        [
+            {"byggnadsid": "01-80-SKYTTEN2-2", "address": "Artemisgatan 13"},
+            {"byggnadsid": "01-80-SKYTTEN2-2", "address": "Artemisgatan 15"},
+            {"byggnadsid": "01-80-SKYTTEN2-2", "address": "Artemisgatan 17"},
+        ],
+    )
+
+    assert identity["status"] == "passed"
+    assert identity["ambiguous"] is False
+    assert identity["multiple_matches"] is False
+    assert identity["multiple_addresses_same_building_id"] is True
+    assert identity["matched_building_id"] == "01-80-SKYTTEN2-2"
 
 
 def test_message_metadata_drops_stale_pending_brf_resolution_after_selection():

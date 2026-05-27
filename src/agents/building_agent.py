@@ -1,7 +1,10 @@
 # src/agents/building_agent.py
 import time
 from typing import Any, Dict
-from src.agents.building_flow_graph import build_building_flow_graph
+from src.agents.building_flow_graph import (
+    build_building_flow_graph,
+    resolve_multi_address_identity_message,
+)
 from src.agents.building_response_prompt import merge_identifier_metadata
 from src.pipeline.telemetry import record_component_latency
 from src.redis.redis_session_store import get_session_state, update_session_state
@@ -20,6 +23,56 @@ def _vector_source_keys(final_state: Dict[str, Any]) -> list:
             return vector_data.get("sources") or []
 
     return final_state.get("agent_vector_sources") or []
+
+
+def _latest_session_state(session_state: Any) -> Dict[str, Any]:
+    if isinstance(session_state, dict):
+        return dict(session_state)
+    if isinstance(session_state, list):
+        for item in reversed(session_state):
+            if isinstance(item, dict):
+                return dict(item)
+    return {}
+
+
+def _direct_resolution_metadata(
+    metadata: Dict[str, Any],
+    session_state: Any,
+) -> Dict[str, Any]:
+    latest_state = _latest_session_state(session_state)
+    latest_metadata = latest_state.get("metadata") if isinstance(latest_state.get("metadata"), dict) else {}
+    merged = dict(latest_metadata or {})
+
+    for key in (
+        "brf_name",
+        "brf_resolution",
+        "pending_brf_resolution",
+        "brf_candidate_buildings",
+        "selected_brf_building_id",
+        "selected_brf_addresses",
+        "selected_brf_lookup_address",
+        "byggnadsid",
+        "building_id_from_user",
+    ):
+        value = latest_state.get(key)
+        if value not in (None, "", [], {}) and key not in merged:
+            merged[key] = value
+
+    for key, value in (metadata or {}).items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+
+    brf_resolution = merged.get("brf_resolution")
+    if isinstance(brf_resolution, dict):
+        selected_building_id = brf_resolution.get("selected_building_id")
+        if selected_building_id not in (None, "", [], {}):
+            merged.setdefault("selected_brf_building_id", selected_building_id)
+            merged.setdefault("byggnadsid", selected_building_id)
+        selected_addresses = brf_resolution.get("selected_addresses")
+        if selected_addresses not in (None, "", [], {}):
+            merged.setdefault("selected_brf_addresses", selected_addresses)
+
+    return merge_identifier_metadata(merged, latest_state)
 
 
 class BuildingAgent:
@@ -77,6 +130,28 @@ class BuildingAgent:
             "last_message": last_message,
             "session_state": session_state,
         }
+
+        direct_multi_address_state = resolve_multi_address_identity_message(
+            last_message,
+            _direct_resolution_metadata(metadata or {}, session_state),
+        )
+        if direct_multi_address_state:
+            update_session_state(thread_id, direct_multi_address_state)
+            response = direct_multi_address_state.get("final_response") or "No output was generated."
+            md = direct_multi_address_state.get("metadata") or {}
+            route = "clarification" if (md.get("clarification") or {}).get("needed") else "building_specific"
+            metadata_payload = merge_identifier_metadata(md, direct_multi_address_state)
+            payload = {
+                "content": response,
+                "classification": "building_specific",
+                "route": route,
+                "parsed_intent": None,
+                "intent_list": [],
+                "agent_answered": ["ODEN API"],
+            }
+            record_component_latency("building_agent", time.perf_counter() - started_at)
+            return payload, metadata_payload
+
         self.graph = build_building_flow_graph()
         try:
             #print(initial_state)

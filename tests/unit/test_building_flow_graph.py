@@ -276,6 +276,58 @@ def test_understand_context_promotes_personal_energy_advice_to_hybrid_intent():
     assert result["context"]["parsed_intent"] == "SQL database ; vector database"
     assert result["context"]["intent_list"] == ["SQL database", "vector database"]
     assert result["context"]["ambiguous"] is False
+    assert result["context"]["advice_type"] == "ecm"
+    assert result["context"]["answer_focus"] == "How do I improve my energy efficiency?"
+    assert result["metadata"]["pending_building_advice_request"]["type"] == "ecm"
+
+
+def test_understand_context_restores_pending_ecm_request_for_brf_identity_followup():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    pending = {
+        "question": "We are a BRF in Stockholm. How can we reduce our heating costs?",
+        "type": "ecm",
+        "context": {
+            "parsed_intent": "SQL database ; vector database",
+            "intent_list": ["SQL database", "vector database"],
+            "effective_query": "reduce heating costs energy conservation measures ECM",
+            "answer_focus": "We are a BRF in Stockholm. How can we reduce our heating costs?",
+            "advice_type": "ecm",
+        },
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "ohh, sorry. We are brf Sjöstaden 2",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "We are a BRF in Stockholm. How can we reduce our heating costs?",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please share the full street address so I can use the correct building.",
+                },
+                {"role": "user", "content": "ohh, sorry. We are brf Sjöstaden 2"},
+            ],
+            "metadata": {},
+            "session_state": {"metadata": {"pending_building_advice_request": pending}},
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "SQL database ; vector database"
+    assert result["context"]["intent_list"] == ["SQL database", "vector database"]
+    assert result["context"]["answer_focus"] == pending["question"]
+    assert result["context"]["advice_type"] == "ecm"
+    assert "energy conservation measures" in result["context"]["effective_query"]
 
 
 def test_understand_context_promotes_ecm_followup_with_prior_building_context():
@@ -615,6 +667,17 @@ def test_brf_resolution_asks_for_selection_when_brf_has_multiple_buildings():
     assert metadata["pending_brf_resolution"]["original_question"].startswith("We are BRF")
 
 
+def test_brf_resolution_does_not_treat_location_phrase_as_brf_name():
+    module = import_building_flow_graph_module()
+
+    assert (
+        module._extract_brf_name_from_text(
+            "We are a BRF in Stockholm. How can we reduce our heating costs?"
+        )
+        is None
+    )
+
+
 def test_brf_resolution_selects_pending_building_and_restores_original_question():
     module = import_building_flow_graph_module()
     pending = {
@@ -650,6 +713,43 @@ def test_brf_resolution_selects_pending_building_and_restores_original_question(
     assert result["metadata"]["selected_brf_lookup_address"] == "Tegelviksgatan 77"
     assert result["metadata"]["clarification"]["needed"] is False
     assert "pending_brf_resolution" not in result["metadata"]
+
+
+def test_brf_resolution_carries_pending_ecm_question_into_brf_selection():
+    module = import_building_flow_graph_module()
+    module._lookup_brf_addresses = lambda brf_name: [
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden 2",
+            "byggnadsid": "01-80-BRAEDGAARDEN9-2",
+            "address": "Aktergatan 11",
+            "postnr": "12066",
+            "postort": "Stockholm",
+        },
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden 2",
+            "byggnadsid": "01-80-BRAEDGAARDEN9-1",
+            "address": "Lugnets Allé 22",
+            "postnr": "12066",
+            "postort": "Stockholm",
+        },
+    ]
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "ohh, sorry. We are brf Sjöstaden 2",
+            "context": {
+                "parsed_intent": "SQL database ; vector database",
+                "intent_list": ["SQL database", "vector database"],
+                "answer_focus": "We are a BRF in Stockholm. How can we reduce our heating costs?",
+                "advice_type": "ecm",
+            },
+            "metadata": {},
+        }
+    )
+
+    pending = result["metadata"]["pending_brf_resolution"]
+    assert pending["original_question"] == "We are a BRF in Stockholm. How can we reduce our heating costs?"
+    assert pending["original_context"]["advice_type"] == "ecm"
 
 
 def test_brf_resolution_selects_pending_building_from_building_id_reply():
@@ -826,6 +926,296 @@ def test_generic_sql_agent_allows_multiple_addresses_for_explicit_building_id():
     assert len(result["agent_data_generic"]) == 2
 
 
+def test_generic_sql_agent_allows_multiple_addresses_for_same_building_id_without_explicit_id():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {"byggnadsid": "01-80-CIGARREN2-1", "address": "Tegelviksgatan 71", "energy_class": "F"},
+            {"byggnadsid": "01-80-CIGARREN2-1", "address": "Tengdahlsgatan 40", "energy_class": "F"},
+        ],
+        "trace": {"query_type": "buildings_by_single_filter", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {"epc_idadr": "Tegelviksgatan 71"},
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    identity = result["metadata"]["building_identity_check"]
+    assert identity["status"] == "passed"
+    assert identity["ambiguous"] is False
+    assert identity["multiple_addresses_same_building_id"] is True
+    assert result["metadata"]["byggnadsid"] == "01-80-CIGARREN2-1"
+
+
+def test_extracts_multiple_addresses_from_identity_question():
+    module = import_building_flow_graph_module()
+
+    addresses = module._extract_address_candidates_from_text(
+        "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?"
+    )
+
+    assert addresses == ["Artemisgatan 17", "Nimrodsgatan 7"]
+
+
+def test_extracts_multiword_addresses_without_leading_conjunction():
+    module = import_building_flow_graph_module()
+
+    addresses = module._extract_address_candidates_from_text(
+        "Our property has two addresses: Hammarby Allé 163 and Hammarby Allé 165. Which one do you use?"
+    )
+
+    assert addresses == ["Hammarby Allé 163", "Hammarby Allé 165"]
+
+
+def test_extracts_semicolon_separated_address_list_with_postcodes():
+    module = import_building_flow_graph_module()
+
+    addresses = module._extract_address_candidates_from_text(
+        "Aktergatan 11, 12066 Stockholm; Aktergatan 13, 12066 Stockholm; "
+        "Aktergatan 5, 12066 Stockholm; Aktergatan 7, 12066 Stockholm; "
+        "Aktergatan 9, 12066 Stockholm; Hammarby Allé 173, 12066 Stockholm"
+    )
+
+    assert addresses == [
+        "Aktergatan 11",
+        "Aktergatan 13",
+        "Aktergatan 5",
+        "Aktergatan 7",
+        "Aktergatan 9",
+        "Hammarby Allé 173",
+    ]
+
+
+def test_semicolon_separated_address_list_triggers_multi_address_resolution():
+    module = import_building_flow_graph_module()
+
+    text = (
+        "Aktergatan 11, 12066 Stockholm; Aktergatan 13, 12066 Stockholm; "
+        "Aktergatan 5, 12066 Stockholm; Aktergatan 7, 12066 Stockholm; "
+        "Aktergatan 9, 12066 Stockholm; Hammarby Allé 173, 12066 Stockholm"
+    )
+
+    assert module._looks_like_multi_address_identity_question(
+        text,
+        module._extract_address_candidates_from_text(text),
+    )
+
+
+def test_multi_address_resolution_uses_shared_building_id_for_alias_addresses():
+    module = import_building_flow_graph_module()
+
+    def fake_execute(op, **kwargs):
+        assert op == "building_by_address"
+        return {
+            "ok": True,
+            "data": [
+                {
+                    "byggnadsid": "01-80-SKYTTEN2-2",
+                    "address": kwargs["address"],
+                    "energy_class": "F",
+                }
+            ],
+            "trace": {"query_type": "building_by_address", "execution_status": "success"},
+        }
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.multi_address_resolution_node(
+        {
+            "last_message": "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+            "metadata": {},
+        }
+    )
+
+    assert result["multi_address_resolution_complete"] is True
+    assert result["metadata"]["same_building_multiple_addresses"] is True
+    assert result["metadata"]["byggnadsid"] == "01-80-SKYTTEN2-2"
+    assert result["metadata"]["address"] == "Artemisgatan 17"
+    assert result["metadata"]["alternate_addresses"] == ["Nimrodsgatan 7"]
+    assert "Building ID: 01-80-SKYTTEN2-2" in result["final_response"]
+    assert "resolve to the same building record" in result["final_response"]
+    assert "building ID as the source of truth" in result["final_response"]
+    assert "latest available EPC/building record" in result["final_response"]
+
+
+def test_multi_address_resolution_uses_brf_address_context_when_direct_lookup_misses():
+    module = import_building_flow_graph_module()
+
+    def fake_execute(op, **kwargs):
+        return {
+            "ok": False,
+            "data": [],
+            "message": "not found",
+            "trace": {"query_type": op, "execution_status": "not_found"},
+        }
+
+    module.sql_mapper_layer.execute = fake_execute
+    module._lookup_brf_addresses = lambda brf_name: [
+        {
+            "orgnr": "7696062509",
+            "brf_name": "Bostadsrättsföreningen Sjöstaden 1",
+            "byggnadsid": "01-80-HALVOEN1-3",
+            "fastighet": "Halvön 1",
+            "address": "Hammarby Allé 163",
+            "postnr": "12065",
+            "postort": "Stockholm",
+        },
+        {
+            "orgnr": "7696062509",
+            "brf_name": "Bostadsrättsföreningen Sjöstaden 1",
+            "byggnadsid": "01-80-HALVOEN1-3",
+            "fastighet": "Halvön 1",
+            "address": "Hammarby Allé 165",
+            "postnr": "12065",
+            "postort": "Stockholm",
+        },
+    ]
+
+    result = module.resolve_multi_address_identity_message(
+        "Our property has two addresses: Hammarby Allé 163 and Hammarby Allé 165. Which one do you use?",
+        {"brf_name": "Sjöstaden 1"},
+    )
+
+    assert result["multi_address_resolution_complete"] is True
+    assert result["metadata"]["same_building_multiple_addresses"] is True
+    assert result["metadata"]["byggnadsid"] == "01-80-HALVOEN1-3"
+    assert result["metadata"]["address"] == "Hammarby Allé 163"
+    assert result["metadata"]["alternate_addresses"] == ["Hammarby Allé 165"]
+    assert result["metadata"]["address_candidates"] == ["Hammarby Allé 163", "Hammarby Allé 165"]
+    assert "Building ID: 01-80-HALVOEN1-3" in result["final_response"]
+
+
+def test_multi_address_resolution_asks_when_addresses_map_to_different_buildings():
+    module = import_building_flow_graph_module()
+
+    def fake_execute(op, **kwargs):
+        assert op == "building_by_address"
+        address = kwargs["address"]
+        building_id = "01-80-SKYTTEN2-2" if address == "Artemisgatan 17" else "01-80-NIMROD1-1"
+        return {
+            "ok": True,
+            "data": [{"byggnadsid": building_id, "address": address}],
+            "trace": {"query_type": "building_by_address", "execution_status": "success"},
+        }
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.multi_address_resolution_node(
+        {
+            "last_message": "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+            "metadata": {},
+        }
+    )
+
+    assert result["multi_address_resolution_complete"] is True
+    assert result["metadata"]["clarification"]["needed"] is True
+    assert result["metadata"]["clarification"]["reason"] == "multi_address_different_buildings"
+    assert "I found different building IDs" in result["final_response"]
+    assert "Which building ID should I use?" in result["final_response"]
+
+
+def test_multi_address_resolution_returns_clarification_when_lookup_errors():
+    module = import_building_flow_graph_module()
+
+    def fake_execute(op, **kwargs):
+        raise TimeoutError("lookup timeout")
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.resolve_multi_address_identity_message(
+        "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+        {},
+    )
+
+    assert result["multi_address_resolution_complete"] is True
+    assert result["metadata"]["clarification"]["needed"] is True
+    assert result["metadata"]["clarification"]["reason"] == "multi_address_no_match"
+    assert "I could not finish the address lookup" in result["final_response"]
+    assert "lookup timed out" in result["final_response"]
+    assert "Processing timed out" not in result["final_response"]
+
+
+def test_multi_address_resolution_ignores_stale_candidates_on_single_address_followup():
+    module = import_building_flow_graph_module()
+
+    result = module.resolve_multi_address_identity_message(
+        "use this address, Artemisgatan 17",
+        {
+            "address_candidates": ["Artemisgatan 17", "Nimrodsgatan 7"],
+            "multi_address_resolution": {
+                "status": "no_match",
+                "candidates": [
+                    {"address": "Artemisgatan 17", "ok": False},
+                    {"address": "Nimrodsgatan 7", "ok": False},
+                ],
+            },
+            "clarification": {
+                "needed": True,
+                "reason": "multi_address_no_match",
+            },
+        },
+    )
+
+    assert result is None
+
+
+def test_multi_address_lookup_uses_short_timeout_and_restores_default(monkeypatch):
+    module = import_building_flow_graph_module()
+
+    class FakeSQL:
+        timeout = 15
+
+    seen_timeouts = []
+    module.sql_mapper_layer.sql = FakeSQL()
+
+    def fake_execute(op, **kwargs):
+        seen_timeouts.append(module.sql_mapper_layer.sql.timeout)
+        return {
+            "ok": True,
+            "data": [{"byggnadsid": "01-80-SKYTTEN2-2", "address": kwargs["address"]}],
+        }
+
+    monkeypatch.setenv("ODEN_MULTI_ADDRESS_TIMEOUT", "3")
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module._resolve_single_address_candidate("Artemisgatan 17")
+
+    assert result["building_id"] == "01-80-SKYTTEN2-2"
+    assert seen_timeouts == [3]
+    assert module.sql_mapper_layer.sql.timeout == 15
+
+
+def test_multi_address_lookup_default_timeout_allows_slow_oden_address_responses(monkeypatch):
+    module = import_building_flow_graph_module()
+
+    class FakeSQL:
+        timeout = 15
+
+    seen_timeouts = []
+    module.sql_mapper_layer.sql = FakeSQL()
+
+    def fake_execute(op, **kwargs):
+        seen_timeouts.append(module.sql_mapper_layer.sql.timeout)
+        return {
+            "ok": True,
+            "data": [{"byggnadsid": "01-80-HALVOEN1-3", "address": kwargs["address"]}],
+        }
+
+    monkeypatch.delenv("ODEN_MULTI_ADDRESS_TIMEOUT", raising=False)
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module._resolve_single_address_candidate("Lugnets Allé 25")
+
+    assert result["building_id"] == "01-80-HALVOEN1-3"
+    assert seen_timeouts == [10]
+    assert module.sql_mapper_layer.sql.timeout == 15
+
+
 def test_generic_sql_agent_uses_brf_selected_address_fallback_for_building_id():
     module = import_building_flow_graph_module()
 
@@ -867,6 +1257,52 @@ def test_generic_sql_agent_uses_brf_selected_address_fallback_for_building_id():
     assert result.get("identity_gate_blocked") is not True
     assert result["metadata"]["building_identity_check"]["status"] == "passed"
     assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "brf_selected_address_fallback"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-80-BRAEDGAARDEN9-2"
+
+
+def test_generic_sql_agent_accepts_explicit_building_id_despite_stale_ambiguity():
+    module = import_building_flow_graph_module()
+
+    def fake_execute(op, **kwargs):
+        assert op == "buildings_by_building_id"
+        assert kwargs["building_id"] == "01-80-BRAEDGAARDEN9-2"
+        return {
+            "ok": True,
+            "data": [
+                {
+                    "byggnadsid": "01-80-BRAEDGAARDEN9-2",
+                    "epc_idadr": "Aktergatan 11",
+                    "energy_class": "C",
+                }
+            ],
+            "trace": {"query_type": "buildings_by_building_id", "execution_status": "success"},
+        }
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "byggnadsid": "01-80-BRAEDGAARDEN9-2",
+                "building_id_from_user": "01-80-BRAEDGAARDEN9-2",
+                "selected_brf_building_id": "01-80-BRAEDGAARDEN9-2",
+                "context": {"ambiguous": True},
+                "clarification": {
+                    "needed": True,
+                    "reason": "ambiguous_brf",
+                },
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    identity = result["metadata"]["building_identity_check"]
+    assert identity["status"] == "passed"
+    assert identity["ambiguous"] is False
+    assert identity["matched_building_id"] == "01-80-BRAEDGAARDEN9-2"
+    assert identity["explicit_building_id_accepted"] is True
+    assert result["metadata"]["clarification"]["needed"] is False
     assert result["agent_data_generic"][0]["byggnadsid"] == "01-80-BRAEDGAARDEN9-2"
 
 
@@ -941,6 +1377,56 @@ def test_generic_sql_agent_selects_latest_epc_version_for_same_address():
     assert result["agent_data_generic"][0]["epc_egiversion"] == "2020"
     assert result["agent_data_generic"][0]["energy_class"] == "F"
     assert result["metadata"]["generic_sql_trace"]["returned_values_used"]["byggnadsid"] == "01-80-LISSABON2-2"
+
+
+def test_generic_sql_agent_uses_building_id_and_latest_epc_for_same_building_aliases():
+    module = import_building_flow_graph_module()
+    calls = []
+
+    def fake_execute(op, **kwargs):
+        calls.append((op, kwargs))
+        assert op == "buildings_by_building_id"
+        assert kwargs["building_id"] == "01-80-SKYTTEN2-2"
+        return {
+            "ok": True,
+            "data": [
+                {
+                    "byggnadsid": "01-80-SKYTTEN2-2",
+                    "address": "Artemisgatan 17",
+                    "epc_egiversion": "2009",
+                    "epc_egienergiklass2020_calc": "G",
+                },
+                {
+                    "byggnadsid": "01-80-SKYTTEN2-2",
+                    "address": "Nimrodsgatan 7",
+                    "epc_egiversion": "2019",
+                    "epc_egienergiklass2020_calc": "F",
+                },
+            ],
+            "trace": {"query_type": "buildings_by_building_id", "execution_status": "success"},
+        }
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Artemisgatan 17",
+                "address_from_user": "Artemisgatan 17",
+                "alternate_addresses": ["Nimrodsgatan 7"],
+                "byggnadsid": "01-80-SKYTTEN2-2",
+                "same_building_multiple_addresses": True,
+            },
+            "parallel": {},
+        }
+    )
+
+    assert calls == [("buildings_by_building_id", {"building_id": "01-80-SKYTTEN2-2"})]
+    assert result.get("identity_gate_blocked") is not True
+    assert len(result["agent_data_generic"]) == 1
+    assert result["agent_data_generic"][0]["address"] == "Nimrodsgatan 7"
+    assert result["agent_data_generic"][0]["epc_egiversion"] == "2019"
+    assert result["agent_data_generic"][0]["energy_class"] == "F"
 
 
 def test_generic_sql_agent_prefers_exact_address_over_related_variants():

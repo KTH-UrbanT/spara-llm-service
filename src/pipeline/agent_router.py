@@ -32,6 +32,26 @@ BUILDING_ID_RE = re.compile(
     re.IGNORECASE,
 )
 
+STREET_SUFFIX_RE = (
+    r"gatan|vägen|vagen|gränd|grand|allén|allen|allé|alle|väg|road|street|avenue|lane"
+)
+
+STREET_ADDRESS_FRAGMENT_RE = re.compile(
+    rf"\b("
+    rf"(?:[A-ZÅÄÖ][A-Za-zÅÄÖåäö.'\-]*(?:{STREET_SUFFIX_RE})|"
+    rf"[A-ZÅÄÖ][A-Za-zÅÄÖåäö.'\-]*(?:\s+[A-ZÅÄÖa-zåäö][A-Za-zÅÄÖåäö.'\-]*){{0,3}}\s+(?:{STREET_SUFFIX_RE}))"
+    rf"\s+\d{{1,4}}[A-Za-z]?"
+    rf")\b",
+    flags=re.IGNORECASE,
+)
+
+MULTI_ADDRESS_POLICY_RE = re.compile(
+    r"\b(?:two|multiple|several|many|different|flera|två|många|olika)\s+addresses?\b|"
+    r"\baddresses?\b.*\b(?:which|use|choose|använd|vilken|välj)\b|"
+    r"\b(?:which|vilken)\s+one\s+do\s+you\s+use\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _evaluation_mode_enabled() -> bool:
     return str(os.getenv("EVALUATION_MODE", "")).strip().lower() in {"1", "true", "yes", "on"}
@@ -58,9 +78,56 @@ def _fast_conversational_response(message: str) -> Optional[str]:
 
     return None
 
+
+def _fast_multi_address_clarification(message: str) -> Optional[str]:
+    text = str(message or "").strip()
+    lowered = text.lower()
+    if not text:
+        return None
+
+    if not MULTI_ADDRESS_POLICY_RE.search(text):
+        return None
+
+    if not re.search(
+        r"\b(?:my|our|the|this)\s+(?:property|building|brf|association)|"
+        r"\b(?:property|building|brf)\b",
+        lowered,
+    ):
+        return None
+
+    # If the user already gave two real addresses, let the building graph resolve
+    # them against ODEN instead of answering only with the policy.
+    address_count = len(STREET_ADDRESS_FRAGMENT_RE.findall(text))
+    if address_count >= 2 or BUILDING_ID_RE.search(text):
+        return None
+
+    return (
+        "Please share the actual addresses, BRF name, organisation number, or building ID. "
+        "I use the building ID/byggnadsid as the source of truth: if multiple addresses map "
+        "to the same building ID, either address can be used as an alias; if they map to "
+        "different building IDs, I will ask you which building or entrance to use."
+    )
+
+
+def _has_multi_address_values_question(message: str) -> bool:
+    text = str(message or "").strip()
+    lowered = text.lower()
+    if not text:
+        return False
+    if not MULTI_ADDRESS_POLICY_RE.search(text):
+        return False
+    if not re.search(
+        r"\b(?:my|our|the|this)\s+(?:property|building|brf|association)|"
+        r"\b(?:property|building|brf)\b",
+        lowered,
+    ):
+        return False
+    return len(STREET_ADDRESS_FRAGMENT_RE.findall(text)) >= 2 or bool(BUILDING_ID_RE.search(text))
+
 SITE_SPECIFIC_PATTERNS = (
     r"\b(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+[a-zåäö0-9]",
     r"\b(?:i|we)\s+(?:live\s+in|are)\s+(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\b",
+    r"\b(?:i|we)\s+represent\s+(?:a\s+)?(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\b",
     r"\bmy building\b",
     r"\bmybuilding\b",
     r"\bour building\b",
@@ -88,6 +155,19 @@ SITE_SPECIFIC_PATTERNS = (
 )
 
 BUILDING_DATA_REQUEST_TERMS = (
+    "energy advice",
+    "energy audit",
+    "energy efficiency",
+    "energy measures",
+    "energy efficiency measures",
+    "recommend measures",
+    "recommended measures",
+    "recommendations",
+    "relevant measures",
+    "which measures",
+    "what measures",
+    "ecm",
+    "ecms",
     "energy performance",
     "energy class",
     "energiprestanda",
@@ -276,6 +356,23 @@ def _has_recent_building_context(messages: List[Dict[str, Any]], metadata: Dict[
     return False
 
 
+def _has_recent_site_specific_user_context(messages: List[Dict[str, Any]]) -> bool:
+    for message in reversed((messages or [])[:-1]):
+        if message.get("role") != "user":
+            continue
+
+        content = str(message.get("content") or "")
+        lowered = content.lower()
+        if BUILDING_ID_RE.search(content):
+            return True
+        if _looks_like_address(content):
+            return True
+        if any(re.search(pattern, lowered) for pattern in SITE_SPECIFIC_PATTERNS):
+            return True
+
+    return False
+
+
 def _looks_like_ecm_followup(message: str) -> bool:
     lowered = str(message or "").lower()
     if not lowered.strip():
@@ -328,6 +425,12 @@ def _requires_building_specific_flow(message: str) -> bool:
     if re.search(r"\b(?:my|our)\s+(?:energy|heating|electricity)", lowered):
         return True
 
+    if "energy audit" in lowered and re.search(
+        r"\b(?:my|our|we|brf|bostadsr[äa]ttsf[öo]rening|bostadsrattsforening|building|property|association)\b",
+        lowered,
+    ):
+        return True
+
     site_specific = any(re.search(pattern, lowered) for pattern in SITE_SPECIFIC_PATTERNS)
     if not site_specific:
         return False
@@ -361,7 +464,10 @@ def _requires_building_specific_followup(
         or _looks_like_building_profile_followup(message)
         or _looks_like_building_data_explanation_followup(message)
         or _looks_like_contextual_building_followup(message)
-    ) and _has_recent_building_context(messages, metadata)
+    ) and (
+        _has_recent_building_context(messages, metadata)
+        or _has_recent_site_specific_user_context(messages)
+    )
 
 
 def _normalize_response(
@@ -505,24 +611,67 @@ class AgentRouter:
                 "route": "generic",
             }, base_metadata
 
+        fast_multi_address = _fast_multi_address_clarification(last_message)
+        if fast_multi_address:
+            updated_metadata = {
+                **base_metadata,
+                "clarification": {
+                    "needed": True,
+                    "reason": "missing_multi_address_values",
+                    "question_asked": fast_multi_address,
+                    "resolved": False,
+                    "resolved_after_turns": None,
+                },
+                "building_match": {
+                    "match_confidence": "unknown",
+                    "ambiguous": True,
+                },
+            }
+            return {
+                "role": "assistant",
+                "content": fast_multi_address,
+                "classification": "building_specific",
+                "agent_answered": "fast_multi_address_clarification",
+                "route": "clarification",
+            }, updated_metadata
+
+        if _has_multi_address_values_question(last_message):
+            out, metadata_updated = self.building.handle_building_query(
+                last_message,
+                messages,
+                base_metadata,
+                thread_id,
+            )
+            out["role"] = "assistant"
+            out["classification"] = "building_specific"
+            return out, metadata_updated
+
         # Try to read prior classification if present
         if len(messages) != 1:
             previous_classification = (messages[-2] or {}).get("classification")
         else:
             previous_classification = None
 
+        expert_handoff_requested_by_phrase = bool(
+            getattr(self.router, "wants_expert_handoff", None)
+            and self.router.wants_expert_handoff(last_message)
+        )
+
         if getattr(self.router, "wants_draft_report", None) and self.router.wants_draft_report(last_message):
             classified = "draft_energy_report"
-        elif getattr(self.router, "wants_expert_handoff", None) and self.router.wants_expert_handoff(last_message):
+        elif expert_handoff_requested_by_phrase:
             classified = "expert_handoff"
         else:
             classified = self.router.classify_question(last_message, previous_classification)
 
         classified = _normalize_classification(classified)
-        if classified in {"generic", "conversational"} and (
+        requires_building_specific = (
             _requires_building_specific_flow(last_message)
             or _requires_building_specific_followup(last_message, messages, base_metadata)
-        ):
+        )
+        if classified in {"generic", "conversational"} and requires_building_specific:
+            classified = "building_specific"
+        elif classified == "expert_handoff" and requires_building_specific and not expert_handoff_requested_by_phrase:
             classified = "building_specific"
 
         if pending_handoff and classified != "expert_handoff":

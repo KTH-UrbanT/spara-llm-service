@@ -35,12 +35,29 @@ class SourceLinkResolver:
         return cls.result
 
 
+class DirectMultiAddressResolver:
+    result = None
+    calls = []
+
+    @classmethod
+    def resolve(cls, last_message, metadata):
+        cls.calls.append((last_message, metadata))
+        return cls.result
+
+
 def import_building_agent_module():
     SessionStoreRecorder.calls = []
+    SessionStoreLoader.state = {}
     FakeGraph.received_state = None
     SourceLinkResolver.calls = []
     SourceLinkResolver.result = []
-    stub_module("src.agents.building_flow_graph", build_building_flow_graph=lambda: FakeGraph())
+    DirectMultiAddressResolver.calls = []
+    DirectMultiAddressResolver.result = None
+    stub_module(
+        "src.agents.building_flow_graph",
+        build_building_flow_graph=lambda: FakeGraph(),
+        resolve_multi_address_identity_message=DirectMultiAddressResolver.resolve,
+    )
     stub_module(
         "src.redis.redis_session_store",
         get_session_state=lambda thread_id: SessionStoreLoader.state,
@@ -100,6 +117,100 @@ def test_handle_building_query_returns_composed_response_and_updates_session():
             "intent_list": ["SQL database", "vector database"],
         },
     }
+
+
+def test_handle_building_query_fast_resolves_two_address_identity_before_graph():
+    module = import_building_agent_module()
+    DirectMultiAddressResolver.result = {
+        "final_response": (
+            "Building ID: 01-80-SKYTTEN2-2\n\n"
+            "Artemisgatan 17 and Nimrodsgatan 7 resolve to the same building record."
+        ),
+        "metadata": {
+            "byggnadsid": "01-80-SKYTTEN2-2",
+            "address": "Artemisgatan 17",
+            "alternate_addresses": ["Nimrodsgatan 7"],
+            "clarification": {"needed": False},
+        },
+        "multi_address_resolution_complete": True,
+    }
+
+    response, metadata = module.BuildingAgent().handle_building_query(
+        last_message="Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+        messages=[
+            {
+                "role": "user",
+                "content": "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+            }
+        ],
+        metadata={},
+        thread_id="thread-two-addresses",
+    )
+
+    assert FakeGraph.received_state is None
+    assert DirectMultiAddressResolver.calls == [
+        (
+            "Our property has two addresses: Artemisgatan 17 and Nimrodsgatan 7. Which one do you use?",
+            {},
+        )
+    ]
+    assert SessionStoreRecorder.calls == [("thread-two-addresses", DirectMultiAddressResolver.result)]
+    assert response["route"] == "building_specific"
+    assert response["content"].startswith("Building ID: 01-80-SKYTTEN2-2")
+    assert response["agent_answered"] == ["ODEN API"]
+    assert metadata["byggnadsid"] == "01-80-SKYTTEN2-2"
+
+
+def test_handle_building_query_passes_session_metadata_to_direct_multi_address_resolver():
+    module = import_building_agent_module()
+    DirectMultiAddressResolver.result = {
+        "final_response": "Building ID: 01-80-HALVOEN1-3",
+        "metadata": {
+            "byggnadsid": "01-80-HALVOEN1-3",
+            "clarification": {"needed": False},
+        },
+        "multi_address_resolution_complete": True,
+    }
+
+    response, metadata = module.BuildingAgent().handle_building_query(
+        last_message="Our property has two addresses: Hammarby Allé 163 and Hammarby Allé 165. Which one do you use?",
+        messages=[
+            {
+                "role": "user",
+                "content": "Our property has two addresses: Hammarby Allé 163 and Hammarby Allé 165. Which one do you use?",
+            }
+        ],
+        metadata={"request_id": "current-turn"},
+        thread_id="thread-brf-context",
+        _session_state={
+            "metadata": {
+                "brf_name": "Sjöstaden 1",
+                "brf_resolution": {
+                    "status": "resolved_by_user_selection",
+                    "selected_building_id": "01-80-HALVOEN1-3",
+                },
+            }
+        },
+    )
+
+    assert DirectMultiAddressResolver.calls == [
+        (
+            "Our property has two addresses: Hammarby Allé 163 and Hammarby Allé 165. Which one do you use?",
+            {
+                "brf_name": "Sjöstaden 1",
+                "brf_resolution": {
+                    "status": "resolved_by_user_selection",
+                    "selected_building_id": "01-80-HALVOEN1-3",
+                },
+                "request_id": "current-turn",
+                "selected_brf_building_id": "01-80-HALVOEN1-3",
+                "byggnadsid": "01-80-HALVOEN1-3",
+            },
+        )
+    ]
+    assert FakeGraph.received_state is None
+    assert response["content"] == "Building ID: 01-80-HALVOEN1-3"
+    assert metadata["byggnadsid"] == "01-80-HALVOEN1-3"
 
 
 def test_handle_building_query_falls_back_across_response_fields():

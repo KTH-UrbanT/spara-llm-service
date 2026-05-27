@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Tuple, Optional
 import copy
 import unicodedata
+import os
 
 # --- LangGraph
 from langgraph.graph import StateGraph, START, END
@@ -170,6 +171,27 @@ BUILDING_ID_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+STREET_SUFFIX_RE = (
+    r"gatan|vägen|vagen|gränd|grand|allén|allen|allé|alle|väg|road|street|avenue|lane"
+)
+
+STREET_ADDRESS_FRAGMENT_RE = re.compile(
+    rf"\b("
+    rf"(?:[A-ZÅÄÖ][A-Za-zÅÄÖåäö.'\-]*(?:{STREET_SUFFIX_RE})|"
+    rf"[A-ZÅÄÖ][A-Za-zÅÄÖåäö.'\-]*(?:\s+[A-ZÅÄÖa-zåäö][A-Za-zÅÄÖåäö.'\-]*){{0,3}}\s+(?:{STREET_SUFFIX_RE}))"
+    rf"\s+\d{{1,4}}[A-Za-z]?"
+    rf")\b",
+    flags=re.IGNORECASE,
+)
+
+MULTI_ADDRESS_SPLIT_RE = re.compile(r"\s*(?:,|;|/|&|\band\b|\boch\b|\beller\b|\bor\b)\s*", flags=re.IGNORECASE)
+
+MULTI_ADDRESS_IDENTITY_RE = re.compile(
+    r"\b(?:two|multiple|several|different|same|which|use|choose|addresses?|property|building|entrance|"
+    r"två|flera|samma|vilken|använd|valj|välj|adresser|fastighet|byggnad|entré)\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _looks_like_compact_address(text: Optional[str], *, allow_four_digit_number: bool = False) -> bool:
     if not text:
@@ -240,6 +262,117 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
     return None
 
 
+def _dedupe_address_candidates(candidates: List[str]) -> List[str]:
+    deduped: List[str] = []
+    seen = set()
+    for candidate in candidates or []:
+        cleaned = re.sub(r"\s+", " ", str(candidate or "")).strip(" .,:;!?\"'")
+        cleaned = re.sub(r"^\s*(?:and|or|och|eller)\s+", "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.strip(" .,:;!?\"'")
+        key = _normalize_address(cleaned)
+        if not cleaned or not key or key in seen:
+            continue
+        deduped.append(cleaned)
+        seen.add(key)
+    return deduped
+
+
+def _clean_address_candidate_fragment(fragment: Optional[str]) -> Optional[str]:
+    if not fragment:
+        return None
+
+    candidate = re.sub(r"\s+", " ", str(fragment)).strip()
+    if not candidate:
+        return None
+
+    candidate = re.sub(
+        r"^.*\b(?:addresses?|adresser|adressen|adress)\b\s*[:\-]*\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.split(r"[?!.]\s+", candidate, maxsplit=1)[0]
+    candidate = re.sub(r"^\s*(?:and|or|och|eller)\s+", "", candidate, flags=re.IGNORECASE)
+    candidate = candidate.strip(" .,:;!?\"'")
+
+    cleaned = _extract_address_candidate_from_text(candidate)
+    if cleaned:
+        return cleaned
+
+    match = STREET_ADDRESS_FRAGMENT_RE.search(candidate)
+    if match:
+        return match.group(1).strip(" .,:;!?\"'")
+
+    return None
+
+
+def _extract_address_candidates_from_text(text: Optional[str]) -> List[str]:
+    if not text:
+        return []
+
+    raw = str(text)
+    candidates = [match.group(1) for match in STREET_ADDRESS_FRAGMENT_RE.finditer(raw)]
+    if len(_dedupe_address_candidates(candidates)) >= 2:
+        return _dedupe_address_candidates(candidates)
+
+    fragments = MULTI_ADDRESS_SPLIT_RE.split(raw)
+    for fragment in fragments:
+        cleaned = _clean_address_candidate_fragment(fragment)
+        if cleaned:
+            candidates.append(cleaned)
+
+    return _dedupe_address_candidates(candidates)
+
+
+def _segment_is_address_only(segment: str) -> bool:
+    cleaned = _clean_address_candidate_fragment(segment)
+    if not cleaned:
+        return False
+
+    remainder = str(segment or "")
+    remainder = re.sub(re.escape(cleaned), "", remainder, count=1, flags=re.IGNORECASE)
+    remainder = re.sub(r",?\s*\b\d{3}\s?\d{2}\b\s+[A-Za-zÅÄÖåäö .'\-]+", "", remainder)
+    remainder = re.sub(r"[\s,.;:()\-]+", "", remainder)
+    return not remainder
+
+
+def _looks_like_address_list_message(text: Optional[str], candidates: List[str]) -> bool:
+    if len(candidates or []) < 2:
+        return False
+
+    raw = str(text or "").strip()
+    if not raw or (";" not in raw and "\n" not in raw):
+        return False
+
+    segments = [segment.strip() for segment in re.split(r"\s*(?:;|\n)+\s*", raw) if segment.strip()]
+    return len(segments) >= 2 and all(_segment_is_address_only(segment) for segment in segments)
+
+
+def _looks_like_multi_address_identity_question(text: Optional[str], candidates: List[str]) -> bool:
+    if len(candidates or []) < 2:
+        return False
+
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+    if _looks_like_address_list_message(text, candidates):
+        return True
+
+    return bool(
+        MULTI_ADDRESS_IDENTITY_RE.search(lowered)
+        and (
+            "which" in lowered
+            or "vilken" in lowered
+            or "use" in lowered
+            or "använd" in lowered
+            or "address" in lowered
+            or "adress" in lowered
+            or "property" in lowered
+            or "fastighet" in lowered
+        )
+    )
+
+
 def _clean_brf_name(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -250,6 +383,8 @@ def _clean_brf_name(value: Optional[str]) -> Optional[str]:
         cleaned,
         flags=re.IGNORECASE,
     ).strip(" .,:;!?\"'")
+    if re.fullmatch(r"(?:in|at|on|from|i|på)\s+[A-Za-zÅÄÖåäö .'\-]+", cleaned, flags=re.IGNORECASE):
+        return None
     return cleaned or None
 
 
@@ -522,6 +657,8 @@ BUILDING_CONTEXT_KEYS = (
     "01a_fnr",
 )
 
+PENDING_BUILDING_ADVICE_KEY = "pending_building_advice_request"
+
 ADVICE_QUERY_FACT_LABELS = {
     "energy_class": "energy class",
     "energy_performance": "energy performance",
@@ -540,6 +677,60 @@ def _looks_like_ecm_or_measure_advice(text: Optional[str]) -> bool:
     if any(re.search(pattern, lowered) for pattern in EXPLICIT_GENERAL_SCOPE_PATTERNS):
         return False
     return any(re.search(pattern, lowered) for pattern in ECM_ADVICE_PATTERNS)
+
+
+def _looks_like_building_ecm_advice(text: Optional[str]) -> bool:
+    return _looks_like_personal_energy_advice(text) or _looks_like_ecm_or_measure_advice(text)
+
+
+def _looks_like_identity_followup(message: Optional[str], ctx: Dict[str, Any]) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+
+    lowered = text.lower()
+    if _looks_like_building_ecm_advice(text):
+        return False
+    if re.search(r"\b(?:what|why|how|which|when|where|can|could|should|would|recommend|reduce|lower|improve)\b", lowered):
+        return False
+
+    return bool(
+        _extract_building_id_from_text(text)
+        or _extract_brf_name_from_text(text)
+        or ctx.get("address")
+    )
+
+
+def _pending_advice_context(question: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "question": question,
+        "type": "ecm",
+        "context": {
+            "parsed_intent": ctx.get("parsed_intent"),
+            "intent_list": copy.deepcopy(ctx.get("intent_list") or []),
+            "effective_query": ctx.get("effective_query"),
+            "answer_focus": question,
+            "advice_type": "ecm",
+        },
+    }
+
+
+def _restore_pending_advice_context(
+    ctx: Dict[str, Any],
+    pending: Dict[str, Any],
+) -> Dict[str, Any]:
+    pending_context = pending.get("context") if isinstance(pending, dict) else {}
+    if not isinstance(pending_context, dict):
+        return ctx
+
+    restored = dict(ctx or {})
+    current_address = restored.get("address")
+    restored.update(copy.deepcopy(pending_context))
+    if current_address:
+        restored["address"] = current_address
+    restored["ambiguous"] = False
+    restored["ambigious"] = False
+    return restored
 
 
 def _contains_building_context(value: Any) -> bool:
@@ -971,6 +1162,31 @@ def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> boo
     return str(row_id or "").strip().upper() == str(building_id).strip().upper()
 
 
+def _explicit_building_id_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
+    metadata = metadata or {}
+    for key in ("building_id_from_user", "selected_brf_building_id"):
+        value = metadata.get(key)
+        if value not in (None, ""):
+            return str(value).strip().upper()
+
+    resolution = metadata.get("brf_resolution")
+    if isinstance(resolution, dict) and resolution.get("status") in RESOLVED_BRF_STATUSES:
+        value = resolution.get("selected_building_id")
+        if value not in (None, ""):
+            return str(value).strip().upper()
+
+    return None
+
+
+def _all_retrieved_rows_match_building_id(data: Any, building_id: Optional[str]) -> bool:
+    if not building_id:
+        return False
+
+    rows = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+    checked_rows = [row for row in rows if isinstance(row, dict)]
+    return bool(checked_rows) and all(_building_id_matches(row, building_id) for row in checked_rows)
+
+
 def _lookup_rows_for_brf_selected_addresses(building_id: Optional[str], metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not building_id:
         return None
@@ -1007,6 +1223,347 @@ def _lookup_rows_for_brf_selected_addresses(building_id: Optional[str], metadata
             return result
 
     return None
+
+
+def _metadata_brf_name(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    metadata = metadata or {}
+    value = metadata.get("brf_name")
+    if value not in (None, ""):
+        return str(value).strip()
+
+    for key in ("brf_resolution", "pending_brf_resolution"):
+        block = metadata.get(key)
+        if isinstance(block, dict) and block.get("brf_name") not in (None, ""):
+            return str(block.get("brf_name")).strip()
+
+    return None
+
+
+def _brf_context_rows(metadata: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    metadata = metadata or {}
+    rows: List[Dict[str, Any]] = []
+
+    option_sets = []
+    if isinstance(metadata.get("brf_candidate_buildings"), list):
+        option_sets.append(metadata.get("brf_candidate_buildings") or [])
+    pending = metadata.get("pending_brf_resolution")
+    if isinstance(pending, dict) and isinstance(pending.get("options"), list):
+        option_sets.append(pending.get("options") or [])
+
+    for options in option_sets:
+        for option in options:
+            if not isinstance(option, dict):
+                continue
+            for address_label in option.get("addresses") or []:
+                address = _address_without_postcode(address_label)
+                if address:
+                    rows.append(
+                        {
+                            "byggnadsid": option.get("byggnadsid"),
+                            "brf_name": option.get("brf_name"),
+                            "orgnr": option.get("orgnr"),
+                            "fastighet": option.get("fastighet"),
+                            "address": address,
+                        }
+                    )
+
+    brf_name = _metadata_brf_name(metadata)
+    if brf_name:
+        try:
+            rows.extend(_lookup_brf_addresses(brf_name))
+        except Exception:
+            pass
+
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _address_norms(value: Optional[str]) -> set:
+    bare = _address_without_postcode(str(value or ""))
+    norms = {_normalize_address(bare)}
+    folded = _ascii_fold(bare)
+    if folded and folded != bare:
+        norms.add(_normalize_address(folded))
+    return {norm for norm in norms if norm}
+
+
+def _resolve_address_candidate_from_brf_context(
+    address: str,
+    metadata: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    target_norms = _address_norms(address)
+    if not target_norms:
+        return None
+
+    matched_rows: List[Dict[str, Any]] = []
+    for row in _brf_context_rows(metadata):
+        row_label = _format_brf_address(row) or row.get("address")
+        row_address = _address_without_postcode(str(row_label or ""))
+        if not row_address:
+            continue
+        if target_norms.intersection(_address_norms(row_address)):
+            matched = dict(row)
+            matched["address"] = row_address
+            matched_rows.append(matched)
+
+    if not matched_rows:
+        return None
+
+    building_ids = [
+        identifier
+        for identifier in (_extract_row_identifier(row) for row in matched_rows)
+        if identifier
+    ]
+    unique_building_ids = list(dict.fromkeys(building_ids))
+    matched_address = next((row.get("address") for row in matched_rows if row.get("address")), None)
+
+    return {
+        "address": address,
+        "ok": bool(unique_building_ids),
+        "building_id": unique_building_ids[0] if len(unique_building_ids) == 1 else None,
+        "building_ids": unique_building_ids,
+        "matched_address": matched_address,
+        "rows": matched_rows,
+        "message": None,
+    }
+
+
+def _resolve_single_address_candidate(address: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    sql_client = getattr(sql_mapper_layer, "sql", None)
+    previous_timeout = getattr(sql_client, "timeout", None)
+    try:
+        fast_timeout = int(os.getenv("ODEN_MULTI_ADDRESS_TIMEOUT", "10"))
+    except (TypeError, ValueError):
+        fast_timeout = 10
+
+    try:
+        if sql_client is not None and previous_timeout and fast_timeout > 0:
+            sql_client.timeout = min(previous_timeout, fast_timeout)
+        result = sql_mapper_layer.execute("building_by_address", address=address) or {}
+        if not (result.get("ok") and result.get("data")):
+            folded = _ascii_fold(address)
+            if folded and folded != address:
+                fallback = sql_mapper_layer.execute("building_by_address", address=folded) or {}
+                if fallback.get("ok") and fallback.get("data"):
+                    result = fallback
+        if not (result.get("ok") and result.get("data")):
+            fallback = sql_mapper_layer.execute("buildings_by_single_filter", field="epc_idadr", value=address) or {}
+            if fallback.get("ok") and fallback.get("data"):
+                result = fallback
+    except Exception as exc:
+        brf_result = _resolve_address_candidate_from_brf_context(address, metadata)
+        if brf_result:
+            return brf_result
+        return {
+            "address": address,
+            "ok": False,
+            "building_id": None,
+            "building_ids": [],
+            "matched_address": None,
+            "rows": [],
+            "message": str(exc),
+        }
+    finally:
+        if sql_client is not None and previous_timeout is not None:
+            sql_client.timeout = previous_timeout
+
+    rows = result.get("data") if result.get("ok") else []
+    if not rows:
+        brf_result = _resolve_address_candidate_from_brf_context(address, metadata)
+        if brf_result:
+            return brf_result
+
+    if isinstance(rows, list):
+        rows = _select_latest_epc_rows(_narrow_address_matches(address, rows))
+    rows = _enrich_building_data(rows)
+    row_list = rows if isinstance(rows, list) else [rows] if isinstance(rows, dict) else []
+    building_ids = [
+        identifier
+        for identifier in (_extract_row_identifier(row) for row in row_list)
+        if identifier
+    ]
+    unique_building_ids = list(dict.fromkeys(building_ids))
+    matched_address = next(
+        (matched for matched in (_extract_row_address(row) for row in row_list) if matched),
+        None,
+    )
+
+    return {
+        "address": address,
+        "ok": bool(row_list),
+        "building_id": unique_building_ids[0] if len(unique_building_ids) == 1 else None,
+        "building_ids": unique_building_ids,
+        "matched_address": matched_address,
+        "rows": row_list,
+        "message": result.get("message"),
+    }
+
+
+def _format_multi_address_candidate_line(candidate: Dict[str, Any]) -> str:
+    address = candidate.get("address") or "Unknown address"
+    building_id = candidate.get("building_id")
+    if building_id:
+        return f"- {address}: Building ID {building_id}"
+    if candidate.get("building_ids"):
+        return f"- {address}: multiple building IDs ({', '.join(candidate['building_ids'])})"
+    message = str(candidate.get("message") or "").lower()
+    if "timeout" in message or "timed out" in message:
+        return f"- {address}: lookup timed out before a building record could be confirmed"
+    return f"- {address}: no building record found"
+
+
+def _build_multi_address_resolution_response(
+    candidates: List[Dict[str, Any]],
+    status: str,
+    shared_building_id: Optional[str] = None,
+) -> str:
+    addresses = [str(candidate.get("address") or "").strip() for candidate in candidates if candidate.get("address")]
+    first_address = addresses[0] if addresses else "the first address"
+    alternate_addresses = [address for address in addresses[1:] if address]
+    address_summary = " and ".join(addresses[:2]) if len(addresses) == 2 else ", ".join(addresses)
+
+    if status == "same_building" and shared_building_id:
+        alternate_text = (
+            f" I will treat {', '.join(alternate_addresses)} as alternate address(es) for the same building."
+            if alternate_addresses
+            else ""
+        )
+        return (
+            f"Building ID: {shared_building_id}\n\n"
+            f"{address_summary} resolve to the same building record, so I can use either address. "
+            f"I use the building ID as the source of truth and will use the latest available EPC/building record for that building."
+            f"{alternate_text} You can override this by giving a specific address or building ID."
+        )
+
+    lines = [_format_multi_address_candidate_line(candidate) for candidate in candidates]
+    if status == "different_buildings":
+        return (
+            "I found different building IDs for those addresses, so I should not choose automatically.\n\n"
+            + "\n".join(lines)
+            + "\n\nWhich building ID should I use? You can reply with the building ID, option number, or one of the listed addresses."
+        )
+
+    if status == "partial_match":
+        return (
+            "I could only resolve some of those addresses. I use the building ID as the source of truth, so please confirm which building ID to use.\n\n"
+            + "\n".join(lines)
+        )
+
+    timed_out = any(
+        "timeout" in str(candidate.get("message") or "").lower()
+        or "timed out" in str(candidate.get("message") or "").lower()
+        for candidate in candidates
+    )
+    if timed_out:
+        return (
+            "I could not finish the address lookup before ODEN responded. Please try again, or provide the BRF name, organization number, or exact building ID.\n\n"
+            + "\n".join(lines)
+        )
+
+    return (
+        "I could not resolve those addresses to a building record. Please provide the city/postcode, BRF name, organization number, or exact building ID.\n\n"
+        + "\n".join(lines)
+    )
+
+
+def resolve_multi_address_identity_message(
+    last_message: Optional[str],
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    md = dict(metadata or {})
+    candidates = _extract_address_candidates_from_text(last_message)
+    if len(candidates) < 2:
+        return None
+
+    if not _looks_like_multi_address_identity_question(last_message, candidates):
+        return None
+
+    resolved = [_resolve_single_address_candidate(address, md) for address in candidates]
+    matched = [candidate for candidate in resolved if candidate.get("ok")]
+    matched_ids = [
+        candidate.get("building_id")
+        for candidate in matched
+        if candidate.get("building_id")
+    ]
+    unique_ids = list(dict.fromkeys(matched_ids))
+
+    if len(matched) == len(resolved) and len(unique_ids) == 1:
+        status = "same_building"
+        shared_building_id = unique_ids[0]
+    elif matched and len(unique_ids) > 1:
+        status = "different_buildings"
+        shared_building_id = None
+    elif matched:
+        status = "partial_match"
+        shared_building_id = unique_ids[0] if len(unique_ids) == 1 else None
+    else:
+        status = "no_match"
+        shared_building_id = None
+
+    response = _build_multi_address_resolution_response(
+        resolved,
+        status,
+        shared_building_id=shared_building_id,
+    )
+    metadata_updates = {
+        "address_candidates": candidates,
+        "multi_address_resolution": {
+            "status": status,
+            "candidates": [
+                {
+                    "address": candidate.get("address"),
+                    "matched_address": candidate.get("matched_address"),
+                    "building_id": candidate.get("building_id"),
+                    "building_ids": candidate.get("building_ids"),
+                    "ok": candidate.get("ok"),
+                    "message": candidate.get("message"),
+                }
+                for candidate in resolved
+            ],
+        },
+    }
+
+    if status == "same_building" and shared_building_id:
+        metadata_updates.update(
+            {
+                "address": candidates[0],
+                "address_from_user": candidates[0],
+                "requested_address": candidates[0],
+                "alternate_addresses": candidates[1:],
+                "byggnadsid": shared_building_id,
+                "same_building_multiple_addresses": True,
+                "building_identity_check": {
+                    "status": "passed",
+                    "matched_building_id": shared_building_id,
+                    "matched_address": candidates[0],
+                    "ambiguous": False,
+                    "multiple_matches": False,
+                    "candidate_building_ids": [shared_building_id],
+                    "candidate_addresses": candidates,
+                    "multiple_addresses_same_explicit_building": True,
+                },
+                "clarification": {
+                    "needed": False,
+                    "reason": None,
+                    "question_asked": None,
+                    "resolved": True,
+                    "resolved_after_turns": 0,
+                },
+            }
+        )
+    elif status in {"different_buildings", "partial_match", "no_match"}:
+        metadata_updates["clarification"] = {
+            "needed": True,
+            "reason": f"multi_address_{status}",
+            "question_asked": response,
+            "resolved": False,
+            "resolved_after_turns": None,
+        }
+
+    return {
+        "final_response": response,
+        "metadata": _deep_merge(md, metadata_updates),
+        "multi_address_resolution_complete": True,
+    }
 
 # =================
 # Canonicalization
@@ -1117,6 +1674,8 @@ def understand_context_node(state: GraphState) -> GraphState:
     if "parsed_intent" not in ctx or ctx.get("parsed_intent") in (None, ""):
         ctx["parsed_intent"] = " ; ".join(intent_list) if intent_list else None
 
+    current_message_is_advice = _looks_like_building_ecm_advice(state.get("last_message"))
+
     if _looks_like_personal_energy_advice(state.get("last_message")):
         normalized_intents = [str(item).strip().lower() for item in (ctx.get("intent_list") or [])]
         if not normalized_intents or normalized_intents == ["vector database"]:
@@ -1126,13 +1685,22 @@ def understand_context_node(state: GraphState) -> GraphState:
             ctx["ambigious"] = False
             print("[understand_context] promoted personal energy advice to SQL + vector intent", flush=True)
 
-    if _looks_like_ecm_or_measure_advice(state.get("last_message")):
+    if current_message_is_advice:
         _promote_to_building_advice_intent(ctx, state.get("last_message") or "")
         ctx["effective_query"] = _build_effective_ecm_query(
             state.get("last_message") or "",
             state.get("metadata") or {},
             prior_state,
         )
+        ctx["answer_focus"] = state.get("last_message") or ""
+        ctx["advice_type"] = "ecm"
+        if not _has_building_context_for_advice(state.get("metadata") or {}, prior_state):
+            md = dict(state.get("metadata") or {})
+            md[PENDING_BUILDING_ADVICE_KEY] = _pending_advice_context(
+                state.get("last_message") or "",
+                ctx,
+            )
+            state["metadata"] = md
         if _has_building_context_for_advice(state.get("metadata") or {}, prior_state):
             print("[understand_context] promoted ECM advice follow-up to SQL + vector intent", flush=True)
         else:
@@ -1154,6 +1722,14 @@ def understand_context_node(state: GraphState) -> GraphState:
         if recovered_address:
             ctx["address"] = recovered_address
             print(f"[understand_context] recovered address from raw message: {recovered_address!r}", flush=True)
+
+    pending_advice = (state.get("metadata") or {}).get(PENDING_BUILDING_ADVICE_KEY)
+    if (
+        isinstance(pending_advice, dict)
+        and _looks_like_identity_followup(state.get("last_message"), ctx)
+    ):
+        ctx = _restore_pending_advice_context(ctx, pending_advice)
+        print("[understand_context] restored pending ECM advice request after identity follow-up", flush=True)
 
     # Preserve intent for address-only followups by using the latest stored building context.
     if not ctx.get("parsed_intent") and ctx.get("address"):
@@ -1218,6 +1794,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
             if not fallback_address and selected.get("addresses"):
                 fallback_address = _address_without_postcode(selected["addresses"][0])
             md.pop("pending_brf_resolution", None)
+            explicit_reply_building_id = _extract_building_id_from_text(last_message)
             md.update(
                 {
                     "brf_name": pending.get("brf_name"),
@@ -1241,6 +1818,8 @@ def brf_resolution_node(state: GraphState) -> GraphState:
                     },
                 }
             )
+            if explicit_reply_building_id:
+                md["building_id_from_user"] = explicit_reply_building_id
             if selected_address:
                 md["address"] = selected_address
                 md["address_from_user"] = selected_address
@@ -1381,7 +1960,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
             "brf_candidate_buildings": options,
             "pending_brf_resolution": {
                 "brf_name": brf_name,
-                "original_question": last_message,
+                "original_question": ctx.get("answer_focus") or last_message,
                 "original_context": ctx,
                 "options": options,
                 "question": question,
@@ -1402,6 +1981,28 @@ def brf_resolution_node(state: GraphState) -> GraphState:
     )
     print(f"[brf_resolution] needs selection options={len(options)}", flush=True)
     return {"metadata": md}
+
+
+def multi_address_resolution_node(state: GraphState) -> GraphState:
+    print("[multi_address_resolution] ENTER", flush=True)
+    result = resolve_multi_address_identity_message(
+        state.get("last_message") or "",
+        state.get("metadata") or {},
+    )
+    if not result:
+        print("[multi_address_resolution] no multi-address identity question", flush=True)
+        return {}
+
+    status = ((result.get("metadata") or {}).get("multi_address_resolution") or {}).get("status")
+    print(f"[multi_address_resolution] status={status}", flush=True)
+    return result
+
+
+def route_after_multi_address_resolution(state: GraphState) -> str:
+    if state.get("multi_address_resolution_complete"):
+        print("[route_after_multi_address_resolution] → direct_response", flush=True)
+        return "direct_response"
+    return route_after_brf_resolution(state)
 
 
 def route_after_brf_resolution(state: GraphState) -> str:
@@ -1661,6 +2262,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     md = state.get("metadata", {}) or {}
     addr = md.get("address")
+    if md.get("same_building_multiple_addresses") and md.get("byggnadsid"):
+        addr = None
     print(f"[generic_sql_agent] ENTER addr={addr!r}", flush=True)
     result = None
 
@@ -1736,6 +2339,21 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         identity_check = assess_building_identity(md, result.get("data"))
+        explicit_building_id = _explicit_building_id_from_metadata(md)
+        if (
+            explicit_building_id
+            and _all_retrieved_rows_match_building_id(result.get("data"), explicit_building_id)
+        ):
+            identity_check = _deep_merge(
+                identity_check,
+                {
+                    "status": "passed",
+                    "matched_building_id": explicit_building_id,
+                    "ambiguous": False,
+                    "multiple_matches": False,
+                    "explicit_building_id_accepted": True,
+                },
+            )
         if (
             identity_check.get("status") == "ambiguous"
             and addr
@@ -2223,7 +2841,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         or "No specific action was recorded."
     )
     prompt = build_building_response_prompt(
-        user_input=state.get("last_message") or "",
+        user_input=ctx.get("answer_focus") or state.get("last_message") or "",
         current_address=str(current_address),
         history=state.get("messages") or [],
         action_description=action_description,
@@ -2241,6 +2859,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         print(f"[llm_summarizer] ERROR: {e}", flush=True)
 
     sess = _latest_session_state(state.get("session_state"))
+    if not (metadata.get("clarification") or {}).get("needed"):
+        metadata.pop(PENDING_BUILDING_ADVICE_KEY, None)
     sess["metadata"] = metadata
     sess["context"] = ctx
     if ctx.get("intent"):
@@ -2318,6 +2938,7 @@ def build_building_flow_graph() -> StateGraph:
     # Core nodes
     builder.add_node("understand_context", understand_context_node)
     builder.add_node("brf_resolution", brf_resolution_node)
+    builder.add_node("multi_address_resolution", multi_address_resolution_node)
     builder.add_node("clarification", clarification_node)
     builder.add_node("maintain_history", maintain_history_node)
 
@@ -2346,12 +2967,14 @@ def build_building_flow_graph() -> StateGraph:
     builder.set_entry_point("understand_context")
 
     builder.add_edge("understand_context", "brf_resolution")
+    builder.add_edge("brf_resolution", "multi_address_resolution")
 
     # After parsing and optional BRF lookup: ambiguity + address/building-id gate
     builder.add_conditional_edges(
-        "brf_resolution",
-        route_after_brf_resolution,
+        "multi_address_resolution",
+        route_after_multi_address_resolution,
         {
+            "direct_response": END,
             "clarification": "clarification",
             "maintain_history": "maintain_history",
             "request_address": "request_address",

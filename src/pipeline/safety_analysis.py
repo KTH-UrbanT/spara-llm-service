@@ -449,6 +449,10 @@ def assess_building_identity(
         and set(candidate_ids) == {existing_ids[0]}
         and len(candidate_addresses) > 1
     )
+    multiple_addresses_same_building_id = bool(
+        len(candidate_ids) == 1
+        and len(candidate_addresses) > 1
+    )
 
     matched_building_id = candidate_ids[0] if len(candidate_ids) == 1 else existing_ids[0] if len(existing_ids) == 1 else None
     conflicting_metadata = bool(
@@ -461,20 +465,26 @@ def assess_building_identity(
         (len(candidate_ids) > 1 or len(candidate_addresses) > 1)
         and not multiple_records_same_address
         and not multiple_addresses_same_explicit_building
+        and not multiple_addresses_same_building_id
     )
     parser_ctx = metadata.get("context") or {}
-    ambiguous = multiple_matches or bool(parser_ctx.get("ambiguous") or parser_ctx.get("ambigious"))
+    resolved_to_single_building = bool(
+        matched_building_id
+        or multiple_records_same_address
+        or multiple_addresses_same_explicit_building
+        or multiple_addresses_same_building_id
+        or normalized_candidate_addresses == {normalized_input_address}
+    )
+    ambiguous = multiple_matches or (
+        bool(parser_ctx.get("ambiguous") or parser_ctx.get("ambigious"))
+        and not resolved_to_single_building
+    )
 
     if conflicting_metadata:
         status = "conflict"
     elif ambiguous:
         status = "ambiguous"
-    elif (
-        matched_building_id
-        or multiple_records_same_address
-        or multiple_addresses_same_explicit_building
-        or normalized_candidate_addresses == {normalized_input_address}
-    ):
+    elif resolved_to_single_building:
         status = "passed"
     else:
         status = "missing"
@@ -487,6 +497,7 @@ def assess_building_identity(
         "multiple_matches": multiple_matches,
         "multiple_records_same_address": multiple_records_same_address,
         "multiple_addresses_same_explicit_building": multiple_addresses_same_explicit_building,
+        "multiple_addresses_same_building_id": multiple_addresses_same_building_id,
         "conflicting_metadata": conflicting_metadata,
         "candidate_building_ids": candidate_ids,
         "candidate_addresses": candidate_addresses,
