@@ -1,0 +1,6 @@
+metric,point_estimate,ci_lo_2.5,ci_hi_97.5,nan_fraction,n_pairs,n_resamples
+groundedness_kappa_linear,1.0,1.0,1.0,0.3373,8,10000
+completeness_kappa_linear,0.4286,0.0,0.6364,0.1016,8,10000
+numeric_fidelity_kappa_linear,0.6364,0.5556,0.6364,0.3489,8,10000
+constraint_satisfaction_kappa_linear,0.6364,0.5556,0.6364,0.3425,8,10000
+overall_pass_kappa_binary,0.6,0.0,1.0,0.0967,8,10000

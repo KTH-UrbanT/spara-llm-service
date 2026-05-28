@@ -1,0 +1,76 @@
+{
+  "dataset_version": "schema_test-1.0.0",
+  "created_at": "2026-05-21T00:00:00Z",
+  "description": "Schema-misinterpretation generalization test for Action 7 (plan-eil-v5.md §VII.7 + review §IV.4). Three questions targeting non-YYMM field families that the v5 schema primer does NOT explicitly document. The hypothesis is binary: if the schema-aware judge catches these traps, the primer generalizes; if it misses them on the baseline rubric but the schema rubric ALSO misses them, the primer is YYMM-specific. All three addresses are reused from the v4 dataset so the existing aggregated_cache applies after a fresh A2 run. NEW category name 'schema_misinterpretation' is used to make these distinguishable from v4 categories in analysis.",
+  "questions": [
+    {
+      "question_id": "QS01",
+      "category": "schema_misinterpretation",
+      "difficulty": "hard",
+      "question": "What was the total annual energy consumption in kWh of the building at Loviselundsvägen 81 during the 2020 EPC measurement period?",
+      "hint_address": "Loviselundsvägen 81",
+      "expected_facts": [
+        "the building is at Loviselundsvägen 81 (byggnadsid 01-80-BERBERISEN7-1)",
+        "total annual energy consumption is approximately 23,816 kWh (epc_egiprimarenergianvandning2020_calc)",
+        "this can also be computed as Atemp × specific energy intensity (270 m² × 88 kWh/m²/year)"
+      ],
+      "expected_numeric": {
+        "total_kwh_2020": 23816
+      },
+      "expected_constraints": [],
+      "must_avoid": [
+        "must NOT report epc_egiprimarenergital2020_calc=88 as the total kWh — that field is an INDEX (kWh/m²/year), not absolute consumption",
+        "must NOT report epc_egispecifikenergianvandning_calc=49 as total kWh — that is also an index"
+      ],
+      "trap_family": "energy_index_vs_total_kwh",
+      "notes": "FIELD SEMANTICS TO VERIFY (added by author): epc_egiprimarenergital2020_calc is the 2020 primary energy INDEX in kWh/m²/year. epc_egiprimarenergianvandning2020_calc is the 2020 primary energy CONSUMPTION in kWh (absolute). The schema primer does not document either field. The trap is a model returning '88 kWh' (reading the index as absolute) when the correct answer is ~23,816 kWh.",
+      "created_at": "2026-05-21T00:00:00Z"
+    },
+    {
+      "question_id": "QS02",
+      "category": "schema_misinterpretation",
+      "difficulty": "hard",
+      "question": "What is the residential heated floor area (in m²) of the building at Friherregatan 132?",
+      "hint_address": "Friherregatan 132",
+      "expected_facts": [
+        "the building is at Friherregatan 132 (byggnadsid 01-80-BLOMLISTEN4-1)",
+        "epc_egenatemp = 152 m² (total heated area)",
+        "epc_egenatempbostad = 100 (this is a PERCENTAGE — 100% of Atemp is residential)",
+        "residential heated area = 152 m² × 100/100 = 152 m²"
+      ],
+      "expected_numeric": {
+        "residential_atemp_m2": 152
+      },
+      "expected_constraints": [],
+      "must_avoid": [
+        "must NOT report epc_egenatempbostad=100 as '100 m²' — that field is a PERCENTAGE (0-100), not an absolute area in m²",
+        "must NOT confuse it with epc_egenatempsumma=100 either; both are percentages on this row"
+      ],
+      "trap_family": "ratio_vs_absolute_m2",
+      "notes": "FIELD SEMANTICS TO VERIFY (added by author): I believe epc_egenatempbostad is the residential FRACTION (0-100 scale) of total Atemp; on a 100%-residential single-family house it reads 100. If this field is actually an absolute m² (or anything other than a fraction), the gold answer is WRONG and this question should be dropped. Verify against ODEN field reference before running.",
+      "created_at": "2026-05-21T00:00:00Z"
+    },
+    {
+      "question_id": "QS03",
+      "category": "schema_misinterpretation",
+      "difficulty": "medium",
+      "question": "What is the specific energy consumption (in kWh per m² per year) of the building at Kurirgatan 11?",
+      "hint_address": "Kurirgatan 11",
+      "expected_facts": [
+        "the building is at Kurirgatan 11 (byggnadsid 01-80-BAECKSLINGAN12-1)",
+        "specific energy consumption is 56 kWh/m²/year (epc_egispecifikenergianvandning_calc)",
+        "this is distinct from the primary energy index (epc_egiprimarenergital2020_calc = 100)"
+      ],
+      "expected_numeric": {
+        "specific_energy_kwh_m2_year": 56
+      },
+      "expected_constraints": [],
+      "must_avoid": [
+        "must NOT report epc_egiprimarenergital2020_calc=100 as the specific energy — that is the PRIMARY energy index, a different computed value with weighting factors"
+      ],
+      "trap_family": "specific_vs_primary_energy",
+      "notes": "FIELD SEMANTICS TO VERIFY (added by author): I believe epc_egispecifikenergianvandning_calc is 'specific energy consumption' (delivered energy per m² per year — kWh/m²/year, without primary-energy weighting). epc_egiprimarenergital2020_calc is 'primary energy index' (with weighting factors applied per energy carrier). Both are in kWh/m²/year units but different computations. If the EPC convention differs from this, the gold answer is wrong. The schema primer does not document this distinction.",
+      "created_at": "2026-05-21T00:00:00Z"
+    }
+  ]
+}

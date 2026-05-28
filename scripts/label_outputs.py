@@ -392,7 +392,13 @@ def run_relabel_mode(args: argparse.Namespace) -> int:
     with labels_path.open(encoding="utf-8") as f:
         labelled_ids = {row["output_id"] for row in csv.DictReader(f)
                         if row.get("output_id")}
-    candidates = [by_id[oid] for oid in labelled_ids if oid in by_id]
+    # Sort by output_id so the stratified sampler is process-stable across
+    # invocations. Python set iteration order is not stable across processes,
+    # which would otherwise make the seeded sampler non-reproducible.
+    candidates = sorted(
+        (by_id[oid] for oid in labelled_ids if oid in by_id),
+        key=lambda o: o["output_id"],
+    )
 
     if not candidates:
         print("ERROR: no overlap between labelled outputs and run dir contents.")

@@ -1,0 +1,86 @@
+[
+  {
+    "run_index": 3,
+    "qid": "Q012",
+    "judge": "baseline",
+    "verdict": "pass",
+    "composite_score": 10.0,
+    "hard_fail": false,
+    "hard_fail_reason": "",
+    "issues": [],
+    "axis_scores": {
+      "groundedness_score": 10,
+      "completeness_score": 10,
+      "numeric_fidelity_score": 10,
+      "constraint_satisfaction_score": 10,
+      "uncertainty_calibration_score": 10,
+      "faithfulness_score": 10
+    },
+    "answer_used": "I have reviewed the EPC records for Astrakangatan 180 (BBR building ID 01-80-AVKOPPLINGEN4-1). Neither the 2010 nor the 2020 energy performance certificates include an explicit “last renovation” date. They do show:\n\n• EPC 1.4 (approved 2009-02-10) – measurement period June 2006 to May 2007  \n• EPC 2.8 (approved 2020-09-16) – measurement period September 2019 to August 2020  \n\nHowever, those periods refer to the energy‐use monitoring interval, not building renovation. No renovation date is recorded in the available EPC metadata.",
+    "evaluator_failed": false
+  },
+  {
+    "run_index": 3,
+    "qid": "Q012",
+    "judge": "schema",
+    "verdict": "pass",
+    "composite_score": 10.0,
+    "hard_fail": false,
+    "hard_fail_reason": "",
+    "issues": [],
+    "axis_scores": {
+      "groundedness_score": 10,
+      "completeness_score": 10,
+      "numeric_fidelity_score": 10,
+      "constraint_satisfaction_score": 10,
+      "uncertainty_calibration_score": 10,
+      "faithfulness_score": 10
+    },
+    "answer_used": "I have reviewed the EPC records for Astrakangatan 180 (BBR building ID 01-80-AVKOPPLINGEN4-1). Neither the 2010 nor the 2020 energy performance certificates include an explicit “last renovation” date. They do show:\n\n• EPC 1.4 (approved 2009-02-10) – measurement period June 2006 to May 2007  \n• EPC 2.8 (approved 2020-09-16) – measurement period September 2019 to August 2020  \n\nHowever, those periods refer to the energy‐use monitoring interval, not building renovation. No renovation date is recorded in the available EPC metadata.",
+    "evaluator_failed": false
+  },
+  {
+    "run_index": 3,
+    "qid": "Q013",
+    "judge": "baseline",
+    "verdict": "pass",
+    "composite_score": 10.0,
+    "hard_fail": false,
+    "hard_fail_reason": "",
+    "issues": [],
+    "axis_scores": {
+      "groundedness_score": 10,
+      "completeness_score": 10,
+      "numeric_fidelity_score": 10,
+      "constraint_satisfaction_score": 10,
+      "uncertainty_calibration_score": 10,
+      "faithfulness_score": 10
+    },
+    "answer_used": "According to the building’s Energy Performance Certificate (EPC), the first year of occupancy (epc_egiforstaarmanad) for the property at Förridargränd 5 is recorded as 1901. By January 2026 the building will therefore be approximately 125 years old—well in excess of 75 years.",
+    "evaluator_failed": false
+  },
+  {
+    "run_index": 3,
+    "qid": "Q013",
+    "judge": "schema",
+    "verdict": "fail",
+    "composite_score": 2.95,
+    "hard_fail": true,
+    "hard_fail_reason": "Misinterprets inspection period code as construction year",
+    "issues": [
+      "Misreads epc_egiforstaarmanad (YYMM format) as 1901 AD instead of January 2019",
+      "Incorrectly calculates the building age, contradicting epc_egennybyggar (1957) which makes it ~69 years in 2026",
+      "Asserts over-75 years age, opposite of data-supported result"
+    ],
+    "axis_scores": {
+      "groundedness_score": 1,
+      "completeness_score": 2,
+      "numeric_fidelity_score": 1,
+      "constraint_satisfaction_score": 10,
+      "uncertainty_calibration_score": 1,
+      "faithfulness_score": 1
+    },
+    "answer_used": "According to the building’s Energy Performance Certificate (EPC), the first year of occupancy (epc_egiforstaarmanad) for the property at Förridargränd 5 is recorded as 1901. By January 2026 the building will therefore be approximately 125 years old—well in excess of 75 years.",
+    "evaluator_failed": false
+  }
+]
