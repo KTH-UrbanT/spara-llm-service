@@ -27,6 +27,27 @@ def test_boundary_safety_passes_when_out_of_scope_response_redirects():
     assert safety["redirect_to"] == "relevant_authority_or_legal_expert"
 
 
+def test_contact_details_update_is_boundary_not_record_update():
+    response_text = build_out_of_scope_response(
+        "external_contact_or_register_update",
+        "official_register_or_admin_system",
+    )
+
+    safety = assess_boundary_safety(
+        user_message="We changed board members--can you update our contact details?",
+        response_text=response_text,
+        route="out_of_scope",
+        metadata={},
+    )
+
+    assert "cannot update external registers" in response_text
+    assert "cannot perform the update" in response_text
+    assert "Once you send these details" not in response_text
+    assert safety["status"] == "passed"
+    assert safety["risk_category"] == "external_contact_or_register_update"
+    assert safety["redirect_to"] == "official_register_or_admin_system"
+
+
 def test_boundary_safety_flags_direct_answer_to_risky_question():
     safety = assess_boundary_safety(
         user_message="Which loan should our BRF take for renovation?",

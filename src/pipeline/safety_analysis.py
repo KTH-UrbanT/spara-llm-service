@@ -102,6 +102,25 @@ OUT_OF_SCOPE_RULES = [
         ),
         "redirect_to": "privacy_contact_or_relevant_authority",
     },
+    {
+        "category": "external_contact_or_register_update",
+        "phrases": (
+            "changed board members",
+            "change board members",
+            "new board members",
+            "update our contact details",
+            "update contact details",
+            "update the contact details",
+            "update our contacts",
+            "update contacts",
+            "update board contact",
+            "update board-member contact",
+            "update board member contact",
+            "change our contact details",
+            "change contact details",
+        ),
+        "redirect_to": "official_register_or_admin_system",
+    },
 ]
 
 BOUNDARY_REFUSAL_PHRASES = (
@@ -115,6 +134,10 @@ BOUNDARY_REFUSAL_PHRASES = (
     "should be handled",
     "goes beyond",
     "beyond the safe scope",
+    "cannot update",
+    "can't update",
+    "do not update",
+    "cannot make updates",
 )
 
 REDIRECT_TARGET_PHRASES = {
@@ -138,6 +161,12 @@ REDIRECT_TARGET_PHRASES = {
     "privacy_contact_or_relevant_authority": (
         "privacy",
         "authority",
+    ),
+    "official_register_or_admin_system": (
+        "official",
+        "register",
+        "admin",
+        "property manager",
     ),
     "ekr_advisor": (
         "ekr",
@@ -356,6 +385,21 @@ def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
         if value is not None:
             facts["electricity_use"] = value
 
+    if not _is_present(facts.get("construction_year")):
+        value = _first_present(
+            facts,
+            (
+                "construction_year",
+                "year_built",
+                "built_year",
+                "byggar",
+                "epc_egennybyggar",
+            ),
+        )
+        year = _coerce_year(value)
+        if year is not None:
+            facts["construction_year"] = year
+
     if not _is_present(facts.get("energy_declaration_year")):
         value = _first_present(
             facts,
@@ -437,11 +481,17 @@ def assess_building_identity(
         for normalized in (_normalize_address_text(address) for address in candidate_addresses)
         if normalized
     }
-    multiple_records_same_address = bool(
+    unique_candidate_ids = set(candidate_ids)
+    same_input_address = bool(
         normalized_input_address
         and normalized_candidate_addresses
         and normalized_candidate_addresses == {normalized_input_address}
-        and (len(candidate_ids) > 1 or len(candidate_addresses) > 1)
+    )
+    multiple_candidate_building_ids = len(unique_candidate_ids) > 1
+    multiple_records_same_address = bool(
+        same_input_address
+        and not multiple_candidate_building_ids
+        and (len(candidate_ids) == 1 or len(candidate_addresses) > 1)
     )
     multiple_addresses_same_explicit_building = bool(
         len(existing_ids) == 1
@@ -513,7 +563,7 @@ def build_clarification_question(reason: Optional[str]) -> str:
         "brf_not_found": "I could not find building addresses for that BRF. Please share the full street address so I use the correct building.",
         "brf_lookup_failed": "I could not look up that BRF right now. Please share the full street address so I use the correct building.",
         "building_not_found_by_id": "I could not find enough building data for that building ID. Please share one of the building's street addresses so I can try the address lookup.",
-        "ambiguous_address": "I found more than one possible building match. Could you provide the full street address so I avoid using the wrong building information?",
+        "ambiguous_address": "I found more than one possible building match for that address. Please provide the city, postcode, municipality, BRF name, or exact building ID so I use the correct building.",
         "building_not_found": "I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",
         "missing_building_data": "I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the full address or the specific system you want to ask about?",
         "insufficient_data_for_personalized_advice": "I can give general guidance, but I need the full building address before I can personalize the advice.",
@@ -677,6 +727,7 @@ def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[st
         "detailed_engineering_calculation": "I can explain general options, but detailed engineering calculations should be handled by a qualified engineer or installer.",
         "installer_or_vendor_recommendation": "I can explain what to look for, but I should not recommend a specific installer or vendor.",
         "personal_data_or_privacy_issue": "I can explain general principles, but privacy and personal-data questions should be handled through the appropriate authority or responsible contact.",
+        "external_contact_or_register_update": "I cannot update external registers, contact lists, board-member records, or property-management systems automatically.",
     }
     next_steps = {
         "relevant_authority_or_legal_expert": "Please check with a legal expert, your building association's advisor, or the relevant authority.",
@@ -684,6 +735,7 @@ def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[st
         "qualified_engineer_or_installer": "A qualified engineer or installer should assess the building before any final decision is made.",
         "advisor_or_procurement_process": "An advisor or a formal procurement process is the safer way to compare vendors.",
         "privacy_contact_or_relevant_authority": "Please contact the relevant privacy lead or authority for guidance.",
+        "official_register_or_admin_system": "Update those details in the BRF's official register or admin system, property-manager contact list, website/contact page, and any relevant authority/register where the BRF maintains board information. I can help draft a checklist or neutral update message, but I cannot perform the update.",
     }
     base = explanations.get(
         out_of_scope_type,

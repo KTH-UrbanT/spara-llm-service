@@ -18,6 +18,7 @@ Expert-handoff note:
 A) building_specific  → choose this whenever ANY of the following is true:
   1) The message mentions a concrete LOCATION / ID for a single site, e.g.:
      • “at <street + number>”, “for <address>”, “I live at <address>”
+     • a concrete BRF name: “BRF Sjöstaden 1”, “I live in BRF Solgläntan 1”
      • patterns like: “Main Street 12”, “Hammarby Allé 24”, “Objektidentitet …”
   2) The message asks for facts, fields, records, or calculations about the user’s site:
      • “my building”, “our building”, “my apartment building”, “our property”
@@ -40,8 +41,9 @@ B) generic  → general knowledge or advice not tied to a specific site:
   • “We have high heating bills.”
   • “The building is from the 60s and has district heating.”
   • “We’re a multi-family BRF, and the courtyard is small.”
-  A user may mention being a BRF member/board and still want generic advice. In that case,
-  answer generally and invite them to share a BRF name, address, or building ID for tailored advice.
+  A user may mention being a BRF member/board and still want generic advice when no concrete
+  BRF name/address/building ID is provided. If a concrete BRF name is provided, route to
+  building_specific so the system can resolve that BRF to building ID(s).
 
 C) conversational  → greetings, small talk, meta questions about the app/assistant.
   • “Hi, what is this?” “Who built you?” “Thanks!”
@@ -98,6 +100,9 @@ A: generic
 
 Q: We are a BRF in Stockholm. How can we reduce heating costs?
 A: generic
+
+Q: I live in BRF Sjöstaden 1. How can we improve our heating bills?
+A: building_specific
 
 Q: Can you recommend common ECMs for a BRF?
 A: generic

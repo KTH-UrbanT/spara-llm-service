@@ -167,7 +167,7 @@ BRF_NAME_RE = re.compile(
 )
 
 BUILDING_ID_RE = re.compile(
-    r"\b\d{2}-\d{2}-[A-Za-zÅÄÖåäö0-9]+-\d+\b",
+    r"\b\d{2}-\d{2}-[A-Za-zÅÄÖåäö0-9:_-]+-\d+\b",
     flags=re.IGNORECASE,
 )
 
@@ -395,6 +395,18 @@ def _extract_brf_name_from_text(text: Optional[str]) -> Optional[str]:
     if not match:
         return None
     return _clean_brf_name(match.group(1))
+
+
+def _extract_recent_brf_name_from_messages(messages: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages[:-1]):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        brf_name = _extract_brf_name_from_text(message.get("content"))
+        if brf_name:
+            return brf_name
+    return None
 
 
 def _extract_building_id_from_text(text: Optional[str]) -> Optional[str]:
@@ -634,6 +646,9 @@ ECM_ADVICE_PATTERNS = (
     r"\bretrofit(?:s|ting)?\b",
     r"\brenovat(?:e|ion|ions)?\b",
     r"\bupgrade(?:s|d|ing)?\b",
+    r"\bbuilding[-\s]?specific\s+advice\b",
+    r"\b(?:tailored|personalized|personalised)\s+advice\b",
+    r"\bspecific\s+(?:advice|recommendations?|measures?)\b",
 )
 
 EXPLICIT_GENERAL_SCOPE_PATTERNS = (
@@ -1095,7 +1110,14 @@ def _enrich_building_fact_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
         return row
     enriched = dict(row)
     facts = extract_retrieved_facts(row)
-    for key in ("heating_system", "district_heating_use", "energy_class", "energy_performance"):
+    for key in (
+        "heating_system",
+        "district_heating_use",
+        "energy_class",
+        "energy_performance",
+        "energy_declaration_year",
+        "construction_year",
+    ):
         if key not in enriched and facts.get(key) not in (None, "", [], {}):
             enriched[key] = facts[key]
     return enriched
@@ -1164,10 +1186,14 @@ def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> boo
 
 def _explicit_building_id_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
     metadata = metadata or {}
-    for key in ("building_id_from_user", "selected_brf_building_id"):
+    for key in ("building_id_from_user", "selected_brf_building_id", "byggnadsid"):
         value = metadata.get(key)
         if value not in (None, ""):
             return str(value).strip().upper()
+
+    value = metadata.get("building_id")
+    if value not in (None, "") and BUILDING_ID_RE.search(str(value)):
+        return str(value).strip().upper()
 
     resolution = metadata.get("brf_resolution")
     if isinstance(resolution, dict) and resolution.get("status") in RESOLVED_BRF_STATUSES:
@@ -1855,7 +1881,11 @@ def brf_resolution_node(state: GraphState) -> GraphState:
         print("[brf_resolution] pending selection not resolved", flush=True)
         return {"metadata": md}
 
-    brf_name = _extract_brf_name_from_text(last_message)
+    brf_name = (
+        _extract_brf_name_from_text(last_message)
+        or _metadata_brf_name(md)
+        or _extract_recent_brf_name_from_messages(state.get("messages"))
+    )
     if not brf_name:
         print("[brf_resolution] no BRF name found", flush=True)
         return {}
@@ -2262,12 +2292,29 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     md = state.get("metadata", {}) or {}
     addr = md.get("address")
-    if md.get("same_building_multiple_addresses") and md.get("byggnadsid"):
+    explicit_building_id = _explicit_building_id_from_metadata(md)
+    if explicit_building_id:
         addr = None
     print(f"[generic_sql_agent] ENTER addr={addr!r}", flush=True)
     result = None
 
-    if addr:
+    if explicit_building_id:
+        print(f"[generic_sql_agent] selected byggnadsid={explicit_building_id!r}", flush=True)
+        result = sql_mapper_layer.execute("buildings_by_building_id", building_id=explicit_building_id)
+        if not (result.get("ok") and result.get("data")):
+            fallback = _lookup_rows_for_brf_selected_addresses(explicit_building_id, md)
+            if fallback:
+                print("[generic_sql_agent] used BRF selected-address fallback for byggnadsid", flush=True)
+                result = fallback
+                addr = None
+            elif md.get("address"):
+                print("[generic_sql_agent] fallback to address lookup after byggnadsid miss", flush=True)
+                addr = md.get("address")
+                result = None
+        else:
+            addr = None
+
+    if result is None and addr:
         result = sql_mapper_layer.execute("building_by_address", address=addr)
         print(f"[generic_sql_agent] building_by_address ok={bool(result and result.get('ok'))}", flush=True)
         if not (result.get("ok") and result.get("data")):
@@ -2289,7 +2336,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                 else "address_lookup"
             )
             result["trace"] = trace
-    else:
+    elif result is None:
         key = next((k for k in SINGLE_FILTER_KEYS if md.get(k) not in (None, "")), None)
         if key is not None:
             value = md[key]
@@ -2339,7 +2386,6 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         identity_check = assess_building_identity(md, result.get("data"))
-        explicit_building_id = _explicit_building_id_from_metadata(md)
         if (
             explicit_building_id
             and _all_retrieved_rows_match_building_id(result.get("data"), explicit_building_id)
@@ -2360,6 +2406,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             and _is_specific_address(addr)
             and isinstance(result.get("data"), list)
             and result.get("data")
+            and len(set(identity_check.get("candidate_building_ids") or [])) <= 1
         ):
             identity_check = _deep_merge(
                 identity_check,

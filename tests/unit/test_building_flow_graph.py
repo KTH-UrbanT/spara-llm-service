@@ -667,6 +667,50 @@ def test_brf_resolution_asks_for_selection_when_brf_has_multiple_buildings():
     assert metadata["pending_brf_resolution"]["original_question"].startswith("We are BRF")
 
 
+def test_brf_resolution_uses_recent_brf_name_for_building_specific_followup():
+    module = import_building_flow_graph_module()
+    module._lookup_brf_addresses = lambda brf_name: [
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden 1",
+            "byggnadsid": "01-80-HALVOEN1-3",
+            "fastighet": "Halvön 1",
+            "address": "Hammarby Allé 163",
+            "postnr": "12065",
+            "postort": "Stockholm",
+        },
+        {
+            "brf_name": "Bostadsrättsföreningen Sjöstaden 1",
+            "byggnadsid": "01-80-HALVOEN1-3",
+            "fastighet": "Halvön 1",
+            "address": "Hammarby Allé 165",
+            "postnr": "12065",
+            "postort": "Stockholm",
+        },
+    ]
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "yes, please give me building specific advice",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live in brf Sjöstaden 1. How can we improve our heating bills?",
+                },
+                {"role": "assistant", "classification": "generic", "content": "General advice..."},
+                {"role": "user", "content": "yes, please give me building specific advice"},
+            ],
+            "context": {"parsed_intent": "SQL database ; vector database", "intent_list": ["SQL database", "vector database"]},
+            "metadata": {},
+        }
+    )
+
+    metadata = result["metadata"]
+    assert metadata["brf_name"] == "Sjöstaden 1"
+    assert metadata["byggnadsid"] == "01-80-HALVOEN1-3"
+    assert metadata["brf_resolution"]["status"] == "resolved_unique_building"
+    assert metadata["clarification"]["needed"] is False
+
+
 def test_brf_resolution_does_not_treat_location_phrase_as_brf_name():
     module = import_building_flow_graph_module()
 
@@ -883,8 +927,18 @@ def test_generic_sql_agent_allows_multiple_records_for_same_exact_address():
     module.sql_mapper_layer.execute = lambda *args, **kwargs: {
         "ok": True,
         "data": [
-            {"50a_uuid": "uuid-1", "address": "Artemisgatan 17", "energy_class": "D"},
-            {"50a_uuid": "uuid-2", "address": "Artemisgatan 17", "heating_system": "district heating"},
+            {
+                "byggnadsid": "01-80-SKYTTEN2-2",
+                "50a_uuid": "uuid-1",
+                "address": "Artemisgatan 17",
+                "energy_class": "D",
+            },
+            {
+                "byggnadsid": "01-80-SKYTTEN2-2",
+                "50a_uuid": "uuid-1",
+                "address": "Artemisgatan 17",
+                "heating_system": "district heating",
+            },
         ],
         "trace": {"query_type": "building_by_address", "execution_status": "success"},
     }
@@ -924,6 +978,53 @@ def test_generic_sql_agent_allows_multiple_addresses_for_explicit_building_id():
     assert result["metadata"]["building_identity_check"]["status"] == "passed"
     assert result["metadata"]["building_identity_check"]["multiple_addresses_same_explicit_building"] is True
     assert len(result["agent_data_generic"]) == 2
+
+
+def test_generic_sql_agent_prefers_building_id_over_ambiguous_address_and_exposes_construction_year():
+    module = import_building_flow_graph_module()
+    calls = []
+    selected_building_id = "24-82-BURTRAESKS-GAMMELBYN71:4-1"
+
+    def fake_execute(op, **kwargs):
+        calls.append((op, kwargs))
+        if op == "buildings_by_building_id":
+            return {
+                "ok": True,
+                "data": [
+                    {
+                        "byggnadsid": selected_building_id,
+                        "epc_idadr": "Ringvägen 10",
+                        "epc_idpostnr": "93732",
+                        "epc_idpostort": "Burträsk",
+                        "epc_idkommun": "Skellefteå",
+                        "epc_egennybyggar": 1966,
+                        "epc_godkand": "2020-12-23",
+                        "epc_egiversion": "2020",
+                    }
+                ],
+                "trace": {"query_type": "buildings_by_building_id", "execution_status": "success"},
+            }
+        raise AssertionError(f"unexpected operation: {op}")
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "byggnadsid": selected_building_id,
+            },
+            "parallel": {},
+        }
+    )
+
+    assert calls == [("buildings_by_building_id", {"building_id": selected_building_id.upper()})]
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["metadata"]["building_identity_check"]["matched_building_id"] == selected_building_id.upper()
+    assert result["agent_data_generic"][0]["byggnadsid"] == selected_building_id
+    assert result["agent_data_generic"][0]["construction_year"] == 1966
+    assert result["metadata"]["generic_sql_trace"]["returned_values_used"]["construction_year"] == 1966
 
 
 def test_generic_sql_agent_allows_multiple_addresses_for_same_building_id_without_explicit_id():
@@ -1453,7 +1554,7 @@ def test_generic_sql_agent_prefers_exact_address_over_related_variants():
     assert result["agent_data_generic"][0]["address"] == "Artemisgatan 17"
 
 
-def test_generic_sql_agent_allows_specific_address_even_without_row_address_fields():
+def test_generic_sql_agent_blocks_specific_address_when_rows_have_different_building_ids_without_addresses():
     module = import_building_flow_graph_module()
     module.sql_mapper_layer.execute = lambda *args, **kwargs: {
         "ok": True,
@@ -1471,9 +1572,44 @@ def test_generic_sql_agent_allows_specific_address_even_without_row_address_fiel
         }
     )
 
-    assert result.get("identity_gate_blocked") is not True
-    assert result["metadata"]["building_identity_check"]["status"] == "passed"
-    assert result["metadata"]["building_identity_check"]["accepted_multiple_records_for_specific_address"] is True
+    assert result.get("identity_gate_blocked") is True
+    assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
+    assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
+    assert "city, postcode, municipality" in result["metadata"]["clarification"]["question_asked"]
+
+
+def test_generic_sql_agent_blocks_common_address_across_multiple_building_ids():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "01-60-BOKBINDAREN6-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Täby",
+                "epc_egennybyggar": 1975,
+            },
+            {
+                "byggnadsid": "24-82-BURTRAESKS-GAMMELBYN71:4-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Burträsk",
+                "epc_egennybyggar": 1966,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {"address": "Ringvägen 10"},
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is True
+    assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
+    assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
+    assert "city, postcode, municipality" in result["metadata"]["clarification"]["question_asked"]
 
 
 def test_generic_sql_agent_exposes_epc_heating_system_alias():

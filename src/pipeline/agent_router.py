@@ -28,7 +28,7 @@ ROUTER_LABEL_PATTERN = re.compile(
 )
 
 BUILDING_ID_RE = re.compile(
-    r"\b\d{2}-\d{2}-[A-Za-zÅÄÖåäö0-9]+-\d+\b",
+    r"\b\d{2}-\d{2}-[A-Za-zÅÄÖåäö0-9:_-]+-\d+\b",
     re.IGNORECASE,
 )
 
@@ -317,6 +317,13 @@ ADDRESS_INTRO_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+BRF_NAME_RE = re.compile(
+    r"\b(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+"
+    r"([A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 .'\-]*?)"
+    r"(?=\s*(?:[,.;:!?]|$|\bwhat\b|\bwhich\b|\bhow\b|\bwhy\b|\bcan\b|\bplease\b|\bvad\b|\bhur\b|\bvilken\b|\bvilket\b|\bmed\b|\bwith\b))",
+    flags=re.IGNORECASE,
+)
+
 
 def _looks_like_compact_address(text: Optional[str], *, allow_four_digit_number: bool = False) -> bool:
     if not text:
@@ -361,6 +368,42 @@ def _looks_like_address(message: str) -> bool:
         return _looks_like_compact_address(cue_match.group(1), allow_four_digit_number=True)
 
     return _looks_like_compact_address(text)
+
+
+def _clean_brf_name(value: Optional[str]) -> Optional[str]:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" .,:;!?\"'")
+    if not cleaned:
+        return None
+    if re.fullmatch(r"(?:in|at|on|from|i|på)\s+[A-Za-zÅÄÖåäö .'\-]+", cleaned, flags=re.IGNORECASE):
+        return None
+    return cleaned or None
+
+
+def _extract_concrete_brf_name(message: Optional[str]) -> Optional[str]:
+    if not message:
+        return None
+    match = BRF_NAME_RE.search(str(message))
+    if not match:
+        return None
+    return _clean_brf_name(match.group(1))
+
+
+def _has_recent_concrete_brf_context(messages: List[Dict[str, Any]]) -> bool:
+    for message in reversed((messages or [])[:-1]):
+        if message.get("role") != "user":
+            continue
+        if _extract_concrete_brf_name(message.get("content")):
+            return True
+    return False
+
+
+def _looks_like_building_specific_advice_request(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return bool(
+        re.search(r"\bbuilding[-\s]?specific\b", lowered)
+        or re.search(r"\b(?:tailored|personalized|personalised)\s+advice\b", lowered)
+        or re.search(r"\bspecific\s+(?:advice|recommendations?|measures?)\b", lowered)
+    )
 
 
 def _metadata_contains_building_context(value: Any) -> bool:
@@ -473,6 +516,7 @@ def _has_explicit_site_identifier(message: str) -> bool:
         BUILDING_ID_RE.search(text)
         or _looks_like_address(text)
         or STREET_ADDRESS_FRAGMENT_RE.search(text)
+        or _extract_concrete_brf_name(text)
     )
 
 
@@ -532,6 +576,8 @@ def _advisory_without_resolved_building_context(
         return False
     if _has_recent_building_context(messages, metadata):
         return False
+    if _has_recent_concrete_brf_context(messages):
+        return False
     if _looks_like_factual_building_data_request(message):
         return False
     if _asks_for_personalized_priorities_without_identity(message):
@@ -554,6 +600,8 @@ def _generic_advisory_continuation_without_resolved_building(
     if _looks_like_factual_building_data_request(message):
         return False
     if _asks_for_personalized_priorities_without_identity(message):
+        return False
+    if _looks_like_building_specific_advice_request(message) and _has_recent_concrete_brf_context(messages):
         return False
     if not _has_recent_generic_advisory_context(messages):
         return False
@@ -589,6 +637,9 @@ def _requires_building_specific_flow(message: str) -> bool:
     if not site_specific:
         return False
 
+    if _extract_concrete_brf_name(message) and _looks_like_advisory_request(message):
+        return True
+
     if _looks_like_factual_building_data_request(message):
         return True
 
@@ -605,6 +656,19 @@ def _requires_building_specific_followup(
     messages: List[Dict[str, Any]],
     metadata: Dict[str, Any],
 ) -> bool:
+    if (
+        _looks_like_building_specific_advice_request(message)
+        and _has_recent_concrete_brf_context(messages)
+        and not _has_recent_building_context(messages, metadata)
+    ):
+        return True
+    if (
+        _looks_like_ecm_followup(message)
+        and _has_recent_concrete_brf_context(messages)
+        and not _has_recent_building_context(messages, metadata)
+    ):
+        return True
+
     return (
         _looks_like_ecm_followup(message)
         or _looks_like_building_profile_followup(message)

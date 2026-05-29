@@ -271,6 +271,63 @@ def test_broad_brf_heating_cost_advice_overrides_building_classifier_to_generic(
     assert StubBuildingAgent.last_call is None
 
 
+def test_concrete_brf_heating_cost_advice_routes_to_building_resolution():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "I live in brf Sjöstaden 1. How can we improve our heating bills?",
+            }
+        ],
+        last_message="I live in brf Sjöstaden 1. How can we improve our heating bills?",
+        metadata={},
+        thread_id="thread-concrete-brf-heating-costs",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_building_specific_advice_followup_uses_recent_brf_context():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    messages = [
+        {
+            "role": "user",
+            "content": "I live in brf Sjöstaden 1. How can we improve our heating bills?",
+        },
+        {
+            "role": "assistant",
+            "classification": "generic",
+            "content": "Here are general measures. If you want building-specific advice, share the BRF name, street address, or building ID.",
+        },
+        {
+            "role": "user",
+            "content": "yes, please give me building specific advice",
+        },
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="yes, please give me building specific advice",
+        metadata={},
+        thread_id="thread-recent-brf-building-specific-followup",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
 def test_our_energy_class_still_requires_building_specific_flow():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
@@ -313,10 +370,9 @@ def test_brf_name_building_data_request_overrides_generic_classifier_label():
     assert metadata == {"address": ["street 1"]}
 
 
-def test_brf_energy_advice_overrides_expert_handoff_classifier_label_to_generic_advice():
+def test_brf_energy_advice_with_concrete_brf_routes_to_building_resolution_not_handoff():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "expert_handoff"
-    StubGenericAgent.next_response = "general brf energy advice"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -331,11 +387,11 @@ def test_brf_energy_advice_overrides_expert_handoff_classifier_label_to_generic_
         thread_id="thread-brf-energy-advice",
     )
 
-    assert response["content"] == "general brf energy advice"
-    assert response["classification"] == "generic"
-    assert response["agent_answered"] == "generic"
-    assert response["route"] == "generic"
-    assert metadata == {}
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
 
 
 def test_explicit_expert_handoff_wins_even_when_brf_is_mentioned():
@@ -360,10 +416,9 @@ def test_explicit_expert_handoff_wins_even_when_brf_is_mentioned():
     assert metadata["expert_handoff_pending_confirmation"] is True
 
 
-def test_brf_measure_recommendation_without_building_identity_stays_generic():
+def test_brf_measure_recommendation_with_concrete_brf_routes_to_building_resolution():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"
-    StubGenericAgent.next_response = "general measures answer"
     router = module.AgentRouter()
 
     response, metadata = router.route_message(
@@ -378,17 +433,16 @@ def test_brf_measure_recommendation_without_building_identity_stays_generic():
         thread_id="thread-brf-recommend-measures",
     )
 
-    assert response["content"] == "general measures answer"
-    assert response["classification"] == "generic"
-    assert response["route"] == "generic"
-    assert metadata == {}
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
 
 
-def test_recommend_measures_followup_after_wrong_handoff_prompt_routes_to_generic_advice():
+def test_recommend_measures_followup_after_wrong_handoff_prompt_uses_prior_brf_context():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "expert_handoff"
     StubBuildingAgent.last_call = None
-    StubGenericAgent.next_response = "generic ecm answer"
     router = module.AgentRouter()
 
     messages = [
@@ -414,12 +468,12 @@ def test_recommend_measures_followup_after_wrong_handoff_prompt_routes_to_generi
         thread_id="thread-recommend-measures-after-handoff",
     )
 
-    assert response["content"] == "generic ecm answer"
-    assert response["classification"] == "generic"
-    assert response["route"] == "generic"
-    assert metadata == {"expert_handoff_pending_confirmation": False}
-    assert StubBuildingAgent.last_call is None
-    assert StubGenericAgent.last_call[0] == "No, I mean can you recommend measures"
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call is not None
+    assert StubBuildingAgent.last_call[2]["expert_handoff_pending_confirmation"] is False
 
 
 def test_our_energy_audit_request_overrides_expert_handoff_classifier_label():
@@ -465,6 +519,29 @@ def test_building_id_message_overrides_generic_classifier_label():
     assert response["content"] == "building answer"
     assert response["classification"] == "building_specific"
     assert response["agent_answered"] == "building"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+
+
+def test_building_id_with_property_colon_overrides_generic_classifier_label():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "use building 24-82-BURTRAESKS-GAMMELBYN71:4-1",
+            }
+        ],
+        last_message="use building 24-82-BURTRAESKS-GAMMELBYN71:4-1",
+        metadata={},
+        thread_id="thread-building-id-colon",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
     assert response["route"] == "combined"
     assert metadata == {"address": ["street 1"]}
 
@@ -993,3 +1070,42 @@ def test_out_of_scope_questions_are_handled_safely():
     assert response["route"] == "out_of_scope"
     assert metadata["out_of_scope"] is True
     assert metadata["out_of_scope_type"] == "legal_advice"
+
+
+def test_contact_details_update_does_not_use_building_context_or_claim_update():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "assistant",
+                "classification": "building_specific",
+                "content": "Building ID: 01-80-HEDVIG15-1",
+                "metadata": {
+                    "address": "Bennebolsgatan 34",
+                    "byggnadsid": "01-80-HEDVIG15-1",
+                },
+            },
+            {
+                "role": "user",
+                "content": "We changed board members--can you update our contact details?",
+            },
+        ],
+        last_message="We changed board members--can you update our contact details?",
+        metadata={"address": "Bennebolsgatan 34", "byggnadsid": "01-80-HEDVIG15-1"},
+        thread_id="thread-contact-update",
+    )
+
+    assert response["classification"] == "out_of_scope"
+    assert response["route"] == "out_of_scope"
+    assert response["agent_answered"] == "boundary"
+    assert "cannot update external registers" in response["content"]
+    assert "cannot perform the update" in response["content"]
+    assert "Building ID" not in response["content"]
+    assert "Once you send these details" not in response["content"]
+    assert metadata["out_of_scope"] is True
+    assert metadata["out_of_scope_type"] == "external_contact_or_register_update"
+    assert StubBuildingAgent.last_call is None
