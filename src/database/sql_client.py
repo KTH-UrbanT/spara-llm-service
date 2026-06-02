@@ -110,7 +110,7 @@ class SQLClient:
     def building_by_address(
         self,
         address: str,
-        limit: int = 10,
+        limit: Optional[int] = None,
         offset: int = 0,
         ordering: Optional[str] = None,
         case_sensitive: bool = False,

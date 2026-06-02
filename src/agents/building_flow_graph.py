@@ -139,6 +139,8 @@ ROW_POSTCODE_KEYS = (
     "zip",
 )
 
+PENDING_AMBIGUOUS_ADDRESS_KEY = "pending_ambiguous_address"
+
 ADDRESS_DISAMBIGUATION_REQUEST_RE = re.compile(
     r"(?=.*\b(?:address|building|property|brf|adress|byggnad|fastighet)\b)"
     r"(?=.*\b(?:city|postcode|postal\s+code|municipality|postort|postnummer|kommun|"
@@ -229,9 +231,10 @@ def _last_assistant_requested_address(messages: List[Dict[str, Any]]) -> bool:
 
 
 ADDRESS_INTRO_RE = re.compile(
-    r"(?:i\s+live\s+(?:in|at|on)|i\s+am\s+at|i'm\s+at|my\s+address\s+is|address\s+is|"
-    r"we\s+live\s+(?:in|at|on)|our\s+address\s+is|"
-    r"jag\s+bor\s+p[åa]|vi\s+bor\s+p[åa]|min\s+adress\s+[äa]r|adressen\s+[äa]r)\s+(.+)$",
+    r"(?:i\s+live(?:\s+(?:in|at|on))?|i\s+am\s+at|i'm\s+at|my\s+address\s+is|address\s+is|"
+    r"we\s+live(?:\s+(?:in|at|on))?|our\s+address\s+is|"
+    r"jag\s+bor\s+p[åa]|vi\s+bor\s+p[åa]|min\s+adress\s+[äa]r|adressen\s+[äa]r)\s+"
+    r"(.+?)(?=\s*(?:[.?!\n]|$))",
     flags=re.IGNORECASE,
 )
 
@@ -304,6 +307,15 @@ def _extract_street_address_fragment(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
     match = STREET_ADDRESS_FRAGMENT_RE.search(str(text))
+    if not match:
+        match = re.search(
+            rf"\b("
+            rf"[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö.'\-]*?(?:{STREET_SUFFIX_RE})"
+            rf"\s+\d{{1,4}}[A-Za-z]?"
+            rf")\b",
+            str(text),
+            flags=re.IGNORECASE,
+        )
     if not match:
         return None
     fragment = match.group(1).strip(" .,:;!?\"'")
@@ -426,6 +438,24 @@ def _extract_address_location_hint_from_text(
     if location_match:
         return _clean_location_hint(location_match.group(1))
 
+    followup_location_match = re.search(
+        r"(?:^|[.?!;\n]\s*)"
+        r"(?:oh\s+yes\s+sure|oh\s+yes|sure|yes|yeah|yep|ok|okay|of\s+course|"
+        r"absolutely|noo?|nej|ja)?\s*[,.:;-]*\s*"
+        r"(?:"
+        r"(?:i|we)\s+live\s+(?:in|at)|"
+        r"city\s+is|municipality\s+is|postcode\s+is|postal\s+code\s+is|"
+        r"postort(?:en)?\s+[äa]r|kommun(?:en)?\s+[äa]r|postnummer(?:et)?\s+[äa]r|"
+        r"jag\s+bor\s+i|vi\s+bor\s+i"
+        r")\s+"
+        r"([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö .'\-]{0,60})"
+        r"(?=\s*(?:[,.;?!\n]|$))",
+        tail,
+        flags=re.IGNORECASE,
+    )
+    if followup_location_match:
+        return _clean_location_hint(followup_location_match.group(1))
+
     return None
 
 
@@ -444,6 +474,10 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
         flags=re.IGNORECASE,
     )
 
+    street_fragment = _extract_street_address_fragment(candidate)
+    if street_fragment:
+        return street_fragment
+
     had_address_cue = False
     cue_match = ADDRESS_INTRO_RE.search(candidate)
     if cue_match:
@@ -451,7 +485,7 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
         candidate = cue_match.group(1)
 
     candidate = re.sub(
-        r"^(?:i live in|i live at|i live on|i'm at|i am at|my address is|address is|it's|it is)\s+",
+        r"^(?:i live in|i live at|i live on|i live|i'm at|i am at|my address is|address is|it's|it is)\s+",
         "",
         candidate,
         flags=re.IGNORECASE,
@@ -460,9 +494,19 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
     if not candidate:
         return None
 
-    street_fragment = _extract_street_address_fragment(candidate)
-    if street_fragment:
-        return street_fragment
+    compact_prefix_match = re.match(
+        r"^(.+?\s+\d{1,4}[A-Za-z]?(?:\s*[-–]\s*\d{1,4}[A-Za-z]?)?)"
+        r"(?=\s*(?:[,.;?!]|\n|$))",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if compact_prefix_match:
+        compact_prefix = compact_prefix_match.group(1).strip(" .,:;!?\"'")
+        if _looks_like_compact_address(
+            compact_prefix,
+            allow_four_digit_number=had_address_cue,
+        ):
+            return compact_prefix
 
     stripped_location = _strip_location_tail_from_address_candidate(
         candidate,
@@ -511,6 +555,7 @@ def _extract_location_only_hint_from_text(text: Optional[str]) -> Optional[str]:
     )
     candidate = re.sub(
         r"^(?:i\s+live\s+(?:in|at)|we\s+live\s+(?:in|at)|"
+        r"i\s+live|we\s+live|"
         r"city\s+is|municipality\s+is|postcode\s+is|postal\s+code\s+is|"
         r"postort(?:en)?\s+[äa]r|kommun(?:en)?\s+[äa]r|postnummer(?:et)?\s+[äa]r|"
         r"i|in)\s+",
@@ -535,7 +580,11 @@ def _awaiting_address_location_disambiguation(metadata: Optional[Dict[str, Any]]
     return bool(
         clarification.get("needed")
         and clarification.get("reason") == "ambiguous_address"
-        and (metadata.get("address") or metadata.get("address_from_user"))
+        and (
+            metadata.get("address")
+            or metadata.get("address_from_user")
+            or metadata.get(PENDING_AMBIGUOUS_ADDRESS_KEY)
+        )
         and not _extract_metadata_location_hint(metadata)
         and identity_check.get("status") in (None, "", "ambiguous")
     )
@@ -847,7 +896,14 @@ def _iter_metadata_address_candidates(metadata: Dict[str, Any]) -> List[Any]:
         return []
 
     candidates: List[Any] = []
-    for key in ("address", "address_from_user", "matched_address", "input_address", "official_address"):
+    for key in (
+        "address",
+        "address_from_user",
+        PENDING_AMBIGUOUS_ADDRESS_KEY,
+        "matched_address",
+        "input_address",
+        "official_address",
+    ):
         if metadata.get(key) not in (None, ""):
             candidates.append(metadata.get(key))
 
@@ -961,6 +1017,7 @@ BUILDING_CONTEXT_KEYS = (
     "address",
     "address_from_user",
     "address_location_hint",
+    PENDING_AMBIGUOUS_ADDRESS_KEY,
     "matched_address",
     "input_address",
     "official_address",
@@ -2276,6 +2333,7 @@ def understand_context_node(state: GraphState) -> GraphState:
                 {
                     "address": pending_address,
                     "address_from_user": pending_address,
+                    PENDING_AMBIGUOUS_ADDRESS_KEY: pending_address,
                     "clarification": {
                         "needed": True,
                         "reason": "ambiguous_address",
@@ -3005,6 +3063,13 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             result["data"] = narrowed_rows
             trace = result.get("trace") or {}
             trace["rows_returned"] = len(narrowed_rows or [])
+            trace["returned_values_used"] = (
+                narrowed_rows[0]
+                if isinstance(narrowed_rows, list)
+                and narrowed_rows
+                and isinstance(narrowed_rows[0], dict)
+                else {}
+            )
             location_hint_no_match = bool(location_hint and original_rows and not narrowed_rows)
             trace["match_strategy"] = (
                 "address_location_no_match"
@@ -3053,6 +3118,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             trace["returned_values_used"] = data[0]
         elif isinstance(data, dict):
             trace["returned_values_used"] = data
+        else:
+            trace["returned_values_used"] = {}
         result["trace"] = trace
 
     if result and result.get("ok"):
@@ -3085,6 +3152,18 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         identity_check = assess_building_identity(metadata_updates, result.get("data"))
+        if (trace or {}).get("location_hint_no_match"):
+            identity_check = _deep_merge(
+                identity_check,
+                {
+                    "status": "ambiguous",
+                    "matched_building_id": None,
+                    "ambiguous": True,
+                    "multiple_matches": True,
+                    "location_hint_no_match": True,
+                    "location_hint": (trace or {}).get("address_location_hint"),
+                },
+            )
         if (
             explicit_building_id
             and _all_retrieved_rows_match_building_id(result.get("data"), explicit_building_id)
@@ -3140,6 +3219,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     },
                 },
             )
+            metadata_updates.pop(PENDING_AMBIGUOUS_ADDRESS_KEY, None)
             outs.append("generic_sql: ok")
             try:
                 n = len(result.get("data") or [])
@@ -3162,6 +3242,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                         "resolved": False,
                         "resolved_after_turns": None,
                     },
+                    PENDING_AMBIGUOUS_ADDRESS_KEY: addr,
                     "building_candidate_matches": result.get("data")[:5] if isinstance(result.get("data"), list) else result.get("data"),
                 },
             )

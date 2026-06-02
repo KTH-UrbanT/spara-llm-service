@@ -142,7 +142,11 @@ def _awaiting_address_disambiguation(metadata: Dict[str, Any]) -> bool:
     metadata = metadata or {}
     clarification = metadata.get("clarification") or {}
     identity_check = metadata.get("building_identity_check") or {}
-    has_address = bool(metadata.get("address") or metadata.get("address_from_user"))
+    has_address = bool(
+        metadata.get("address")
+        or metadata.get("address_from_user")
+        or metadata.get("pending_ambiguous_address")
+    )
     has_location_hint = bool(metadata.get("address_location_hint"))
     return bool(
         has_address

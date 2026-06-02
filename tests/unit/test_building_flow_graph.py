@@ -505,6 +505,45 @@ def test_extract_address_candidate_handles_city_context_for_non_suffix_street_na
     assert module._extract_address_location_hint_from_text(message, address) == "Stockholm"
 
 
+def test_extract_address_location_hint_from_later_live_clause():
+    module = import_building_flow_graph_module()
+
+    message = (
+        "i live in Sveavägen 17. What is the building's energy performance?\n"
+        "i live in Örebro"
+    )
+    address = module._extract_address_candidate_from_text(message)
+
+    assert address == "Sveavägen 17"
+    assert module._extract_address_location_hint_from_text(message, address) == "Örebro"
+
+
+def test_extract_address_location_hint_from_later_clause_without_address_preposition():
+    module = import_building_flow_graph_module()
+
+    message = (
+        "i live Kungsgatan 10. What is my energy performance?\n"
+        "i live in Växjö"
+    )
+    address = module._extract_address_candidate_from_text(message)
+
+    assert address == "Kungsgatan 10"
+    assert module._extract_address_location_hint_from_text(message, address) == "Växjö"
+
+
+def test_extract_address_without_preposition_for_non_suffix_street_name():
+    module = import_building_flow_graph_module()
+
+    message = (
+        "i live Professorsslingan 51. What is my energy performance?\n"
+        "i live in Stockholm"
+    )
+    address = module._extract_address_candidate_from_text(message)
+
+    assert address == "Professorsslingan 51"
+    assert module._extract_address_location_hint_from_text(message, address) == "Stockholm"
+
+
 def test_understand_context_recovers_address_and_location_hint_from_raw_message():
     module = import_building_flow_graph_module()
     DummyParseIntentAgent.result = {
@@ -528,6 +567,95 @@ def test_understand_context_recovers_address_and_location_hint_from_raw_message(
     assert result["metadata"]["address"] == "Ringvägen 10"
     assert result["metadata"]["address_location_hint"] == "Täby"
     assert result["context"]["address_location_hint"] == "Täby"
+
+
+def test_understand_context_recovers_comma_city_pair_strictly():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "I live at Ringvägen 10, Huddinge. What is the building's energy performance?",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live at Ringvägen 10, Huddinge. What is the building's energy performance?",
+                }
+            ],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Ringvägen 10"
+    assert result["metadata"]["address_location_hint"] == "Huddinge"
+    assert result["context"]["address"] == "Ringvägen 10"
+    assert result["context"]["address_location_hint"] == "Huddinge"
+
+
+def test_understand_context_recovers_address_and_later_location_hint_from_raw_message():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+    message = (
+        "i live in Sveavägen 17. What is the building's energy performance?\n"
+        "i live in Örebro"
+    )
+
+    result = module.understand_context_node(
+        {
+            "last_message": message,
+            "messages": [{"role": "user", "content": message}],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Sveavägen 17"
+    assert result["metadata"]["address_location_hint"] == "Örebro"
+    assert result["context"]["address_location_hint"] == "Örebro"
+
+
+def test_understand_context_recovers_later_location_hint_without_address_preposition():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+    message = (
+        "i live Kungsgatan 10. What is my energy performance?\n"
+        "i live in Växjö"
+    )
+
+    result = module.understand_context_node(
+        {
+            "last_message": message,
+            "messages": [{"role": "user", "content": message}],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Kungsgatan 10"
+    assert result["metadata"]["address_location_hint"] == "Växjö"
+    assert result["context"]["address_location_hint"] == "Växjö"
 
 
 def test_understand_context_uses_location_only_followup_for_ambiguous_address():
@@ -569,6 +697,83 @@ def test_understand_context_uses_location_only_followup_for_ambiguous_address():
     assert result["metadata"]["address"] == "Ringvägen 10"
     assert result["metadata"]["address_location_hint"] == "Katrineholm"
     assert result["context"]["address"] == "Ringvägen 10"
+    assert result["context"]["parsed_intent"] == "SQL database"
+
+
+def test_understand_context_uses_pending_ambiguous_address_memory_key():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": None,
+            "intents": [],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "i live in huddinge",
+            "messages": [{"role": "user", "content": "i live in huddinge"}],
+            "metadata": {
+                "pending_ambiguous_address": "Ringvägen 10",
+                "clarification": {
+                    "needed": True,
+                    "reason": "ambiguous_address",
+                },
+                "building_identity_check": {
+                    "status": "ambiguous",
+                },
+            },
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Ringvägen 10"
+    assert result["metadata"]["address_location_hint"] == "huddinge"
+    assert result["context"]["address"] == "Ringvägen 10"
+    assert result["context"]["address_location_hint"] == "huddinge"
+    assert result["context"]["parsed_intent"] == "SQL database"
+
+
+def test_understand_context_uses_first_location_followup_after_live_ambiguous_prompt():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": None,
+            "intents": [],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "i live in Huddinge",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live at Ringvägen 10. What is the building's energy performance?",
+                },
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I found more than one possible building match for that address. "
+                        "Please provide the city, postcode, municipality, BRF name, "
+                        "or exact building ID so I use the correct building."
+                    ),
+                },
+                {"role": "user", "content": "i live in Huddinge"},
+            ],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Ringvägen 10"
+    assert result["metadata"]["address_location_hint"] == "Huddinge"
+    assert result["context"]["address"] == "Ringvägen 10"
+    assert result["context"]["address_location_hint"] == "Huddinge"
     assert result["context"]["parsed_intent"] == "SQL database"
 
 
@@ -1851,7 +2056,7 @@ def test_generic_sql_agent_blocks_specific_address_when_rows_have_different_buil
     assert result.get("identity_gate_blocked") is True
     assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
     assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
-    assert "city, postcode, municipality" in result["metadata"]["clarification"]["question_asked"]
+    assert "Ringvägen 10, Huddinge" in result["metadata"]["clarification"]["question_asked"]
 
 
 def test_generic_sql_agent_blocks_common_address_across_multiple_building_ids():
@@ -1900,7 +2105,8 @@ def test_generic_sql_agent_blocks_common_address_across_multiple_building_ids():
     assert result.get("identity_gate_blocked") is True
     assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
     assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
-    assert "city, postcode, municipality" in result["metadata"]["clarification"]["question_asked"]
+    assert "Ringvägen 10, Huddinge" in result["metadata"]["clarification"]["question_asked"]
+    assert result["metadata"]["pending_ambiguous_address"] == "Ringvägen 10"
     assert "143 kWh" not in result.get("final_response", "")
 
 
@@ -1952,6 +2158,192 @@ def test_generic_sql_agent_uses_location_hint_for_common_address():
     assert result["metadata"]["building_identity_check"]["status"] == "passed"
     assert result["agent_data_generic"][0]["byggnadsid"] == "01-60-BOKBINDAREN6-1"
     assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "exact_address_location"
+
+
+def test_generic_sql_agent_uses_huddinge_hint_before_krokom_row():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "23-09-HISSMOBOELE2:140-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Krokom",
+                "epc_idkommun": "Krokom",
+                "epc_idpostnr": "83532",
+                "epc_godkand": "2020-08-10",
+                "epc_egienergiprestanda": 101,
+            },
+            {
+                "byggnadsid": "01-26-SPACKELN6-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Huddinge",
+                "epc_idkommun": "Huddinge",
+                "epc_idpostnr": "14131",
+                "epc_godkand": "2018-04-27",
+                "epc_egienergiprestanda": 86,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_location_hint": "Huddinge",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-26-SPACKELN6-1"
+    assert result["agent_data_generic"][0]["epc_idkommun"] == "Huddinge"
+
+
+def test_generic_sql_agent_uses_location_hint_before_latest_epc_for_common_address():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "01-83-LOEVSAANGAREN5-1",
+                "epc_idadr": "Sveavägen 17",
+                "epc_idpostort": "Sundbyberg",
+                "epc_idkommun": "Sundbyberg",
+                "epc_idpostnr": "17270",
+                "epc_godkand": "2024-01-01",
+                "epc_egienergiprestanda": 93,
+            },
+            {
+                "byggnadsid": "18-80-SKRIKAN4-1",
+                "epc_idadr": "Sveavägen 17",
+                "epc_idpostort": "Örebro",
+                "epc_idkommun": "Örebro",
+                "epc_idpostnr": "70214",
+                "epc_godkand": "2009-01-07",
+                "epc_egienergiprestanda": 172,
+            },
+            {
+                "byggnadsid": "18-80-SKRIKAN4-1",
+                "epc_idadr": "Sveavägen 17",
+                "epc_idpostort": "Örebro",
+                "epc_idkommun": "Örebro",
+                "epc_idpostnr": "70214",
+                "epc_godkand": "2021-07-08",
+                "epc_egienergiprestanda": 106,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Sveavägen 17",
+                "address_location_hint": "Örebro",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "18-80-SKRIKAN4-1"
+    assert result["agent_data_generic"][0]["epc_idkommun"] == "Örebro"
+    assert result["agent_data_generic"][0]["epc_godkand"] == "2021-07-08"
+
+
+def test_generic_sql_agent_uses_location_hint_for_kungsgatan_vaxjo():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "12-66-MALTESHOLM20-1",
+                "epc_idadr": "Kungsgatan 10",
+                "epc_idpostort": "Hörby",
+                "epc_idkommun": "Hörby",
+                "epc_idpostnr": "24231",
+                "epc_godkand": "2017-06-05",
+                "epc_egienergiprestanda": 157,
+            },
+            {
+                "byggnadsid": "07-80-GUNNARGROEPE10-1",
+                "epc_idadr": "Kungsgatan 10",
+                "epc_idpostort": "Växjö",
+                "epc_idkommun": "Växjö",
+                "epc_idpostnr": "35233",
+                "epc_godkand": "2019-12-19",
+                "epc_egienergiprestanda": 104,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Kungsgatan 10",
+                "address_location_hint": "Växjö",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "07-80-GUNNARGROEPE10-1"
+    assert result["agent_data_generic"][0]["epc_idkommun"] == "Växjö"
+
+
+def test_generic_sql_agent_blocks_when_city_still_has_multiple_building_ids():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "07-80-GUNNARGROEPE10-1",
+                "epc_idadr": "Kungsgatan 10",
+                "epc_idpostort": "Växjö",
+                "epc_idkommun": "Växjö",
+                "epc_idfastbet": "Gunnar Gröpe 10",
+                "epc_godkand": "2019-12-19",
+                "epc_egienergiprestanda": 104,
+            },
+            {
+                "byggnadsid": "07-80-GUNNARGROEPE9-1",
+                "epc_idadr": "Kungsgatan 10",
+                "epc_idpostort": "Växjö",
+                "epc_idkommun": "Växjö",
+                "epc_idfastbet": "Gunnar Gröpe 9",
+                "epc_godkand": "2009-11-12",
+                "epc_egienergiprestanda": 147,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Kungsgatan 10",
+                "address_location_hint": "Växjö",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is True
+    assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
+    assert result["metadata"]["building_identity_check"]["candidate_building_ids"] == [
+        "07-80-GUNNARGROEPE10-1",
+        "07-80-GUNNARGROEPE9-1",
+    ]
+    assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
+    assert result.get("agent_data_generic") in (None, [])
 
 
 def test_generic_sql_agent_uses_municipality_hint_for_common_address():
@@ -2088,9 +2480,11 @@ def test_generic_sql_agent_blocks_when_location_hint_matches_no_returned_locatio
     )
 
     assert result.get("identity_gate_blocked") is True
-    assert result["metadata"]["building_identity_check"]["status"] == "missing"
+    assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
+    assert result["metadata"]["building_identity_check"]["location_hint_no_match"] is True
     assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
     assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "address_location_no_match"
+    assert result["metadata"]["generic_sql_trace"]["returned_values_used"] == {}
     assert result.get("agent_data_generic") in (None, [])
 
 

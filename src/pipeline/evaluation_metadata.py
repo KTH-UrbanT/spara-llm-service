@@ -28,6 +28,7 @@ SESSION_MEMORY_KEYS = (
     "address",
     "address_from_user",
     "address_location_hint",
+    "pending_ambiguous_address",
     "requested_address",
     "epc_record_address",
     "same_building_multiple_addresses",

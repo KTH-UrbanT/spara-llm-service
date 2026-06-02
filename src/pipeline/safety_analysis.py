@@ -639,7 +639,7 @@ def build_clarification_question(reason: Optional[str]) -> str:
         "brf_not_found": "I could not find building addresses for that BRF. Please share the full street address so I use the correct building.",
         "brf_lookup_failed": "I could not look up that BRF right now. Please share the full street address so I use the correct building.",
         "building_not_found_by_id": "I could not find enough building data for that building ID. Please share one of the building's street addresses so I can try the address lookup.",
-        "ambiguous_address": "I found more than one possible building match for that address. Please provide the city, postcode, municipality, BRF name, or exact building ID so I use the correct building.",
+        "ambiguous_address": "I found more than one possible building match for that address. Please provide the street address followed by the city or municipality, for example 'Ringvägen 10, Huddinge', or provide the exact building ID.",
         "building_not_found": "I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",
         "missing_building_data": "I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the full address or the specific system you want to ask about?",
         "insufficient_data_for_personalized_advice": "I can give general guidance, but I need the full building address before I can personalize the advice.",

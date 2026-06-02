@@ -202,6 +202,48 @@ def test_address_disambiguation_followup_routes_to_building_agent_before_classif
     assert StubConversationalAgent.last_call is None
 
 
+def test_address_disambiguation_followup_routes_with_pending_address_only():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "conversational"
+    StubRouterAgent.last_call = None
+    StubBuildingAgent.last_call = None
+    StubConversationalAgent.last_call = None
+    router = module.AgentRouter()
+
+    pending_metadata = {
+        "pending_ambiguous_address": "Sveavägen 17",
+        "clarification": {
+            "needed": True,
+            "reason": "ambiguous_address",
+            "question_asked": "Please provide the city, postcode, municipality, BRF name, or exact building ID.",
+            "resolved": False,
+        },
+        "building_identity_check": {
+            "status": "ambiguous",
+        },
+    }
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "i live in Örebro"}],
+        last_message="i live in Örebro",
+        metadata=pending_metadata,
+        thread_id="thread-pending-address-disambiguation",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["role"] == "assistant"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call == (
+        "i live in Örebro",
+        [{"role": "user", "content": "i live in Örebro"}],
+        pending_metadata,
+        "thread-pending-address-disambiguation",
+    )
+    assert StubRouterAgent.last_call is None
+    assert StubConversationalAgent.last_call is None
+
+
 def test_address_disambiguation_followup_routes_from_recent_assistant_prompt_without_metadata():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "conversational"

@@ -64,6 +64,16 @@ def test_building_by_address_calls_dedicated_endpoint_case_insensitively():
     }
 
 
+def test_building_by_address_does_not_truncate_default_results():
+    rows = [{"byggnadsid": f"b{i}", "epc_idadr": "Ringvägen 10"} for i in range(12)]
+    session = FakeSession([FakeResponse(rows)])
+    client = SQLClient(session=session)
+
+    result = client.building_by_address("Ringvägen 10")
+
+    assert result == rows
+
+
 def test_building_by_address_applies_local_ordering_and_pagination():
     session = FakeSession(
         [
