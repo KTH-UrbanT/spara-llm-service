@@ -228,6 +228,7 @@ GENERIC_ADVISORY_CONTINUATION_PATTERNS = (
 BUILDING_CONTEXT_METADATA_KEYS = (
     "address",
     "address_from_user",
+    "address_location_hint",
     "matched_address",
     "input_address",
     "official_address",

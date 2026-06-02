@@ -1,4 +1,5 @@
 import pytest
+import requests
 
 from src.database.sql_client import SQLClient
 
@@ -26,7 +27,10 @@ class FakeSession:
 
     def get(self, url, params=None, timeout=None):
         self.calls.append({"url": url, "params": params, "timeout": timeout})
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def test_building_by_uuid_returns_object_for_successful_lookup():
@@ -82,6 +86,21 @@ def test_building_by_address_applies_local_ordering_and_pagination():
     )
 
     assert result == [{"byggnadsid": "b2", "epc_egenantalplan": 2}]
+
+
+def test_building_by_address_retries_transient_request_errors():
+    session = FakeSession(
+        [
+            requests.Timeout("first request timed out"),
+            FakeResponse([{"epc_idadr": "Main Street 1"}]),
+        ]
+    )
+    client = SQLClient(session=session)
+
+    result = client.building_by_address("Main Street 1")
+
+    assert result == [{"epc_idadr": "Main Street 1"}]
+    assert len(session.calls) == 2
 
 
 def test_buildings_by_single_filter_normalizes_paginated_payload():

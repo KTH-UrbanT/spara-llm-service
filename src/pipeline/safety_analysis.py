@@ -347,12 +347,43 @@ def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
                 "EnergyClassKwhM2",
                 "energy_performance",
                 "epc_egienergiprestanda",
-                "epc_egispecifikenergianvandning_calc",
+                "epc_egiprimarenergital2019",
                 "epc_egiprimarenergital2020_calc",
+                "epc_egiprimarenergital2020",
+                "epc_egispecifikenergianvandning",
+                "epc_egispecifikenergianvandning_calc",
             ),
         )
         if value is not None:
             facts["energy_performance"] = value
+
+    if not _is_present(facts.get("specific_energy_use")):
+        value = _first_present(
+            facts,
+            (
+                "specific_energy_use",
+                "epc_egispecifikenergianvandning",
+                "epc_egispecifikenergianvandning_calc",
+                "epc_egispecifikenergianvandning_eindex_calc",
+            ),
+        )
+        if value is not None:
+            facts["specific_energy_use"] = value
+
+    if not _is_present(facts.get("primary_energy_number")):
+        value = _first_present(
+            facts,
+            (
+                "primary_energy_number",
+                "primary_energy",
+                "epc_egiprimarenergital2020_calc",
+                "epc_egiprimarenergital2020",
+                "epc_egiprimarenergital2019",
+                "epc_egiprimarenergital",
+            ),
+        )
+        if value is not None:
+            facts["primary_energy_number"] = value
 
     if not _is_present(facts.get("ventilation_type")):
         value = _first_present(

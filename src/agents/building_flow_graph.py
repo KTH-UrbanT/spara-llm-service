@@ -89,6 +89,34 @@ SINGLE_FILTER_KEYS = [
     "epc_egenantalplan", "epc_egenantaltrapphus", "epc_idadr",
 ]
 
+ADDRESS_LOCATION_HINT_KEYS = (
+    "address_location_hint",
+    "address_city",
+    "city",
+    "postort",
+    "municipality",
+    "kommun",
+    "postcode",
+    "postal_code",
+    "postnr",
+)
+
+ROW_LOCATION_KEYS = (
+    "epc_idpostort",
+    "postort",
+    "postal_town",
+    "city",
+    "ort",
+    "epc_idkommun",
+    "kommun",
+    "municipality",
+    "epc_idpostnr",
+    "postnr",
+    "postcode",
+    "postal_code",
+    "zip",
+)
+
 # ================
 # Utility helpers
 # ================
@@ -120,6 +148,23 @@ def _ascii_fold(s: Optional[str]) -> Optional[str]:
     if not s:
         return s
     return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+
+
+def _normalize_location(value: Optional[str]) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    normalized = _ascii_fold(str(value)) or ""
+    normalized = normalized.lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized or None
+
+
+def _compact_digits(value: Optional[str]) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    digits = re.sub(r"\D+", "", str(value))
+    return digits or None
 
 
 def _coerce_intent_list(ctx: Dict[str, Any]) -> List[str]:
@@ -192,6 +237,12 @@ MULTI_ADDRESS_IDENTITY_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+LOCATION_HINT_STOP_RE = re.compile(
+    r"\b(?:what|which|how|why|when|show|tell|give|does|do|is|are|can|could|please|"
+    r"vad|vilken|vilket|hur|varf[öo]r|visa|ber[äa]tta|kan)\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _looks_like_compact_address(text: Optional[str], *, allow_four_digit_number: bool = False) -> bool:
     if not text:
@@ -216,6 +267,135 @@ def _looks_like_compact_address(text: Optional[str], *, allow_four_digit_number:
             candidate,
         )
     )
+
+
+def _extract_street_address_fragment(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    match = STREET_ADDRESS_FRAGMENT_RE.search(str(text))
+    if not match:
+        return None
+    fragment = match.group(1).strip(" .,:;!?\"'")
+    if _is_address_recognized(fragment) or _looks_like_compact_address(fragment, allow_four_digit_number=True):
+        return fragment
+    folded = _ascii_fold(fragment)
+    if folded and (_is_address_recognized(folded) or _looks_like_compact_address(folded, allow_four_digit_number=True)):
+        return fragment
+    return None
+
+
+def _clean_location_hint(value: Optional[str]) -> Optional[str]:
+    if value in (None, ""):
+        return None
+
+    candidate = re.sub(r"\s+", " ", str(value)).strip(" .,:;!?\"'")
+    if not candidate:
+        return None
+
+    if LOCATION_HINT_STOP_RE.match(candidate):
+        return None
+
+    candidate = re.split(r"[,.;?!]", candidate, maxsplit=1)[0].strip(" .,:;!?\"'")
+    candidate = LOCATION_HINT_STOP_RE.split(candidate, maxsplit=1)[0].strip(" .,:;!?\"'")
+    if not candidate or len(candidate) > 80:
+        return None
+    if not re.search(r"[A-Za-zÅÄÖåäö0-9]", candidate):
+        return None
+    return candidate
+
+
+def _strip_location_tail_from_address_candidate(
+    text: Optional[str],
+    *,
+    allow_four_digit_number: bool = False,
+) -> Optional[str]:
+    if not text:
+        return None
+
+    candidate = re.sub(r"\s+", " ", str(text)).strip(" .,:;!?\"'")
+    if not candidate:
+        return None
+
+    match = re.match(
+        r"^(.+?\s+\d{1,4}[A-Za-z]?(?:\s*[-–]\s*\d{1,4}[A-Za-z]?)?)"
+        r"(?:\s*,\s*|\s+(?:in|i)\s+)"
+        r"(?:\d{3}\s?\d{2}\s+)?[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö .'\-]{0,80}"
+        r"(?=\s*(?:[,.;?!]|$))",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    address = match.group(1).strip(" .,:;!?\"'")
+    address = re.sub(
+        r"^.*\b(?:at|on|for|address|building|byggnad(?:en)?|p[åa])\s+",
+        "",
+        address,
+        flags=re.IGNORECASE,
+    ).strip(" .,:;!?\"'")
+    if _is_address_recognized(address) or _looks_like_compact_address(
+        address,
+        allow_four_digit_number=allow_four_digit_number,
+    ):
+        return address
+
+    folded = _ascii_fold(address)
+    if folded and (_is_address_recognized(folded) or _looks_like_compact_address(
+        folded,
+        allow_four_digit_number=allow_four_digit_number,
+    )):
+        return address
+
+    return None
+
+
+def _extract_address_location_hint_from_text(
+    text: Optional[str],
+    address: Optional[str],
+) -> Optional[str]:
+    if not text or not address:
+        return None
+
+    raw = str(text)
+    normalized_address = _normalize_address(address)
+    target_match = None
+
+    literal_match = re.search(re.escape(str(address).strip()), raw, flags=re.IGNORECASE)
+    if literal_match:
+        target_match = literal_match
+
+    for match in STREET_ADDRESS_FRAGMENT_RE.finditer(raw):
+        if target_match is not None:
+            break
+        fragment = match.group(1).strip(" .,:;!?\"'")
+        if _normalize_address(fragment) == normalized_address:
+            target_match = match
+            break
+
+    if target_match is None:
+        return None
+
+    tail = raw[target_match.end():]
+    postcode_match = re.match(
+        r"^\s*,?\s*(\d{3}\s?\d{2})(?:\s+([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö .'\-]{0,60}))?",
+        tail,
+        flags=re.IGNORECASE,
+    )
+    if postcode_match:
+        postcode = postcode_match.group(1)
+        town = postcode_match.group(2) or ""
+        return _clean_location_hint(f"{postcode} {town}".strip())
+
+    location_match = re.match(
+        r"^\s*(?:,|\bin\b|\bi\b)\s*([A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö .'\-]{0,60})",
+        tail,
+        flags=re.IGNORECASE,
+    )
+    if location_match:
+        return _clean_location_hint(location_match.group(1))
+
+    return None
 
 
 def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
@@ -249,12 +429,34 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
     if not candidate:
         return None
 
+    street_fragment = _extract_street_address_fragment(candidate)
+    if street_fragment:
+        return street_fragment
+
+    stripped_location = _strip_location_tail_from_address_candidate(
+        candidate,
+        allow_four_digit_number=had_address_cue,
+    )
+    if stripped_location:
+        return stripped_location
+
     if _is_address_recognized(candidate):
         return candidate
 
     folded = _ascii_fold(candidate)
     if folded and _is_address_recognized(folded):
         return candidate
+
+    address_fragment = STREET_ADDRESS_FRAGMENT_RE.search(candidate)
+    if address_fragment:
+        fragment = address_fragment.group(1).strip(" .,:;!?\"'")
+        if _is_address_recognized(fragment):
+            return fragment
+        folded_fragment = _ascii_fold(fragment)
+        if folded_fragment and _is_address_recognized(folded_fragment):
+            return fragment
+        if _looks_like_compact_address(fragment, allow_four_digit_number=had_address_cue):
+            return fragment
 
     if _looks_like_compact_address(candidate, allow_four_digit_number=had_address_cue):
         return candidate
@@ -663,6 +865,7 @@ EXPLICIT_GENERAL_SCOPE_PATTERNS = (
 BUILDING_CONTEXT_KEYS = (
     "address",
     "address_from_user",
+    "address_location_hint",
     "matched_address",
     "input_address",
     "official_address",
@@ -677,6 +880,8 @@ PENDING_BUILDING_ADVICE_KEY = "pending_building_advice_request"
 ADVICE_QUERY_FACT_LABELS = {
     "energy_class": "energy class",
     "energy_performance": "energy performance",
+    "specific_energy_use": "specific energy use",
+    "primary_energy_number": "primary energy number",
     "heating_system": "heating system",
     "ventilation_type": "ventilation type",
     "district_heating_use": "district heating use",
@@ -1115,6 +1320,8 @@ def _enrich_building_fact_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
         "district_heating_use",
         "energy_class",
         "energy_performance",
+        "specific_energy_use",
+        "primary_energy_number",
         "energy_declaration_year",
         "construction_year",
     ):
@@ -1160,7 +1367,65 @@ def _dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return deduped
 
 
-def _narrow_address_matches(address: Optional[str], rows: Any) -> Any:
+def _extract_metadata_location_hint(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    metadata = metadata or {}
+    for key in ADDRESS_LOCATION_HINT_KEYS:
+        value = metadata.get(key)
+        if value not in (None, "", [], {}):
+            return str(value).strip()
+    return None
+
+
+def _row_location_values(row: Dict[str, Any]) -> List[str]:
+    if not isinstance(row, dict):
+        return []
+
+    lower_map = {str(key).lower(): key for key in row.keys()}
+    values: List[str] = []
+    for key in ROW_LOCATION_KEYS:
+        original = lower_map.get(key.lower())
+        if original is None:
+            continue
+        value = row.get(original)
+        if value not in (None, ""):
+            values.append(str(value).strip())
+    return values
+
+
+def _location_hint_matches_row(location_hint: Optional[str], row: Dict[str, Any]) -> bool:
+    normalized_hint = _normalize_location(location_hint)
+    if not normalized_hint:
+        return False
+
+    hint_digits = _compact_digits(location_hint)
+    for value in _row_location_values(row):
+        normalized_value = _normalize_location(value)
+        if normalized_value and (
+            normalized_value == normalized_hint
+            or normalized_value in normalized_hint
+            or normalized_hint in normalized_value
+        ):
+            return True
+
+        value_digits = _compact_digits(value)
+        if value_digits and hint_digits and len(value_digits) >= 5 and value_digits in hint_digits:
+            return True
+
+    return False
+
+
+def _filter_rows_by_location_hint(rows: Any, location_hint: Optional[str]) -> Any:
+    if not location_hint or not isinstance(rows, list):
+        return rows
+    matched = [row for row in rows if _location_hint_matches_row(location_hint, row)]
+    return matched or rows
+
+
+def _narrow_address_matches(
+    address: Optional[str],
+    rows: Any,
+    location_hint: Optional[str] = None,
+) -> Any:
     if not address or not isinstance(rows, list):
         return rows
 
@@ -1174,7 +1439,9 @@ def _narrow_address_matches(address: Optional[str], rows: Any) -> Any:
         for row in deduped_rows
         if _normalize_address(_extract_row_address(row)) == normalized_input
     ]
-    return _select_latest_epc_rows(exact_matches or deduped_rows)
+    candidate_rows = exact_matches or deduped_rows
+    candidate_rows = _filter_rows_by_location_hint(candidate_rows, location_hint)
+    return _select_latest_epc_rows(candidate_rows)
 
 
 def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> bool:
@@ -1230,7 +1497,11 @@ def _lookup_rows_for_brf_selected_addresses(building_id: Optional[str], metadata
         result = sql_mapper_layer.execute("building_by_address", address=address)
         if not (result.get("ok") and isinstance(result.get("data"), list) and result.get("data")):
             continue
-        narrowed = _narrow_address_matches(address, result.get("data"))
+        narrowed = _narrow_address_matches(
+            address,
+            result.get("data"),
+            _extract_metadata_location_hint(metadata),
+        )
         matched = [
             row
             for row in (narrowed if isinstance(narrowed, list) else [])
@@ -1399,7 +1670,13 @@ def _resolve_single_address_candidate(address: str, metadata: Optional[Dict[str,
             return brf_result
 
     if isinstance(rows, list):
-        rows = _select_latest_epc_rows(_narrow_address_matches(address, rows))
+        rows = _select_latest_epc_rows(
+            _narrow_address_matches(
+                address,
+                rows,
+                _extract_metadata_location_hint(metadata),
+            )
+        )
     rows = _enrich_building_data(rows)
     row_list = rows if isinstance(rows, list) else [rows] if isinstance(rows, dict) else []
     building_ids = [
@@ -1732,10 +2009,18 @@ def understand_context_node(state: GraphState) -> GraphState:
         else:
             print("[understand_context] ECM advice needs building context; SQL gate will request address", flush=True)
 
+    address_location_hint = _extract_metadata_location_hint(ctx)
+
     # If the parser missed an address on an address-only follow-up, recover it heuristically.
     if ctx.get("address"):
-        cleaned_address = _extract_address_candidate_from_text(ctx.get("address"))
+        raw_parser_address = ctx.get("address")
+        cleaned_address = _extract_address_candidate_from_text(raw_parser_address)
         if cleaned_address:
+            address_location_hint = (
+                address_location_hint
+                or _extract_address_location_hint_from_text(raw_parser_address, cleaned_address)
+                or _extract_address_location_hint_from_text(state.get("last_message"), cleaned_address)
+            )
             if cleaned_address != ctx.get("address"):
                 ctx["address"] = cleaned_address
                 print(f"[understand_context] cleaned parsed address to: {cleaned_address!r}", flush=True)
@@ -1747,6 +2032,10 @@ def understand_context_node(state: GraphState) -> GraphState:
         recovered_address = _extract_address_candidate_from_text(state.get("last_message"))
         if recovered_address:
             ctx["address"] = recovered_address
+            address_location_hint = (
+                address_location_hint
+                or _extract_address_location_hint_from_text(state.get("last_message"), recovered_address)
+            )
             print(f"[understand_context] recovered address from raw message: {recovered_address!r}", flush=True)
 
     pending_advice = (state.get("metadata") or {}).get(PENDING_BUILDING_ADVICE_KEY)
@@ -1785,8 +2074,27 @@ def understand_context_node(state: GraphState) -> GraphState:
         md = state.get("metadata") or {}
         # Shallow copy to avoid mutating any external references
         md = dict(md)
+        prior_location_hint = (
+            _extract_metadata_location_hint(md)
+            or _extract_metadata_location_hint(prior_metadata or {})
+        )
+        if not address_location_hint:
+            address_location_hint = _extract_address_location_hint_from_text(state.get("last_message"), addr)
+        if (
+            not address_location_hint
+            and stored_address
+            and _normalize_address(addr) == _normalize_address(stored_address)
+        ):
+            address_location_hint = prior_location_hint
         md["address"] = addr
         md["address_from_user"] = addr
+        if address_location_hint:
+            md["address_location_hint"] = address_location_hint
+            ctx["address_location_hint"] = address_location_hint
+            print(f"[understand_context] address location hint set: {address_location_hint!r}", flush=True)
+        elif _normalize_address(addr) != _normalize_address(stored_address):
+            md.pop("address_location_hint", None)
+            ctx.pop("address_location_hint", None)
         state["metadata"] = md  # write back only when modified
         ctx["address"] = addr
         print(f"[understand_context] address set in metadata: {addr!r}", flush=True)
@@ -2326,15 +2634,20 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     result = res2
         if result.get("ok") and isinstance(result.get("data"), list):
             original_rows = result.get("data") or []
-            narrowed_rows = _narrow_address_matches(addr, original_rows)
+            location_hint = _extract_metadata_location_hint(md)
+            narrowed_rows = _narrow_address_matches(addr, original_rows, location_hint)
             result["data"] = narrowed_rows
             trace = result.get("trace") or {}
             trace["rows_returned"] = len(narrowed_rows or [])
             trace["match_strategy"] = (
-                "exact_address"
+                "exact_address_location"
+                if location_hint and narrowed_rows and len(narrowed_rows) < len(original_rows)
+                else "exact_address"
                 if narrowed_rows and len(narrowed_rows) < len(original_rows)
                 else "address_lookup"
             )
+            if location_hint:
+                trace["address_location_hint"] = location_hint
             result["trace"] = trace
     elif result is None:
         key = next((k for k in SINGLE_FILTER_KEYS if md.get(k) not in (None, "")), None)

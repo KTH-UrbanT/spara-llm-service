@@ -73,9 +73,11 @@ class SQLClient:
     ):
         configured_base_url = base_url or os.getenv("ODEN_BASE_URL", "https://oden.abe.kth.se/api/v1")
         configured_timeout = timeout if timeout is not None else int(os.getenv("ODEN_TIMEOUT", "15"))
+        configured_retries = int(os.getenv("ODEN_RETRIES", "2"))
 
         self.base_url = configured_base_url.rstrip("/")
         self.timeout = configured_timeout
+        self.retries = max(configured_retries, 0)
         self.session = session or requests.Session()
         self.session.headers.update(
             {
@@ -91,7 +93,7 @@ class SQLClient:
     # 1) Get building by ID (UUID) -> single row
     def building_by_uuid(self, building_uuid: str) -> Optional[Row]:
         url = f"{self.base_url}{self.BASE_PATH}{building_uuid}/"
-        r = self.session.get(url, timeout=self.timeout)
+        r = self._get(url)
         if not r.ok:
             return None
         try:
@@ -119,7 +121,7 @@ class SQLClient:
         }
 
         url = f"{self.base_url}{self.ADDRESS_PATH}"
-        r = self.session.get(url, params=params, timeout=self.timeout)
+        r = self._get(url, params=params)
         r.raise_for_status()
 
         rows = self._json_to_list(r.json())
@@ -137,7 +139,7 @@ class SQLClient:
         }
 
         url = f"{self.base_url}{self.BRF_ADDRESSES_PATH}"
-        r = self.session.get(url, params=params, timeout=self.timeout)
+        r = self._get(url, params=params)
         r.raise_for_status()
 
         rows = self._json_to_list(r.json())
@@ -170,7 +172,7 @@ class SQLClient:
             params["ordering"] = ordering
 
         url = f"{self.base_url}{self.BASE_PATH}"
-        r = self.session.get(url, params=params, timeout=self.timeout)
+        r = self._get(url, params=params)
         r.raise_for_status()
         return self._json_to_list(r.json())
 
@@ -198,7 +200,7 @@ class SQLClient:
             params["ordering"] = ordering
 
         url = f"{self.base_url}{self.SINGLE_FILTER_PATH}"
-        r = self.session.get(url, params=params, timeout=self.timeout)
+        r = self._get(url, params=params)
         r.raise_for_status()
         return self._json_to_list(r.json())
 
@@ -213,11 +215,24 @@ class SQLClient:
     ) -> List[Row]:
         params = self._compose_params([f1, f2], limit=limit, offset=offset, ordering=ordering)
         url = f"{self.base_url}{self.BASE_PATH}"
-        r = self.session.get(url, params=params, timeout=self.timeout)
+        r = self._get(url, params=params)
         r.raise_for_status()
         return self._json_to_list(r.json())
 
     # ---------- Internals ----------
+
+    def _get(self, url: str, params: Optional[Dict[str, Any]] = None):
+        last_error = None
+        for attempt in range(self.retries + 1):
+            try:
+                return self.session.get(url, params=params, timeout=self.timeout)
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= self.retries:
+                    raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("ODEN request failed without an exception.")
 
     def _compose_params(
         self,

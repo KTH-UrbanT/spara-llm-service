@@ -3,6 +3,7 @@ from src.pipeline.safety_analysis import (
     assess_boundary_safety,
     assess_building_identity,
     build_out_of_scope_response,
+    extract_retrieved_facts,
 )
 
 
@@ -184,3 +185,20 @@ def test_message_metadata_drops_stale_pending_brf_resolution_after_selection():
     assert metadata["brf_resolution"]["status"] == "resolved_by_user_selection"
     assert metadata["selected_brf_building_id"] == "01-80-HEDVIG15-1"
     assert "pending_brf_resolution" not in metadata
+
+
+def test_retrieved_facts_separate_epc_energy_metrics():
+    facts = extract_retrieved_facts(
+        {
+            "byggnadsid": "01-80-SKYTTEN2-2",
+            "epc_egienergiprestanda": 201,
+            "epc_egispecifikenergianvandning": 198,
+            "epc_egispecifikenergianvandning_calc": 198,
+            "epc_egiprimarenergital2019": 201,
+            "epc_egiprimarenergital2020_calc": 145,
+        }
+    )
+
+    assert facts["energy_performance"] == 201
+    assert facts["specific_energy_use"] == 198
+    assert facts["primary_energy_number"] == 145

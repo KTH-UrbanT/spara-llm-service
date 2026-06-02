@@ -29,7 +29,7 @@ Instructions:
 - If metadata.same_building_multiple_addresses is true, the requested address and EPC/register address are aliases for the same building ID. Refer to the user's requested address as the current building address, and mention the EPC/register address only as "EPC record address" when needed. Do not say the data is for the EPC/register address instead of the requested address.
 - epc_egienergiklass represents the energy class of the building, and should be presented as the building’s energy class.
 - epc_egennybyggar is the building construction year / year built. If the user asks when the building was constructed or built, answer with this year and cite the available source/date from the EPC/energy declaration fields when present.
-- Distinguish EPC fields carefully: epc_egienergiprestanda and epc_egispecifikenergianvandning_calc are specific energy use/energy performance, while epc_egiprimarenergital2019 and epc_egiprimarenergital2020_calc are primary energy numbers used for energy-class rules. Do not describe specific energy use as the 2020 primary-energy number.
+- Distinguish EPC fields carefully: epc_egienergiprestanda is the declared energy performance, epc_egispecifikenergianvandning / epc_egispecifikenergianvandning_calc are specific energy use, and epc_egiprimarenergital2019 / epc_egiprimarenergital2020_calc are primary energy numbers used for energy-class rules. If these values differ, label them separately instead of treating the difference as an inconsistency. Do not describe specific energy use as a primary-energy number.
 - Keep the output in full format.
 - Only use information that exists in the provided context, results, or metadata.
 - Do not make assumptions about building identity or building data.

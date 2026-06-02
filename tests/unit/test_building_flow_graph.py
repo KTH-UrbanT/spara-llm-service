@@ -478,6 +478,58 @@ def test_understand_context_does_not_treat_year_comparison_as_address():
     assert result["metadata"]["address_from_user"] == "Professorsslingan 10"
 
 
+def test_extract_address_candidate_strips_city_context_from_prose():
+    module = import_building_flow_graph_module()
+
+    address = module._extract_address_candidate_from_text(
+        "For the building at Nimrodsgatan 7 in Stockholm, what is our energy performance?"
+    )
+
+    assert address == "Nimrodsgatan 7"
+    assert (
+        module._extract_address_location_hint_from_text(
+            "For the building at Nimrodsgatan 7 in Stockholm, what is our energy performance?",
+            address,
+        )
+        == "Stockholm"
+    )
+
+
+def test_extract_address_candidate_handles_city_context_for_non_suffix_street_name():
+    module = import_building_flow_graph_module()
+
+    message = "For Professorsslingan 51 in Stockholm, what is the energy class?"
+    address = module._extract_address_candidate_from_text(message)
+
+    assert address == "Professorsslingan 51"
+    assert module._extract_address_location_hint_from_text(message, address) == "Stockholm"
+
+
+def test_understand_context_recovers_address_and_location_hint_from_raw_message():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "For Ringvägen 10 in Täby, what is the energy class?",
+            "messages": [{"role": "user", "content": "For Ringvägen 10 in Täby, what is the energy class?"}],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Ringvägen 10"
+    assert result["metadata"]["address_location_hint"] == "Täby"
+    assert result["context"]["address_location_hint"] == "Täby"
+
+
 def test_understand_context_discards_bad_parser_address_and_uses_stored_address():
     module = import_building_flow_graph_module()
     message = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
@@ -1610,6 +1662,47 @@ def test_generic_sql_agent_blocks_common_address_across_multiple_building_ids():
     assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
     assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
     assert "city, postcode, municipality" in result["metadata"]["clarification"]["question_asked"]
+
+
+def test_generic_sql_agent_uses_location_hint_for_common_address():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "01-60-BOKBINDAREN6-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Täby",
+                "epc_idkommun": "Täby",
+                "epc_idpostnr": "18770",
+                "epc_egiversion": "2020",
+            },
+            {
+                "byggnadsid": "24-82-BURTRAESKS-GAMMELBYN71:4-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Burträsk",
+                "epc_idkommun": "Skellefteå",
+                "epc_idpostnr": "93732",
+                "epc_egiversion": "2020",
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_location_hint": "Täby",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-60-BOKBINDAREN6-1"
+    assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "exact_address_location"
 
 
 def test_generic_sql_agent_exposes_epc_heating_system_alias():
