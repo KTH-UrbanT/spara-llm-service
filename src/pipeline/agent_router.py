@@ -52,6 +52,15 @@ MULTI_ADDRESS_POLICY_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+ADDRESS_DISAMBIGUATION_REQUEST_RE = re.compile(
+    r"(?=.*\b(?:address|building|property|brf|adress|byggnad|fastighet)\b)"
+    r"(?=.*\b(?:city|postcode|postal\s+code|municipality|postort|postnummer|kommun|"
+    r"building\s+id|byggnadsid|brf)\b)"
+    r".*\b(?:multiple|several|ambiguous|different|correct|which|choose|use|"
+    r"flera|olika|rätt|vilken|välj|använd)\b",
+    flags=re.IGNORECASE,
+)
+
 
 def _evaluation_mode_enabled() -> bool:
     return str(os.getenv("EVALUATION_MODE", "")).strip().lower() in {"1", "true", "yes", "on"}
@@ -127,6 +136,32 @@ def _has_multi_address_values_question(message: str) -> bool:
     ):
         return False
     return len(STREET_ADDRESS_FRAGMENT_RE.findall(text)) >= 2 or bool(BUILDING_ID_RE.search(text))
+
+
+def _awaiting_address_disambiguation(metadata: Dict[str, Any]) -> bool:
+    metadata = metadata or {}
+    clarification = metadata.get("clarification") or {}
+    identity_check = metadata.get("building_identity_check") or {}
+    has_address = bool(metadata.get("address") or metadata.get("address_from_user"))
+    has_location_hint = bool(metadata.get("address_location_hint"))
+    return bool(
+        has_address
+        and not has_location_hint
+        and clarification.get("needed")
+        and clarification.get("reason") == "ambiguous_address"
+        and identity_check.get("status") in (None, "", "ambiguous")
+    )
+
+
+def _recent_assistant_requested_address_disambiguation(messages: List[Dict[str, Any]]) -> bool:
+    for message in reversed((messages or [])[-6:]):
+        if str((message or {}).get("role") or "").lower() != "assistant":
+            continue
+        content = str((message or {}).get("content") or "")
+        if ADDRESS_DISAMBIGUATION_REQUEST_RE.search(content):
+            return True
+    return False
+
 
 SITE_SPECIFIC_PATTERNS = (
     r"\b(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+[a-zåäö0-9]",
@@ -808,6 +843,20 @@ class AgentRouter:
                 "agent_answered": "boundary",
                 "route": "out_of_scope",
             }, updated_metadata
+
+        if (
+            _awaiting_address_disambiguation(base_metadata)
+            or _recent_assistant_requested_address_disambiguation(messages)
+        ):
+            out, metadata_updated = self.building.handle_building_query(
+                last_message,
+                messages,
+                base_metadata,
+                thread_id,
+            )
+            out["role"] = "assistant"
+            out["classification"] = "building_specific"
+            return out, metadata_updated
 
         fast_conversational = _fast_conversational_response(last_message)
         if fast_conversational:

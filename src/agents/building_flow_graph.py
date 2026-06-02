@@ -117,6 +117,37 @@ ROW_LOCATION_KEYS = (
     "zip",
 )
 
+ROW_POST_TOWN_KEYS = (
+    "epc_idpostort",
+    "postort",
+    "postal_town",
+    "city",
+    "ort",
+)
+
+ROW_MUNICIPALITY_KEYS = (
+    "epc_idkommun",
+    "kommun",
+    "municipality",
+)
+
+ROW_POSTCODE_KEYS = (
+    "epc_idpostnr",
+    "postnr",
+    "postcode",
+    "postal_code",
+    "zip",
+)
+
+ADDRESS_DISAMBIGUATION_REQUEST_RE = re.compile(
+    r"(?=.*\b(?:address|building|property|brf|adress|byggnad|fastighet)\b)"
+    r"(?=.*\b(?:city|postcode|postal\s+code|municipality|postort|postnummer|kommun|"
+    r"building\s+id|byggnadsid|brf)\b)"
+    r".*\b(?:multiple|several|ambiguous|different|correct|which|choose|use|"
+    r"flera|olika|rätt|vilken|välj|använd)\b",
+    flags=re.IGNORECASE,
+)
+
 # ================
 # Utility helpers
 # ================
@@ -462,6 +493,70 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
         return candidate
 
     return None
+
+
+def _extract_location_only_hint_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+
+    candidate = re.sub(r"\s+", " ", str(text)).strip(" .,:;!?\"'")
+    if not candidate:
+        return None
+
+    candidate = re.sub(
+        r"^\s*(?:oh\s+yes\s+sure|oh\s+yes|sure|yes|yeah|yep|ok|okay|of course|absolutely|noo?|nej|ja)\s*[,.:;-]*\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(
+        r"^(?:i\s+live\s+(?:in|at)|we\s+live\s+(?:in|at)|"
+        r"city\s+is|municipality\s+is|postcode\s+is|postal\s+code\s+is|"
+        r"postort(?:en)?\s+[äa]r|kommun(?:en)?\s+[äa]r|postnummer(?:et)?\s+[äa]r|"
+        r"i|in)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = _clean_location_hint(candidate)
+    if not candidate:
+        return None
+
+    if _extract_building_id_from_text(candidate) or _extract_address_candidate_from_text(candidate):
+        return None
+
+    return candidate
+
+
+def _awaiting_address_location_disambiguation(metadata: Optional[Dict[str, Any]]) -> bool:
+    metadata = metadata or {}
+    clarification = metadata.get("clarification") or {}
+    identity_check = metadata.get("building_identity_check") or {}
+    return bool(
+        clarification.get("needed")
+        and clarification.get("reason") == "ambiguous_address"
+        and (metadata.get("address") or metadata.get("address_from_user"))
+        and not _extract_metadata_location_hint(metadata)
+        and identity_check.get("status") in (None, "", "ambiguous")
+    )
+
+
+def _extract_pending_ambiguous_address_from_messages(messages: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    last_user_address: Optional[str] = None
+    pending_address: Optional[str] = None
+
+    for message in messages or []:
+        role = str((message or {}).get("role") or "").lower()
+        content = str((message or {}).get("content") or "")
+        if role == "user":
+            address = _extract_address_candidate_from_text(content)
+            if address:
+                last_user_address = address
+        elif role == "assistant" and ADDRESS_DISAMBIGUATION_REQUEST_RE.search(content):
+            if last_user_address:
+                pending_address = last_user_address
+
+    return pending_address
 
 
 def _dedupe_address_candidates(candidates: List[str]) -> List[str]:
@@ -885,6 +980,8 @@ ADVICE_QUERY_FACT_LABELS = {
     "heating_system": "heating system",
     "ventilation_type": "ventilation type",
     "district_heating_use": "district heating use",
+    "district_heating_space_heating": "district heating for space heating",
+    "district_heating_domestic_hot_water": "district heating for domestic hot water",
     "electricity_use": "electricity use",
     "domestic_hot_water": "domestic hot water",
 }
@@ -1161,6 +1258,70 @@ def _describe_payload_for_aggregation(data: Any) -> str:
         return f"List[{len(data)}]: " + ", ".join(map(str, data[:8]))
     return str(data)
 
+
+def _is_model_error_response(text: Optional[str]) -> bool:
+    if not isinstance(text, str):
+        return False
+    return text.strip().lower().startswith("error:")
+
+
+def _format_fact_value(value: Any, unit: Optional[str] = None) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value)
+    return f"{text} {unit}" if unit and text else text
+
+
+def _deterministic_building_fact_response(
+    *,
+    current_address: str,
+    building_id: str,
+    facts: Dict[str, Any],
+) -> str:
+    lines: List[str] = []
+    if current_address:
+        lines.append(str(current_address))
+    if building_id and building_id != "building_id_not_available":
+        lines.append(f"Building ID: {building_id}")
+
+    fact_lines: List[str] = []
+    for key, label, unit in (
+        ("energy_class", "Energy class", None),
+        ("energy_performance", "Declared energy performance", "kWh/m2-year"),
+        ("specific_energy_use", "Specific energy use", "kWh/m2-year"),
+        ("primary_energy_number", "Primary energy number", "kWh/m2-year"),
+        ("energy_declaration_year", "Energy declaration year", None),
+        ("construction_year", "Construction year", None),
+        ("heating_system", "Heating system", None),
+        ("ventilation_type", "Ventilation", None),
+        ("electricity_use", "Electricity consumption", "kWh/year"),
+        ("district_heating_use", "Total district heating use", "kWh/year"),
+        ("district_heating_space_heating", "District heating for space heating", "kWh/year"),
+        (
+            "district_heating_domestic_hot_water",
+            "District heating for domestic hot water",
+            "kWh/year",
+        ),
+    ):
+        value = facts.get(key)
+        if value not in (None, "", [], {}):
+            fact_lines.append(f"{label}: {_format_fact_value(value, unit)}")
+
+    if fact_lines:
+        if lines:
+            lines.append("")
+        lines.extend(fact_lines)
+        return "\n".join(lines)
+
+    if lines:
+        lines.append("")
+    lines.append(
+        "I found the building record, but the response model is temporarily busy. "
+        "Please retry shortly if you need a fuller explanation."
+    )
+    return "\n".join(lines)
+
+
 def _compute_agent_answered(state: GraphState) -> str:
     types = set()
     if state.get("agent_data_generic") or state.get("done_generic_sql"):
@@ -1310,6 +1471,49 @@ def _select_latest_epc_rows(rows: Any) -> Any:
     return latest_rows or rows
 
 
+def _row_identity_key(row: Dict[str, Any], fallback_index: int = 0) -> str:
+    identifier = _extract_row_identifier(row)
+    if identifier:
+        return f"id:{str(identifier).strip().upper()}"
+
+    address = _normalize_address(_extract_row_address(row)) or ""
+    location_values = [
+        normalized
+        for normalized in (_normalize_location(value) for value in _row_location_values(row))
+        if normalized
+    ]
+    if address or location_values:
+        return f"addr:{address}|loc:{'|'.join(sorted(set(location_values)))}"
+
+    return f"row:{fallback_index}"
+
+
+def _select_latest_epc_rows_preserving_ambiguity(rows: Any) -> Any:
+    if not isinstance(rows, list) or len(rows) <= 1:
+        return rows
+
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    passthrough: List[Any] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            passthrough.append(row)
+            continue
+        groups.setdefault(_row_identity_key(row, index), []).append(row)
+
+    if len(groups) <= 1 and not passthrough:
+        return _select_latest_epc_rows(rows)
+
+    selected_rows: List[Any] = []
+    for grouped_rows in groups.values():
+        selected = _select_latest_epc_rows(grouped_rows)
+        if isinstance(selected, list):
+            selected_rows.extend(selected)
+        else:
+            selected_rows.append(selected)
+    selected_rows.extend(passthrough)
+    return selected_rows
+
+
 def _enrich_building_fact_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(row, dict):
         return row
@@ -1318,10 +1522,13 @@ def _enrich_building_fact_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "heating_system",
         "district_heating_use",
+        "district_heating_space_heating",
+        "district_heating_domestic_hot_water",
         "energy_class",
         "energy_performance",
         "specific_energy_use",
         "primary_energy_number",
+        "domestic_hot_water",
         "energy_declaration_year",
         "construction_year",
     ):
@@ -1376,13 +1583,13 @@ def _extract_metadata_location_hint(metadata: Optional[Dict[str, Any]]) -> Optio
     return None
 
 
-def _row_location_values(row: Dict[str, Any]) -> List[str]:
+def _row_values_for_keys(row: Dict[str, Any], keys: Tuple[str, ...]) -> List[str]:
     if not isinstance(row, dict):
         return []
 
     lower_map = {str(key).lower(): key for key in row.keys()}
     values: List[str] = []
-    for key in ROW_LOCATION_KEYS:
+    for key in keys:
         original = lower_map.get(key.lower())
         if original is None:
             continue
@@ -1390,6 +1597,44 @@ def _row_location_values(row: Dict[str, Any]) -> List[str]:
         if value not in (None, ""):
             values.append(str(value).strip())
     return values
+
+
+def _row_location_values(row: Dict[str, Any]) -> List[str]:
+    return _row_values_for_keys(row, ROW_LOCATION_KEYS)
+
+
+def _row_matches_location_values(
+    row: Dict[str, Any],
+    location_hint: Optional[str],
+    keys: Tuple[str, ...],
+    *,
+    exact: bool,
+) -> bool:
+    normalized_hint = _normalize_location(location_hint)
+    if not normalized_hint:
+        return False
+
+    hint_digits = _compact_digits(location_hint)
+    for value in _row_values_for_keys(row, keys):
+        if keys == ROW_POSTCODE_KEYS:
+            value_digits = _compact_digits(value)
+            if value_digits and hint_digits and len(value_digits) >= 5 and value_digits in hint_digits:
+                return True
+            continue
+
+        normalized_value = _normalize_location(value)
+        if not normalized_value:
+            continue
+        if exact and normalized_value == normalized_hint:
+            return True
+        if not exact and (
+            normalized_value == normalized_hint
+            or normalized_value in normalized_hint
+            or normalized_hint in normalized_value
+        ):
+            return True
+
+    return False
 
 
 def _location_hint_matches_row(location_hint: Optional[str], row: Dict[str, Any]) -> bool:
@@ -1417,8 +1662,67 @@ def _location_hint_matches_row(location_hint: Optional[str], row: Dict[str, Any]
 def _filter_rows_by_location_hint(rows: Any, location_hint: Optional[str]) -> Any:
     if not location_hint or not isinstance(rows, list):
         return rows
-    matched = [row for row in rows if _location_hint_matches_row(location_hint, row)]
-    return matched or rows
+
+    tiers = (
+        (ROW_POSTCODE_KEYS, True),
+        (ROW_POST_TOWN_KEYS, True),
+        (ROW_MUNICIPALITY_KEYS, True),
+        (ROW_POST_TOWN_KEYS, False),
+        (ROW_MUNICIPALITY_KEYS, False),
+    )
+    for keys, exact in tiers:
+        matched = [
+            row
+            for row in rows
+            if _row_matches_location_values(row, location_hint, keys, exact=exact)
+        ]
+        if matched:
+            return matched
+
+    return []
+
+
+def _rows_conflict_with_location_hint(rows: Any, location_hint: Optional[str]) -> bool:
+    if not location_hint:
+        return False
+
+    candidate_rows = rows if isinstance(rows, list) else [rows] if isinstance(rows, dict) else []
+    rows_with_location = [
+        row
+        for row in candidate_rows
+        if isinstance(row, dict) and _row_location_values(row)
+    ]
+    if not rows_with_location:
+        return False
+
+    return not any(_location_hint_matches_row(location_hint, row) for row in rows_with_location)
+
+
+def _expand_rows_to_same_building_ids(
+    seed_rows: Any,
+    all_rows: List[Dict[str, Any]],
+    location_hint: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    if not isinstance(seed_rows, list) or not seed_rows:
+        return seed_rows if isinstance(seed_rows, list) else []
+
+    building_ids = {
+        str(identifier).strip().upper()
+        for identifier in (_extract_row_identifier(row) for row in seed_rows if isinstance(row, dict))
+        if identifier not in (None, "")
+    }
+    if not building_ids:
+        return seed_rows
+
+    expanded = [
+        row
+        for row in all_rows
+        if isinstance(row, dict)
+        and str(_extract_row_identifier(row) or "").strip().upper() in building_ids
+    ]
+    if location_hint:
+        expanded = _filter_rows_by_location_hint(expanded, location_hint)
+    return expanded or seed_rows
 
 
 def _narrow_address_matches(
@@ -1441,7 +1745,8 @@ def _narrow_address_matches(
     ]
     candidate_rows = exact_matches or deduped_rows
     candidate_rows = _filter_rows_by_location_hint(candidate_rows, location_hint)
-    return _select_latest_epc_rows(candidate_rows)
+    candidate_rows = _expand_rows_to_same_building_ids(candidate_rows, deduped_rows, location_hint)
+    return _select_latest_epc_rows_preserving_ambiguity(candidate_rows)
 
 
 def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> bool:
@@ -1453,20 +1758,35 @@ def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> boo
 
 def _explicit_building_id_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
     metadata = metadata or {}
-    for key in ("building_id_from_user", "selected_brf_building_id", "byggnadsid"):
+    for key in ("building_id_from_user", "selected_brf_building_id"):
         value = metadata.get(key)
         if value not in (None, ""):
             return str(value).strip().upper()
-
-    value = metadata.get("building_id")
-    if value not in (None, "") and BUILDING_ID_RE.search(str(value)):
-        return str(value).strip().upper()
 
     resolution = metadata.get("brf_resolution")
     if isinstance(resolution, dict) and resolution.get("status") in RESOLVED_BRF_STATUSES:
         value = resolution.get("selected_building_id")
         if value not in (None, ""):
             return str(value).strip().upper()
+
+    if metadata.get("same_building_multiple_addresses"):
+        value = metadata.get("byggnadsid") or metadata.get("building_id")
+        if value not in (None, "") and BUILDING_ID_RE.search(str(value)):
+            return str(value).strip().upper()
+
+    # Treat raw byggnadsid/building_id metadata as system memory, not a fresh
+    # user selection. If an address/location hint is active, the address path
+    # must re-check the registry location instead of trusting a stale ID.
+    has_address_context = bool(
+        metadata.get("address")
+        or metadata.get("address_from_user")
+        or _extract_metadata_location_hint(metadata)
+    )
+    if not has_address_context:
+        for key in ("byggnadsid", "building_id"):
+            value = metadata.get(key)
+            if value not in (None, "") and BUILDING_ID_RE.search(str(value)):
+                return str(value).strip().upper()
 
     return None
 
@@ -1948,6 +2268,24 @@ def understand_context_node(state: GraphState) -> GraphState:
         if value not in (None, "", [], {}):
             merged_metadata[key] = value
     merged_metadata = _promote_stored_address(merged_metadata)
+    if not _extract_stored_address_from_metadata(merged_metadata):
+        pending_address = _extract_pending_ambiguous_address_from_messages(state.get("messages") or [])
+        if pending_address:
+            merged_metadata = _deep_merge(
+                merged_metadata,
+                {
+                    "address": pending_address,
+                    "address_from_user": pending_address,
+                    "clarification": {
+                        "needed": True,
+                        "reason": "ambiguous_address",
+                        "resolved": False,
+                    },
+                    "building_identity_check": {
+                        "status": "ambiguous",
+                    },
+                },
+            )
     if merged_metadata:
         state["metadata"] = merge_identifier_metadata(merged_metadata, prior_state)
 
@@ -2037,6 +2375,34 @@ def understand_context_node(state: GraphState) -> GraphState:
                 or _extract_address_location_hint_from_text(state.get("last_message"), recovered_address)
             )
             print(f"[understand_context] recovered address from raw message: {recovered_address!r}", flush=True)
+
+    stored_address_for_disambiguation = (
+        _extract_stored_address_from_metadata(state.get("metadata") or {})
+        or _extract_stored_address_from_metadata(prior_metadata or {})
+    )
+    if (
+        not ctx.get("address")
+        and not address_location_hint
+        and stored_address_for_disambiguation
+        and (
+            _awaiting_address_location_disambiguation(state.get("metadata") or {})
+            or _awaiting_address_location_disambiguation(prior_metadata or {})
+        )
+    ):
+        location_only_hint = _extract_location_only_hint_from_text(state.get("last_message"))
+        if location_only_hint:
+            address_location_hint = location_only_hint
+            ctx["address"] = stored_address_for_disambiguation
+            prior_intent_list = _coerce_intent_list(prior_context or {}) or ["SQL database"]
+            ctx["intent_list"] = copy.deepcopy(prior_intent_list)
+            ctx["parsed_intent"] = (prior_context or {}).get("parsed_intent") or " ; ".join(prior_intent_list)
+            ctx["ambiguous"] = False
+            ctx["ambigious"] = False
+            print(
+                "[understand_context] resolved ambiguous address with location hint: "
+                f"{location_only_hint!r}",
+                flush=True,
+            )
 
     pending_advice = (state.get("metadata") or {}).get(PENDING_BUILDING_ADVICE_KEY)
     if (
@@ -2639,7 +3005,11 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             result["data"] = narrowed_rows
             trace = result.get("trace") or {}
             trace["rows_returned"] = len(narrowed_rows or [])
+            location_hint_no_match = bool(location_hint and original_rows and not narrowed_rows)
             trace["match_strategy"] = (
+                "address_location_no_match"
+                if location_hint_no_match
+                else
                 "exact_address_location"
                 if location_hint and narrowed_rows and len(narrowed_rows) < len(original_rows)
                 else "exact_address"
@@ -2648,6 +3018,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             )
             if location_hint:
                 trace["address_location_hint"] = location_hint
+            if location_hint_no_match:
+                trace["location_hint_no_match"] = True
             result["trace"] = trace
     elif result is None:
         key = next((k for k in SINGLE_FILTER_KEYS if md.get(k) not in (None, "")), None)
@@ -2666,7 +3038,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         if isinstance(result.get("data"), list):
-            latest_rows = _select_latest_epc_rows(result.get("data"))
+            latest_rows = _select_latest_epc_rows_preserving_ambiguity(result.get("data"))
             result["data"] = latest_rows
             trace = result.get("trace") or {}
             try:
@@ -2683,6 +3055,17 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             trace["returned_values_used"] = data
         result["trace"] = trace
 
+    if result and result.get("ok"):
+        location_hint_for_identity = _extract_metadata_location_hint(md)
+        if _rows_conflict_with_location_hint(result.get("data"), location_hint_for_identity):
+            trace = result.get("trace") or {}
+            trace["address_location_hint"] = location_hint_for_identity
+            trace["location_hint_no_match"] = True
+            trace["match_strategy"] = "address_location_conflict"
+            trace["rows_returned"] = 0
+            result["trace"] = trace
+            result["data"] = []
+
     updates: Dict[str, Any] = {"done_generic_sql": True}
     outs: List[str] = []
     trace = (result or {}).get("trace") or {
@@ -2696,9 +3079,12 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             "query_traces": {"generic_sql": trace},
         },
     )
+    if addr and not explicit_building_id:
+        metadata_updates.pop("byggnadsid", None)
+        metadata_updates.pop("building_id", None)
 
     if result and result.get("ok"):
-        identity_check = assess_building_identity(md, result.get("data"))
+        identity_check = assess_building_identity(metadata_updates, result.get("data"))
         if (
             explicit_building_id
             and _all_retrieved_rows_match_building_id(result.get("data"), explicit_building_id)
@@ -2763,7 +3149,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
         else:
             clarification_reason = (
                 "ambiguous_address"
-                if identity_check.get("ambiguous")
+                if identity_check.get("ambiguous") or (trace or {}).get("location_hint_no_match")
                 else "missing_building_data"
             )
             metadata_updates = _deep_merge(
@@ -3211,6 +3597,14 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     )
     try:
         answer = llm_summarizer.generate_response(prompt, message_list=[])
+        if _is_model_error_response(answer):
+            metadata = _deep_merge(metadata, {"response_model_error": answer})
+            answer = _deterministic_building_fact_response(
+                current_address=str(current_address),
+                building_id=str(building_id),
+                facts=retrieved_facts,
+            )
+            print("[llm_summarizer] model error; used deterministic building-fact fallback", flush=True)
         answer = ensure_building_identifier_in_response(answer, building_id)
         answer = apply_response_safety_notes(answer, metadata)
         print("[llm_summarizer] generate_response ✓", flush=True)

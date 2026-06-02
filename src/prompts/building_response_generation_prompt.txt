@@ -30,6 +30,7 @@ Instructions:
 - epc_egienergiklass represents the energy class of the building, and should be presented as the building’s energy class.
 - epc_egennybyggar is the building construction year / year built. If the user asks when the building was constructed or built, answer with this year and cite the available source/date from the EPC/energy declaration fields when present.
 - Distinguish EPC fields carefully: epc_egienergiprestanda is the declared energy performance, epc_egispecifikenergianvandning / epc_egispecifikenergianvandning_calc are specific energy use, and epc_egiprimarenergital2019 / epc_egiprimarenergital2020_calc are primary energy numbers used for energy-class rules. If these values differ, label them separately instead of treating the difference as an inconsistency. Do not describe specific energy use as a primary-energy number.
+- Distinguish district-heating EPC fields carefully: epc_egifjarrvarme is total district heating if present, epc_egifjarrvarmeuppv is district heating for space heating, and epc_egifjarrvarmevv is district heating for domestic hot water. Do not label epc_egifjarrvarmeuppv or epc_egifjarrvarmevv as total district-heating use.
 - Keep the output in full format.
 - Only use information that exists in the provided context, results, or metadata.
 - Do not make assumptions about building identity or building data.

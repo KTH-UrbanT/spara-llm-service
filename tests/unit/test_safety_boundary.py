@@ -116,6 +116,42 @@ def test_message_metadata_clears_stale_clarification_for_successful_route():
     assert metadata["clarification"]["resolved"] is True
 
 
+def test_message_metadata_does_not_expose_candidate_id_on_clarification():
+    metadata = build_message_metadata(
+        {
+            "content": "Please provide the city, postcode, municipality, BRF name, or exact building ID.",
+            "classification": "building_specific",
+            "route": "clarification",
+        },
+        {
+            "last_user_message": "i live in Örebro",
+            "address": "Examplegatan 10",
+            "byggnadsid": "01-60-CANDIDATE-1",
+            "building_id": "01-60-CANDIDATE-1",
+            "retrieved_facts": {
+                "byggnadsid": "01-60-CANDIDATE-1",
+                "energy_class": "F",
+            },
+            "clarification": {
+                "needed": True,
+                "reason": "ambiguous_address",
+                "question_asked": "Please provide the city, postcode, municipality, BRF name, or exact building ID.",
+                "resolved": False,
+            },
+            "building_identity_check": {
+                "status": "ambiguous",
+                "candidate_building_ids": ["01-60-CANDIDATE-1", "18-80-CANDIDATE-2"],
+            },
+        },
+    )
+
+    assert metadata["needs_clarification"] is True
+    assert "building_id" not in metadata
+    assert "byggnadsid" not in metadata
+    assert "retrieved_facts" not in metadata
+    assert metadata["building_identity_check"]["status"] == "ambiguous"
+
+
 def test_message_metadata_preserves_session_memory_fields():
     metadata = build_message_metadata(
         {

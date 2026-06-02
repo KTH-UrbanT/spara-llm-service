@@ -530,6 +530,123 @@ def test_understand_context_recovers_address_and_location_hint_from_raw_message(
     assert result["context"]["address_location_hint"] == "Täby"
 
 
+def test_understand_context_uses_location_only_followup_for_ambiguous_address():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": None,
+            "intents": [],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "oh yes sure, I live in Katrineholm",
+            "messages": [{"role": "user", "content": "oh yes sure, I live in Katrineholm"}],
+            "metadata": {},
+            "session_state": {
+                "context": {
+                    "parsed_intent": "SQL database",
+                    "intent_list": ["SQL database"],
+                },
+                "metadata": {
+                    "address": "Ringvägen 10",
+                    "address_from_user": "Ringvägen 10",
+                    "clarification": {
+                        "needed": True,
+                        "reason": "ambiguous_address",
+                    },
+                    "building_identity_check": {
+                        "status": "ambiguous",
+                    },
+                },
+            },
+        }
+    )
+
+    assert result["metadata"]["address"] == "Ringvägen 10"
+    assert result["metadata"]["address_location_hint"] == "Katrineholm"
+    assert result["context"]["address"] == "Ringvägen 10"
+    assert result["context"]["parsed_intent"] == "SQL database"
+
+
+def test_understand_context_recovers_ambiguous_address_from_recent_messages_without_metadata():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": None,
+            "intents": [],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "i live in Täby",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I live at Exempelgatan 10. What is the building's energy performance?",
+                },
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I found several possible building records for that address. "
+                        "Please provide the city, postcode, municipality, BRF name, or exact building ID."
+                    ),
+                },
+                {"role": "user", "content": "i live in Täby"},
+            ],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Exempelgatan 10"
+    assert result["metadata"]["address_location_hint"] == "Täby"
+    assert result["context"]["address"] == "Exempelgatan 10"
+    assert result["context"]["address_location_hint"] == "Täby"
+    assert result["context"]["parsed_intent"] == "SQL database"
+
+
+def test_understand_context_preserves_location_hint_on_later_building_followup():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "What is the building's energy performance?",
+            "messages": [{"role": "user", "content": "What is the building's energy performance?"}],
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_from_user": "Ringvägen 10",
+                "address_location_hint": "Stockholm",
+                "clarification": {
+                    "needed": False,
+                    "reason": None,
+                    "resolved": True,
+                },
+            },
+            "session_state": {},
+        }
+    )
+
+    assert result["metadata"]["address"] == "Ringvägen 10"
+    assert result["metadata"]["address_location_hint"] == "Stockholm"
+    assert result["context"]["address"] == "Ringvägen 10"
+    assert result["context"]["address_location_hint"] == "Stockholm"
+
+
 def test_understand_context_discards_bad_parser_address_and_uses_stored_address():
     module = import_building_flow_graph_module()
     message = "please explain more. like why is 2019G and 2020 updated as F ? Show me the data"
@@ -1064,7 +1181,7 @@ def test_generic_sql_agent_prefers_building_id_over_ambiguous_address_and_expose
         {
             "metadata": {
                 "address": "Ringvägen 10",
-                "byggnadsid": selected_building_id,
+                "building_id_from_user": selected_building_id,
             },
             "parallel": {},
         }
@@ -1077,6 +1194,113 @@ def test_generic_sql_agent_prefers_building_id_over_ambiguous_address_and_expose
     assert result["agent_data_generic"][0]["byggnadsid"] == selected_building_id
     assert result["agent_data_generic"][0]["construction_year"] == 1966
     assert result["metadata"]["generic_sql_trace"]["returned_values_used"]["construction_year"] == 1966
+
+
+def test_generic_sql_agent_does_not_use_stale_system_building_id_over_location_hint():
+    module = import_building_flow_graph_module()
+    calls = []
+
+    def fake_execute(op, **kwargs):
+        calls.append((op, kwargs))
+        if op == "building_by_address":
+            return {
+                "ok": True,
+                "data": [
+                    {
+                        "byggnadsid": "01-60-BOKBINDAREN6-1",
+                        "epc_idadr": "Ringvägen 10",
+                        "epc_idpostort": "Täby",
+                        "epc_idkommun": "Täby",
+                        "epc_idpostnr": "18770",
+                        "epc_godkand": "2019-10-31",
+                        "epc_egienergiprestanda": 173,
+                    },
+                    {
+                        "byggnadsid": "01-26-SPACKELN6-1",
+                        "epc_idadr": "Ringvägen 10",
+                        "epc_idpostort": "Huddinge",
+                        "epc_idkommun": "Huddinge",
+                        "epc_idpostnr": "14131",
+                        "epc_godkand": "2018-04-27",
+                        "epc_egienergiprestanda": 86,
+                    },
+                ],
+                "trace": {"query_type": "building_by_address", "execution_status": "success"},
+            }
+        raise AssertionError(f"unexpected operation: {op}")
+
+    module.sql_mapper_layer.execute = fake_execute
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_location_hint": "Huddinge",
+                "byggnadsid": "01-60-BOKBINDAREN6-1",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert calls == [("building_by_address", {"address": "Ringvägen 10"})]
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-26-SPACKELN6-1"
+    assert result["agent_data_generic"][0]["epc_idkommun"] == "Huddinge"
+
+
+def test_generic_sql_agent_uses_latest_epc_for_same_building_address_alias():
+    module = import_building_flow_graph_module()
+
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "01-80-EXAMPLE77-1",
+                "epc_idadr": "Firstgatan 20",
+                "epc_idpostort": "Stockholm",
+                "epc_idkommun": "Stockholm",
+                "epc_idpostnr": "11157",
+                "epc_godkand": "2008-11-25",
+                "epc_egienergiprestanda": 226,
+            },
+            {
+                "byggnadsid": "01-80-EXAMPLE77-1",
+                "epc_idadr": "Secondtorget 2",
+                "epc_idpostort": "Stockholm",
+                "epc_idkommun": "Stockholm",
+                "epc_idpostnr": "11157",
+                "epc_godkand": "2019-11-20",
+                "epc_egienergiprestanda": 169,
+            },
+            {
+                "byggnadsid": "01-60-OTHER37-1",
+                "epc_idadr": "Firstgatan 20",
+                "epc_idpostort": "Täby",
+                "epc_idkommun": "Täby",
+                "epc_idpostnr": "18762",
+                "epc_godkand": "2024-01-01",
+                "epc_egienergiprestanda": 300,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Firstgatan 20",
+                "address_location_hint": "Stockholm",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "01-80-EXAMPLE77-1"
+    assert result["agent_data_generic"][0]["epc_idadr"] == "Secondtorget 2"
+    assert result["agent_data_generic"][0]["epc_egienergiprestanda"] == 169
 
 
 def test_generic_sql_agent_allows_multiple_addresses_for_same_building_id_without_explicit_id():
@@ -1636,15 +1860,30 @@ def test_generic_sql_agent_blocks_common_address_across_multiple_building_ids():
         "ok": True,
         "data": [
             {
+                "byggnadsid": "03-31-LILLARAMSJOE2:13-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Morgongåva",
+                "epc_idkommun": "Heby",
+                "epc_idpostnr": "74450",
+                "epc_godkand": "2021-08-19",
+                "epc_egienergiprestanda": 143,
+            },
+            {
                 "byggnadsid": "01-60-BOKBINDAREN6-1",
                 "epc_idadr": "Ringvägen 10",
                 "epc_idpostort": "Täby",
+                "epc_idkommun": "Täby",
+                "epc_idpostnr": "18770",
+                "epc_godkand": "2020-12-01",
                 "epc_egennybyggar": 1975,
             },
             {
                 "byggnadsid": "24-82-BURTRAESKS-GAMMELBYN71:4-1",
                 "epc_idadr": "Ringvägen 10",
                 "epc_idpostort": "Burträsk",
+                "epc_idkommun": "Skellefteå",
+                "epc_idpostnr": "93732",
+                "epc_godkand": "2020-12-23",
                 "epc_egennybyggar": 1966,
             },
         ],
@@ -1662,6 +1901,7 @@ def test_generic_sql_agent_blocks_common_address_across_multiple_building_ids():
     assert result["metadata"]["building_identity_check"]["status"] == "ambiguous"
     assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
     assert "city, postcode, municipality" in result["metadata"]["clarification"]["question_asked"]
+    assert "143 kWh" not in result.get("final_response", "")
 
 
 def test_generic_sql_agent_uses_location_hint_for_common_address():
@@ -1685,6 +1925,15 @@ def test_generic_sql_agent_uses_location_hint_for_common_address():
                 "epc_idpostnr": "93732",
                 "epc_egiversion": "2020",
             },
+            {
+                "byggnadsid": "01-15-GARNS-EKSKOGEN1:82-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Brottby",
+                "epc_idkommun": "Vallentuna",
+                "epc_idpostnr": "18697",
+                "epc_godkand": "2024-11-15",
+                "epc_egienergiprestanda": 221,
+            },
         ],
         "trace": {"query_type": "building_by_address", "execution_status": "success"},
     }
@@ -1703,6 +1952,146 @@ def test_generic_sql_agent_uses_location_hint_for_common_address():
     assert result["metadata"]["building_identity_check"]["status"] == "passed"
     assert result["agent_data_generic"][0]["byggnadsid"] == "01-60-BOKBINDAREN6-1"
     assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "exact_address_location"
+
+
+def test_generic_sql_agent_uses_municipality_hint_for_common_address():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "04-83-HILLERSTA1:73-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Julita",
+                "epc_idkommun": "Katrineholm",
+                "epc_idpostnr": "64360",
+                "epc_godkand": "2014-10-15",
+                "epc_egienergiprestanda": 104,
+            },
+            {
+                "byggnadsid": "01-88-HALLSTA4:30-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Hallstavik",
+                "epc_idkommun": "Norrtälje",
+                "epc_idpostnr": "76340",
+                "epc_godkand": "2017-01-02",
+                "epc_egienergiprestanda": 25,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_location_hint": "Katrineholm",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "04-83-HILLERSTA1:73-1"
+    assert result["agent_data_generic"][0]["epc_idkommun"] == "Katrineholm"
+
+
+def test_generic_sql_agent_prefers_post_town_over_municipality_hint_for_common_address():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "06-80-MAANSARP1:167-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Taberg",
+                "epc_idkommun": "Jönköping",
+                "epc_idpostnr": "56241",
+                "epc_godkand": "2013-02-26",
+                "epc_egienergiprestanda": 153,
+            },
+            {
+                "byggnadsid": "06-80-AASKAADAREN12-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Jönköping",
+                "epc_idkommun": "Jönköping",
+                "epc_idpostnr": "55454",
+                "epc_godkand": "2018-02-14",
+                "epc_egienergiprestanda": 68,
+            },
+            {
+                "byggnadsid": "01-15-GARNS-EKSKOGEN1:82-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Brottby",
+                "epc_idkommun": "Vallentuna",
+                "epc_idpostnr": "18697",
+                "epc_godkand": "2024-11-15",
+                "epc_egienergiprestanda": 221,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_location_hint": "Jönköping",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is not True
+    assert result["metadata"]["building_identity_check"]["status"] == "passed"
+    assert result["agent_data_generic"][0]["byggnadsid"] == "06-80-AASKAADAREN12-1"
+    assert result["agent_data_generic"][0]["epc_idpostort"] == "Jönköping"
+    assert result["agent_data_generic"][0]["epc_egienergiprestanda"] == 68
+
+
+def test_generic_sql_agent_blocks_when_location_hint_matches_no_returned_location():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "01-26-SPACKELN6-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Huddinge",
+                "epc_idkommun": "Huddinge",
+                "epc_idpostnr": "14131",
+                "epc_godkand": "2018-05-08",
+                "epc_egienergiprestanda": 86,
+            },
+            {
+                "byggnadsid": "01-88-HALLSTA4:30-1",
+                "epc_idadr": "Ringvägen 10",
+                "epc_idpostort": "Hallstavik",
+                "epc_idkommun": "Norrtälje",
+                "epc_idpostnr": "76340",
+                "epc_godkand": "2017-01-02",
+                "epc_egienergiprestanda": 25,
+            },
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {
+                "address": "Ringvägen 10",
+                "address_location_hint": "Sollentuna",
+            },
+            "parallel": {},
+        }
+    )
+
+    assert result.get("identity_gate_blocked") is True
+    assert result["metadata"]["building_identity_check"]["status"] == "missing"
+    assert result["metadata"]["clarification"]["reason"] == "ambiguous_address"
+    assert result["metadata"]["generic_sql_trace"]["match_strategy"] == "address_location_no_match"
+    assert result.get("agent_data_generic") in (None, [])
 
 
 def test_generic_sql_agent_exposes_epc_heating_system_alias():
@@ -1734,6 +2123,37 @@ def test_generic_sql_agent_exposes_epc_heating_system_alias():
     assert result["metadata"]["building_identity_check"]["status"] == "passed"
     assert result["agent_data_generic"][0]["heating_system"] == "district heating"
     assert result["agent_data_generic"][0]["district_heating_use"] == 455130
+
+
+def test_generic_sql_agent_keeps_district_heating_breakdown_separate():
+    module = import_building_flow_graph_module()
+    module.sql_mapper_layer.execute = lambda *args, **kwargs: {
+        "ok": True,
+        "data": [
+            {
+                "byggnadsid": "07-80-GUNNARGROEPE10-1",
+                "epc_idadr": "Examplegatan 10",
+                "epc_idpostort": "Växjö",
+                "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                "epc_egifjarrvarmeuppv": 1169500,
+                "epc_egifjarrvarmevv": 33300,
+            }
+        ],
+        "trace": {"query_type": "building_by_address", "execution_status": "success"},
+    }
+
+    result = module.generic_sql_agent_node(
+        {
+            "metadata": {"address": "Examplegatan 10", "address_location_hint": "Växjö"},
+            "parallel": {},
+        }
+    )
+
+    row = result["agent_data_generic"][0]
+    assert row["heating_system"] == "district heating"
+    assert "district_heating_use" not in row
+    assert row["district_heating_space_heating"] == 1169500
+    assert row["district_heating_domestic_hot_water"] == 33300
 
 
 def test_generic_sql_missing_rows_does_not_block_hybrid_vector_advice():
@@ -1811,6 +2231,72 @@ def test_llm_summarizer_treats_epc_heating_as_confirmed_fact():
     assert facts["heating_system"] == "district heating"
     assert "heating_system" in uncertainty["confirmed_facts"]
     assert "heating_system" not in uncertainty["missing_facts"]
+
+
+def test_llm_summarizer_uses_structured_fallback_on_rate_limit():
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "Error: Rate limit exceeded. Please retry shortly."
+    )
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what is my energy performance?",
+            "messages": [{"role": "user", "content": "what is my energy performance?"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {"address": "Ringvägen 10"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-26-SPACKELN6-1",
+                        "epc_idadr": "Ringvägen 10",
+                        "epc_egienergiklass2020_calc": "E",
+                        "epc_egienergiprestanda": 86,
+                        "epc_egispecifikenergianvandning_calc": 86,
+                        "epc_egiprimarenergital2020_calc": 155,
+                        "epc_godkand": "2018-05-08",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "Error: Rate limit exceeded" not in result["final_response"]
+    assert "Building ID: 01-26-SPACKELN6-1" in result["final_response"]
+    assert "Declared energy performance: 86 kWh/m2-year" in result["final_response"]
+    assert "Primary energy number: 155 kWh/m2-year" in result["final_response"]
+
+
+def test_llm_summarizer_fallback_labels_district_heating_breakdown():
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "Error: Rate limit exceeded. Please retry shortly."
+    )
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what is my energy performance?",
+            "messages": [{"role": "user", "content": "what is my energy performance?"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {"address": "Examplegatan 10"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "07-80-GUNNARGROEPE10-1",
+                        "epc_idadr": "Examplegatan 10",
+                        "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                        "epc_egifjarrvarmeuppv": 1169500,
+                        "epc_egifjarrvarmevv": 33300,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "Total district heating use" not in result["final_response"]
+    assert "District heating use: 1169500" not in result["final_response"]
+    assert "District heating for space heating: 1169500 kWh/year" in result["final_response"]
+    assert "District heating for domestic hot water: 33300 kWh/year" in result["final_response"]
 
 
 def test_llm_summarizer_treats_epc_ventilation_electricity_and_date_as_confirmed():

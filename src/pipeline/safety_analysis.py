@@ -311,18 +311,63 @@ def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
         if normalized:
             facts["heating_system"] = normalized
 
-    district_heating_raw = _first_present(
+    district_heating_total = _first_present(
         facts,
         (
             "district_heating_use",
             "epc_egifjarrvarme",
-            "epc_egifjarrvarmeuppv",
-            "epc_egigruppfjarrvarme",
-            "primary_energy_district_heating",
         ),
     )
-    if not _is_present(facts.get("district_heating_use")) and district_heating_raw is not None:
-        facts["district_heating_use"] = district_heating_raw
+    if not _is_present(facts.get("district_heating_use")) and district_heating_total is not None:
+        facts["district_heating_use"] = district_heating_total
+
+    district_heating_space_heating = _first_present(
+        facts,
+        (
+            "district_heating_space_heating",
+            "epc_egifjarrvarmeuppv",
+        ),
+    )
+    if (
+        not _is_present(facts.get("district_heating_space_heating"))
+        and district_heating_space_heating is not None
+    ):
+        facts["district_heating_space_heating"] = district_heating_space_heating
+
+    district_heating_domestic_hot_water = _first_present(
+        facts,
+        (
+            "district_heating_domestic_hot_water",
+            "district_heating_hot_water",
+            "epc_egifjarrvarmevv",
+        ),
+    )
+    if (
+        not _is_present(facts.get("district_heating_domestic_hot_water"))
+        and district_heating_domestic_hot_water is not None
+    ):
+        facts["district_heating_domestic_hot_water"] = district_heating_domestic_hot_water
+
+    domestic_hot_water = _first_present(
+        facts,
+        (
+            "domestic_hot_water",
+            "epc_egitappvarmvatten_calc",
+            "epc_egitappvarmvatten",
+        ),
+    )
+    if not _is_present(facts.get("domestic_hot_water")) and domestic_hot_water is not None:
+        facts["domestic_hot_water"] = domestic_hot_water
+
+    district_heating_raw = _first_present(
+        facts,
+        (
+            "district_heating_use",
+            "district_heating_space_heating",
+            "district_heating_domestic_hot_water",
+            "epc_egigruppfjarrvarme",
+        ),
+    )
 
     if not _is_present(facts.get("heating_system")) and _truthy_building_value(district_heating_raw):
         facts["heating_system"] = "district heating"
@@ -665,7 +710,21 @@ def compute_uncertainty(
 ) -> Dict[str, Any]:
     metadata = metadata or {}
     retrieved_facts = retrieved_facts or {}
-    confirmed = [key for key in IMPORTANT_FACT_KEYS if _is_present(retrieved_facts.get(key))]
+    confirmed = []
+    for key in IMPORTANT_FACT_KEYS:
+        if key == "district_heating_use":
+            if any(
+                _is_present(retrieved_facts.get(candidate))
+                for candidate in (
+                    "district_heating_use",
+                    "district_heating_space_heating",
+                    "district_heating_domestic_hot_water",
+                )
+            ):
+                confirmed.append(key)
+            continue
+        if _is_present(retrieved_facts.get(key)):
+            confirmed.append(key)
     missing = [key for key in IMPORTANT_FACT_KEYS if key not in confirmed]
 
     assumptions: List[str] = []

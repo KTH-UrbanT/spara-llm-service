@@ -1,4 +1,5 @@
 # src/agents/building_agent.py
+import re
 import time
 from typing import Any, Dict
 from src.agents.building_flow_graph import (
@@ -23,6 +24,16 @@ def _vector_source_keys(final_state: Dict[str, Any]) -> list:
             return vector_data.get("sources") or []
 
     return final_state.get("agent_vector_sources") or []
+
+
+ADDRESS_DISAMBIGUATION_REQUEST_RE = re.compile(
+    r"(?=.*\b(?:address|building|property|brf|adress|byggnad|fastighet)\b)"
+    r"(?=.*\b(?:city|postcode|postal\s+code|municipality|postort|postnummer|kommun|"
+    r"building\s+id|byggnadsid|brf)\b)"
+    r".*\b(?:multiple|several|ambiguous|different|correct|which|choose|use|"
+    r"flera|olika|rätt|vilken|välj|använd)\b",
+    flags=re.IGNORECASE,
+)
 
 
 def _latest_session_state(session_state: Any) -> Dict[str, Any]:
@@ -75,12 +86,39 @@ def _direct_resolution_metadata(
     return merge_identifier_metadata(merged, latest_state)
 
 
+def _metadata_without_unresolved_selection(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = dict(metadata or {})
+    for key in (
+        "building_id",
+        "byggnadsid",
+        "selected_brf_building_id",
+        "building_id_from_user",
+        "retrieved_facts",
+        "aggregated_data",
+        "agent_data",
+    ):
+        cleaned.pop(key, None)
+    building_match = cleaned.get("building_match")
+    if isinstance(building_match, dict):
+        building_match = dict(building_match)
+        building_match.pop("building_id", None)
+        building_match["match_confidence"] = "low"
+        building_match["ambiguous"] = True
+        cleaned["building_match"] = building_match
+    return cleaned
+
+
 class BuildingAgent:
     def __init__(self):
         self.building_flow =  ''
 
     @staticmethod
     def _derive_route(final_state: Dict[str, Any], response_text: str) -> str:
+        metadata = final_state.get("metadata") if isinstance(final_state, dict) else {}
+        clarification = metadata.get("clarification") if isinstance(metadata, dict) else {}
+        if isinstance(clarification, dict) and clarification.get("needed"):
+            return "clarification"
+
         lowered = (response_text or "").strip().lower()
         if (
             "provide the building address" in lowered
@@ -88,6 +126,7 @@ class BuildingAgent:
             or "full street address" in lowered
             or "need the full building address" in lowered
             or "could you clarify your request" in lowered
+            or ADDRESS_DISAMBIGUATION_REQUEST_RE.search(response_text or "")
         ):
             return "clarification"
 
@@ -140,7 +179,11 @@ class BuildingAgent:
             response = direct_multi_address_state.get("final_response") or "No output was generated."
             md = direct_multi_address_state.get("metadata") or {}
             route = "clarification" if (md.get("clarification") or {}).get("needed") else "building_specific"
-            metadata_payload = merge_identifier_metadata(md, direct_multi_address_state)
+            metadata_payload = (
+                _metadata_without_unresolved_selection(md)
+                if route == "clarification"
+                else merge_identifier_metadata(md, direct_multi_address_state)
+            )
             payload = {
                 "content": response,
                 "classification": "building_specific",
@@ -201,20 +244,24 @@ class BuildingAgent:
         route = self._derive_route(final_state, response)
         print(response)
 
-        metadata_payload = merge_identifier_metadata(
-            md,
-            final_state.get("aggregated_data"),
-            final_state.get("agent_data"),
-            final_state.get("session_state"),
-        )
-        if final_state.get("aggregated_data"):
+        if route == "clarification":
+            metadata_payload = _metadata_without_unresolved_selection(md)
+        else:
+            metadata_payload = merge_identifier_metadata(
+                md,
+                final_state.get("aggregated_data"),
+                final_state.get("agent_data"),
+                final_state.get("session_state"),
+            )
+        if route != "clarification" and final_state.get("aggregated_data"):
             metadata_payload["aggregated_data"] = final_state.get("aggregated_data")
-        if final_state.get("agent_data"):
+        if route != "clarification" and final_state.get("agent_data"):
             metadata_payload["agent_data"] = final_state.get("agent_data")
         if ctx:
             metadata_payload["context"] = ctx
         if route == "clarification":
-            clarification_reason = (
+            existing_clarification = md.get("clarification") or {}
+            clarification_reason = existing_clarification.get("reason") or (
                 "ambiguous_brf"
                 if ctx.get("ambiguous") or ctx.get("ambigious")
                 else "missing_address"
@@ -222,9 +269,9 @@ class BuildingAgent:
             metadata_payload["clarification"] = {
                 "needed": True,
                 "reason": clarification_reason,
-                "question_asked": response,
-                "resolved": False,
-                "resolved_after_turns": None,
+                "question_asked": existing_clarification.get("question_asked") or response,
+                "resolved": existing_clarification.get("resolved", False),
+                "resolved_after_turns": existing_clarification.get("resolved_after_turns"),
             }
 
         payload = {

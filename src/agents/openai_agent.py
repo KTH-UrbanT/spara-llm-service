@@ -74,6 +74,38 @@ class OpenAIResponseAgent:
         name = (self.deployment or "").lower()
         return ("o4" in name) or ("o3" in name)
 
+    def _retry_settings(self) -> tuple[int, float]:
+        try:
+            retries = int(os.getenv("OPENAI_RESPONSE_MAX_RETRIES", "2"))
+        except (TypeError, ValueError):
+            retries = 2
+        try:
+            base_seconds = float(os.getenv("OPENAI_RESPONSE_RETRY_BASE_SECONDS", "1.0"))
+        except (TypeError, ValueError):
+            base_seconds = 1.0
+        return max(0, retries), max(0.0, base_seconds)
+
+    def _create_completion_with_retries(self, params: Dict[str, object]):
+        max_retries, base_seconds = self._retry_settings()
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self.client.chat.completions.create(**params)
+            except RateLimitError as exc:
+                last_error = exc
+                if attempt >= max_retries:
+                    raise
+                sleep_for = base_seconds * (2 ** attempt)
+                logger.warning(
+                    "Response model rate limit hit; retrying in %.1fs (attempt %s/%s).",
+                    sleep_for,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+        raise last_error
+
     def _build_messages(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]):
         messages = [{"role": "system", "content": self.prompt_template}]
         for msg in (message_list or []):
@@ -111,7 +143,7 @@ class OpenAIResponseAgent:
 
         try:
             model_started_at = time.perf_counter()
-            response = self.client.chat.completions.create(**params)
+            response = self._create_completion_with_retries(params)
         except BadRequestError as e:
             # Auto-recover common param mismatch: swap max_tokens -> max_completion_tokens
             msg = str(e)
@@ -124,7 +156,7 @@ class OpenAIResponseAgent:
                     params.pop(k, None)
                 model_started_at = time.perf_counter()
                 try:
-                    response = self.client.chat.completions.create(**params)
+                    response = self._create_completion_with_retries(params)
                 except Exception as retry_exc:
                     logger.error(f"Retry after BadRequestError failed: {retry_exc}", exc_info=True)
                     record_model_call(

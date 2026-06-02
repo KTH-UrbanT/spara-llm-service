@@ -258,6 +258,93 @@ def test_handle_building_query_marks_full_address_prompt_as_clarification():
     assert metadata["clarification"]["reason"] == "missing_address"
 
 
+def test_handle_building_query_preserves_ambiguous_address_clarification_reason():
+    module = import_building_agent_module()
+    question = (
+        "I found more than one possible building match for that address. "
+        "Please provide the city, postcode, municipality, BRF name, or exact building ID so I use the correct building."
+    )
+    FakeGraph.result = {
+        "final_response": question,
+        "context": {"parsed_intent": "SQL database", "ambiguous": False},
+        "metadata": {
+            "address": "Ringvägen 10",
+            "clarification": {
+                "needed": True,
+                "reason": "ambiguous_address",
+                "question_asked": question,
+                "resolved": False,
+                "resolved_after_turns": None,
+            },
+            "building_identity_check": {"status": "ambiguous"},
+        },
+    }
+    FakeGraph.error = None
+
+    response, metadata = module.BuildingAgent().handle_building_query(
+        last_message="I live at Ringvägen 10. What is the building's energy performance?",
+        messages=[],
+        metadata={},
+        thread_id="thread-ambiguous-address",
+    )
+
+    assert response["route"] == "clarification"
+    assert metadata["clarification"]["reason"] == "ambiguous_address"
+    assert metadata["clarification"]["question_asked"] == question
+    assert metadata["building_identity_check"]["status"] == "ambiguous"
+
+
+def test_handle_building_query_does_not_promote_candidate_id_on_clarification():
+    module = import_building_agent_module()
+    question = "Please provide the city, postcode, municipality, BRF name, or exact building ID."
+    FakeGraph.result = {
+        "final_response": question,
+        "context": {"parsed_intent": "SQL database"},
+        "metadata": {
+            "address": "Examplegatan 10",
+            "clarification": {
+                "needed": True,
+                "reason": "ambiguous_address",
+                "question_asked": question,
+                "resolved": False,
+            },
+            "building_identity_check": {
+                "status": "ambiguous",
+                "candidate_building_ids": ["01-60-CANDIDATE-1", "18-80-CANDIDATE-2"],
+            },
+            "building_candidate_matches": [
+                {
+                    "byggnadsid": "01-60-CANDIDATE-1",
+                    "epc_idadr": "Examplegatan 10",
+                    "epc_idkommun": "Täby",
+                },
+                {
+                    "byggnadsid": "18-80-CANDIDATE-2",
+                    "epc_idadr": "Examplegatan 10",
+                    "epc_idkommun": "Örebro",
+                },
+            ],
+        },
+    }
+    FakeGraph.error = None
+
+    response, metadata = module.BuildingAgent().handle_building_query(
+        last_message="i live in Örebro",
+        messages=[],
+        metadata={},
+        thread_id="thread-ambiguous-candidates",
+    )
+
+    assert response["route"] == "clarification"
+    assert "byggnadsid" not in metadata
+    assert "building_id" not in metadata
+    assert "retrieved_facts" not in metadata
+    assert metadata["building_identity_check"]["candidate_building_ids"] == [
+        "01-60-CANDIDATE-1",
+        "18-80-CANDIDATE-2",
+    ]
+
+
 def test_handle_building_query_includes_vector_sources_from_merged_agent_data():
     module = import_building_agent_module()
     SourceLinkResolver.result = [

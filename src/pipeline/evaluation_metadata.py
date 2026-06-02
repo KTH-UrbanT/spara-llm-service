@@ -393,6 +393,26 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
             continue
         payload[key] = session_metadata.get(key)
 
+    if clarification["needed"]:
+        for key in (
+            "building_id",
+            "byggnadsid",
+            "selected_brf_building_id",
+            "building_id_from_user",
+            "retrieved_facts",
+        ):
+            payload.pop(key, None)
+        building_match = payload.get("building_match")
+        if isinstance(building_match, dict):
+            building_match = dict(building_match)
+            building_match.pop("building_id", None)
+            if building_match:
+                building_match["match_confidence"] = "low"
+                building_match["ambiguous"] = True
+                payload["building_match"] = building_match
+            else:
+                payload.pop("building_match", None)
+
     return {
         key: value
         for key, value in payload.items()
