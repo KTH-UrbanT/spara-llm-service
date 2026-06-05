@@ -1589,6 +1589,51 @@ FACT_VALUE_EXPLANATIONS: Dict[str, Dict[str, str]] = {
     },
 }
 
+FACT_CONCEPT_OVERVIEWS: Dict[str, Dict[str, Any]] = {
+    "heating_system": {
+        "title": "Other common heating systems for buildings include:",
+        "items": (
+            (
+                "District heating",
+                "heat is produced centrally and delivered to the building through hot water pipes.",
+            ),
+            (
+                "Heat pumps",
+                "use electricity to move heat from air, ground, rock, or exhaust air into the building.",
+            ),
+            (
+                "Direct electric heating",
+                "uses electricity directly for heat; it is simple but can be costly in larger buildings.",
+            ),
+            (
+                "Boiler systems",
+                "produce heat inside the building, for example with biofuel, gas, or oil in older systems.",
+            ),
+            (
+                "Exhaust-air heat pumps",
+                "recover heat from outgoing ventilation air and reuse it for heating or hot water.",
+            ),
+        ),
+        "closing": (
+            "For many Swedish apartment buildings, district heating is common. Changing the heating system is usually a major project, "
+            "so it is normally worth optimizing controls, balancing, and hot-water use before considering replacement."
+        ),
+    },
+    "ventilation_type": {
+        "title": "Other common ventilation systems include:",
+        "items": (
+            ("Self-draught/Självdrag", "air moves mainly through natural pressure and temperature differences."),
+            ("F", "mechanical exhaust ventilation, where fans remove indoor air."),
+            ("FT", "mechanical supply and exhaust ventilation without heat recovery."),
+            ("FTX", "mechanical supply and exhaust ventilation with heat recovery."),
+            ("FMED", "mechanical exhaust ventilation with heat recovery."),
+        ),
+        "closing": (
+            "The best option depends on the building's age, ducts, indoor-air needs, comfort issues, and renovation scope."
+        ),
+    },
+}
+
 
 def _fact_value_explanation_keys(value: Any) -> List[str]:
     raw = str(value or "").strip()
@@ -1663,9 +1708,11 @@ def _looks_like_fact_concept_overview_request(text: Optional[str]) -> bool:
     ):
         return False
     return bool(
-        re.search(r"\b(?:other|different|common|main|available)\s+types?\b", lowered)
-        or re.search(r"\btypes?\s+of\b", lowered)
-        or re.search(r"\bwhat\s+are\b.*\btypes?\b", lowered)
+        re.search(r"\b(?:other|different|common|main|available)\s+(?:types?|kinds?|categories|options?|systems?)\b", lowered)
+        or re.search(r"\b(?:types?|kinds?|categories|options?|systems?)\s+of\b", lowered)
+        or re.search(r"\bwhat\s+are\b.*\b(?:types?|kinds?|categories|options?|systems?)\b", lowered)
+        or re.search(r"\b(?:types?|kinds?|categories|options?|systems?)\b.*\bavailable\b", lowered)
+        or re.search(r"\bavailable\b.*\b(?:types?|kinds?|categories|options?|systems?)\b", lowered)
         or re.search(r"\b(?:difference|compare|comparison|vs\.?|versus)\b", lowered)
         or re.search(r"\b(?:explain|overview|describe)\b.*\b(?:systems?|types?|options?)\b", lowered)
         or re.search(
@@ -1770,6 +1817,64 @@ def _response_looks_like_full_profile(text: Optional[str]) -> bool:
     if not isinstance(text, str) or not text.strip():
         return False
     return len(PROFILE_FACT_LABEL_RE.findall(text)) >= 5
+
+
+def _concept_overview_focus_key(user_input: Optional[str], facts: Dict[str, Any]) -> Optional[str]:
+    lowered = str(user_input or "").lower()
+    if re.search(r"\b(?:heating|district\s+heating|fj[aä]rrv[aä]rme|uppv[aä]rmning|v[aä]rmesystem)\b", lowered):
+        return "heating_system"
+    if re.search(r"\b(?:ventilation|ventiallation|ventillation|ftx|fmed|sj[äa]lvdrag)\b", lowered):
+        return "ventilation_type"
+    if _looks_like_generic_building_concept_followup(user_input):
+        if _fact_present((facts or {}).get("heating_system")):
+            return "heating_system"
+        if _fact_present((facts or {}).get("ventilation_type")):
+            return "ventilation_type"
+    return None
+
+
+def _deterministic_fact_concept_response(
+    *,
+    user_input: str,
+    current_address: str,
+    building_id: str,
+    facts: Dict[str, Any],
+) -> Optional[str]:
+    focus_key = _concept_overview_focus_key(user_input, facts)
+    if not focus_key:
+        return None
+
+    concept = FACT_CONCEPT_BY_KEY.get(focus_key) or {}
+    overview = FACT_CONCEPT_OVERVIEWS.get(focus_key) or {}
+    if not overview:
+        return None
+
+    value = (facts or {}).get(focus_key)
+    lines: List[str] = []
+    if building_id and building_id != "building_id_not_available":
+        lines.append(f"Building ID: {building_id}")
+    if _fact_present(value):
+        lines.extend(
+            [
+                "",
+                f"Your building's {concept.get('label', focus_key)} is {_format_fact_value_for_user(focus_key, value, concept.get('unit'))}.",
+            ]
+        )
+        explanation = _plain_language_fact_explanation(focus_key, value)
+        if explanation:
+            lines.append(explanation)
+
+    title = str(overview.get("title") or "").strip()
+    if title:
+        lines.extend(["", title])
+    for name, description in overview.get("items") or ():
+        lines.append(f"- {name}: {description}")
+
+    closing = str(overview.get("closing") or "").strip()
+    if closing:
+        lines.extend(["", closing])
+
+    return "\n".join(lines).strip() or None
 
 
 def _targeted_building_fact_response(
@@ -4458,6 +4563,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     )
     user_input_for_response = ctx.get("answer_focus") or state.get("last_message") or ""
     ecm_request = _looks_like_building_ecm_advice(user_input_for_response)
+    fact_concept_hybrid_request = _looks_like_fact_concept_hybrid_request(user_input_for_response)
     prompt = build_building_response_prompt(
         user_input=user_input_for_response,
         current_address=str(current_address),
@@ -4500,6 +4606,23 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
             )
             answer = targeted_fact_answer
             print("[llm_summarizer] used targeted direct-fact response", flush=True)
+        concept_response = _deterministic_fact_concept_response(
+            user_input=user_input_for_response,
+            current_address=str(current_address),
+            building_id=str(building_id),
+            facts=retrieved_facts,
+        )
+        if concept_response and fact_concept_hybrid_request and _response_looks_like_full_profile(answer):
+            metadata = _deep_merge(
+                metadata,
+                {
+                    "response_fallback": {
+                        "reason": "concept_overview_response_was_too_broad",
+                    }
+                },
+            )
+            answer = concept_response
+            print("[llm_summarizer] replaced overbroad profile with concept overview response", flush=True)
         if ecm_request and not _response_has_ecm_recommendations(answer):
             metadata = _deep_merge(
                 metadata,

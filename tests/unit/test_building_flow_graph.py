@@ -450,6 +450,50 @@ def test_understand_context_promotes_ventilation_type_overview_with_building_con
     assert result["metadata"]["address"] == "Sveavägen 17"
 
 
+def test_understand_context_promotes_heating_kinds_overview_with_building_context_to_hybrid():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "what are the other kinds of heating systems available for heating builsinga?",
+            "messages": [
+                {"role": "user", "content": "what is my heating system?"},
+                {
+                    "role": "assistant",
+                    "classification": "building_specific",
+                    "content": "Building ID: 18-80-SKRIKAN4-1\nYour building's heating system is district heating.",
+                },
+                {"role": "user", "content": "what are the other kinds of heating systems available for heating builsinga?"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Sveavägen 17",
+                    "address_from_user": "Sveavägen 17",
+                    "byggnadsid": "18-80-SKRIKAN4-1",
+                    "retrieved_facts": {
+                        "heating_system": "district heating",
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "SQL database ; vector database"
+    assert result["context"]["intent_list"] == ["SQL database", "vector database"]
+    assert "current heating system: district heating" in result["context"]["effective_query"]
+    assert "heating systems" in result["context"]["effective_query"]
+    assert result["metadata"]["address"] == "Sveavägen 17"
+
+
 def test_understand_context_promotes_building_concept_definition_followup_to_hybrid():
     module = import_building_flow_graph_module()
     DummyParseIntentAgent.result = {
@@ -2996,6 +3040,19 @@ def test_targeted_fact_response_does_not_hijack_ventilation_type_overview_questi
     assert response is None
 
 
+def test_targeted_fact_response_does_not_hijack_heating_kinds_overview_question():
+    module = import_building_flow_graph_module()
+
+    response = module._targeted_building_fact_response(
+        user_input="what are the other kinds of heating systems available for heating builsinga?",
+        current_address="Sveavägen 17",
+        building_id="18-80-SKRIKAN4-1",
+        facts={"heating_system": "district heating"},
+    )
+
+    assert response is None
+
+
 def test_llm_summarizer_translates_oden_heating_fields_for_beginners():
     module = import_building_flow_graph_module()
     module.llm_summarizer.generate_response = lambda *args, **kwargs: (
@@ -3025,6 +3082,57 @@ def test_llm_summarizer_translates_oden_heating_fields_for_beginners():
     assert "epc_huvudsakliguppvarmning_calc" not in result["final_response"]
     assert "Energy class" not in result["final_response"]
     assert result["metadata"]["response_fallback"]["reason"] == "direct_fact_response_targeted"
+
+
+def test_llm_summarizer_replaces_profile_dump_for_heating_systems_overview():
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "Sveavägen 17\n\n"
+        "Building ID: 18-80-SKRIKAN4-1\n\n"
+        "Energy class: E\n"
+        "Declared energy performance: 106 kWh/m2-year\n"
+        "Specific energy use: 145 kWh/m2-year\n"
+        "Primary energy number: 106 kWh/m2-year\n"
+        "Energy declaration year: 2021\n"
+        "Construction year: 1938\n"
+        "Heating system: district heating\n"
+        "Ventilation: Självdrag\n"
+        "Electricity consumption: 1951 kWh/year\n"
+        "District heating for space heating: 45029 kWh/year\n"
+        "District heating for domestic hot water: 11800 kWh/year"
+    )
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what are the other kinds of heating systems available for heating builsinga?",
+            "messages": [{"role": "user", "content": "what are the other kinds of heating systems available for heating builsinga?"}],
+            "context": {
+                "parsed_intent": "SQL database ; vector database",
+                "intent_list": ["SQL database", "vector database"],
+            },
+            "metadata": {"address": "Sveavägen 17"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "18-80-SKRIKAN4-1",
+                        "address": "Sveavägen 17",
+                        "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                        "epc_egienergiklass2020_calc": "E",
+                        "epc_egienergiprestanda": 106,
+                        "epc_egispecifikenergianvandning_calc": 145,
+                        "epc_egiprimarenergital2020_calc": 106,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "Your building's heating system is district heating." in result["final_response"]
+    assert "Other common heating systems for buildings include:" in result["final_response"]
+    assert "Heat pumps:" in result["final_response"]
+    assert "Energy class: E" not in result["final_response"]
+    assert "Ventilation: Självdrag" not in result["final_response"]
+    assert result["metadata"]["response_fallback"]["reason"] == "concept_overview_response_was_too_broad"
 
 
 def test_llm_summarizer_gives_focused_ftx_explanation_for_ventilation_measures():
