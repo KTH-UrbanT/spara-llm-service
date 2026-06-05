@@ -1106,6 +1106,39 @@ def test_contentful_followup_after_building_context_routes_to_building_flow():
     assert StubBuildingAgent.last_call[0] == "please explain more"
 
 
+def test_generic_looking_concept_followup_after_building_context_routes_to_building_flow():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    messages = [
+        {"role": "user", "content": "what is my ventilation system?"},
+        {
+            "role": "assistant",
+            "classification": "building_specific",
+            "content": "Building ID: 01-80-FILOSOFEN2-3\nYour building's ventilation type is FTX.",
+            "metadata": {
+                "address": "Professorsslingan 51",
+                "byggnadsid": "01-80-FILOSOFEN2-3",
+            },
+        },
+        {"role": "user", "content": "what does FTX mean?"},
+    ]
+
+    response, metadata = router.route_message(
+        messages=messages,
+        last_message="what does FTX mean?",
+        metadata={"address": "Professorsslingan 51"},
+        thread_id="thread-concept-followup",
+    )
+
+    assert response["content"] == "building answer"
+    assert response["classification"] == "building_specific"
+    assert response["route"] == "combined"
+    assert metadata == {"address": ["street 1"]}
+    assert StubBuildingAgent.last_call[0] == "what does FTX mean?"
+
+
 def test_small_talk_after_building_context_stays_generic():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "generic"

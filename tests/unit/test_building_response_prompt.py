@@ -80,6 +80,8 @@ def test_building_response_prompt_keeps_simple_fact_answers_focused_and_explains
     assert "raw ODEN/EPC fields" in prompt
     assert "epc_venttypftx" in prompt
     assert "epc_huvudsakliguppvarmning_calc" in prompt
+    assert "generic-looking follow-up after a building-specific answer" in prompt
+    assert "what does FTX mean?" in prompt
     assert "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery" in prompt
 
 

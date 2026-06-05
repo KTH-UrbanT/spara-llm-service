@@ -1635,9 +1635,105 @@ def _plain_language_fact_explanation(key: str, value: Any) -> Optional[str]:
     return value_specific or concept_explanation or None
 
 
+def _concept_request_mentions_known_fact_area(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+    return bool(
+        re.search(
+            r"\b(?:ventilation|ventiallation|ventillation|ftx|fmed|heating|district\s+heating|"
+            r"energy\s+class|energy\s+performance|energy\s+index|specific\s+energy|primary\s+energy|"
+            r"electricity|atemp|heated\s+area)\b",
+            lowered,
+        )
+    )
+
+
+def _looks_like_explicit_general_scope(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    return bool(lowered.strip() and any(re.search(pattern, lowered) for pattern in EXPLICIT_GENERAL_SCOPE_PATTERNS))
+
+
+def _looks_like_fact_concept_overview_request(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    if (
+        not lowered.strip()
+        or _looks_like_explicit_general_scope(lowered)
+        or not _concept_request_mentions_known_fact_area(lowered)
+    ):
+        return False
+    return bool(
+        re.search(r"\b(?:other|different|common|main|available)\s+types?\b", lowered)
+        or re.search(r"\btypes?\s+of\b", lowered)
+        or re.search(r"\bwhat\s+are\b.*\btypes?\b", lowered)
+        or re.search(r"\b(?:difference|compare|comparison|vs\.?|versus)\b", lowered)
+        or re.search(r"\b(?:explain|overview|describe)\b.*\b(?:systems?|types?|options?)\b", lowered)
+        or re.search(
+            r"\bwhat\s+(?:is|does)\s+(?:ftx|fmed|sj[äa]lvdrag|district\s+heating|fj[äa]rrv[äa]rme|"
+            r"atemp|energy\s+class|energy\s+performance|specific\s+energy\s+use|primary\s+energy\s+number)\b",
+            lowered,
+        )
+        or re.search(
+            r"\bwhat\s+does\s+(?:ftx|fmed|sj[äa]lvdrag|district\s+heating|fj[äa]rrv[äa]rme|"
+            r"atemp|energy\s+class|energy\s+performance|specific\s+energy\s+use|primary\s+energy\s+number)\s+"
+            r"(?:mean|stand\s+for)\b",
+            lowered,
+        )
+    )
+
+
+def _looks_like_generic_building_concept_followup(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip() or _looks_like_explicit_general_scope(lowered):
+        return False
+    return bool(
+        re.search(r"\bwhat\s+does\s+(?:that|this|it)\s+mean\b", lowered)
+        or re.search(r"\b(?:explain|describe)\s+(?:that|this|it|more)\b", lowered)
+        or re.search(r"\bis\s+(?:that|this|it)\s+(?:good|bad|normal|efficient|high|low)\b", lowered)
+        or re.search(r"\bhow\s+(?:good|bad|efficient|normal)\s+(?:is\s+)?(?:that|this|it)\b", lowered)
+        or re.search(r"\bhow\s+does\s+(?:that|this|it)\s+compare\b", lowered)
+    )
+
+
+def _looks_like_fact_concept_hybrid_request(text: Optional[str]) -> bool:
+    return _looks_like_fact_concept_overview_request(text) or _looks_like_generic_building_concept_followup(text)
+
+
+def _build_effective_fact_concept_query(message: str, metadata: Dict[str, Any], prior_state: Dict[str, Any]) -> str:
+    facts = extract_retrieved_facts(
+        metadata,
+        prior_state,
+        (metadata or {}).get("retrieved_facts"),
+        (prior_state or {}).get("aggregated_data"),
+        (prior_state or {}).get("agent_data"),
+    )
+    terms = [str(message or "").strip()]
+    for key, label in (
+        ("ventilation_type", "current ventilation type"),
+        ("heating_system", "current heating system"),
+        ("energy_class", "current energy class"),
+        ("energy_performance", "current energy performance"),
+        ("specific_energy_use", "current specific energy use"),
+        ("primary_energy_number", "current primary energy number"),
+        ("electricity_use", "current electricity use"),
+    ):
+        value = facts.get(key)
+        if _fact_present(value):
+            terms.append(f"{label}: {value}")
+    if re.search(r"\b(?:ventilation|ventiallation|ventillation|ftx|fmed)\b", str(message or "").lower()):
+        terms.append("Swedish apartment building ventilation types F FT FTX self-draught heat recovery")
+    if re.search(r"\b(?:heating|district\s+heating|fj[aä]rrv[aä]rme)\b", str(message or "").lower()):
+        terms.append("Swedish apartment building heating systems district heating heat pump direct electric")
+    if re.search(r"\b(?:energy\s+class|energy\s+performance|energy\s+index|specific\s+energy|primary\s+energy)\b", str(message or "").lower()):
+        terms.append("Swedish energy declaration metrics energy class A to G energy performance primary energy number specific energy use")
+    return " ".join(part for part in terms if part)
+
+
 def _requested_fact_specs(user_input: Optional[str]) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
     lowered = str(user_input or "").lower()
     if not lowered.strip():
+        return []
+    if _looks_like_fact_concept_overview_request(lowered):
         return []
 
     specs: List[Tuple[str, str, Optional[str], Optional[str]]] = []
@@ -3001,6 +3097,7 @@ def understand_context_node(state: GraphState) -> GraphState:
         ctx["parsed_intent"] = " ; ".join(intent_list) if intent_list else None
 
     current_message_is_advice = _looks_like_building_ecm_advice(state.get("last_message"))
+    current_message_is_fact_concept_overview = _looks_like_fact_concept_hybrid_request(state.get("last_message"))
 
     if _looks_like_personal_energy_advice(state.get("last_message")):
         normalized_intents = [str(item).strip().lower() for item in (ctx.get("intent_list") or [])]
@@ -3031,6 +3128,28 @@ def understand_context_node(state: GraphState) -> GraphState:
             print("[understand_context] promoted ECM advice follow-up to SQL + vector intent", flush=True)
         else:
             print("[understand_context] ECM advice needs building context; SQL gate will request address", flush=True)
+
+    if current_message_is_fact_concept_overview:
+        if _has_building_context_for_advice(state.get("metadata") or {}, prior_state):
+            ctx["intent_list"] = ["SQL database", "vector database"]
+            ctx["parsed_intent"] = "SQL database ; vector database"
+            ctx["effective_query"] = _build_effective_fact_concept_query(
+                state.get("last_message") or "",
+                state.get("metadata") or {},
+                prior_state,
+            )
+            ctx["answer_focus"] = state.get("last_message") or ""
+            ctx["ambiguous"] = False
+            ctx["ambigious"] = False
+            print("[understand_context] promoted fact concept overview to SQL + vector intent", flush=True)
+        else:
+            normalized_intents = [str(item).strip().lower() for item in (ctx.get("intent_list") or [])]
+            if not normalized_intents or normalized_intents == ["sql database"]:
+                ctx["intent_list"] = ["vector database"]
+                ctx["parsed_intent"] = "vector database"
+                ctx["ambiguous"] = False
+                ctx["ambigious"] = False
+            print("[understand_context] fact concept overview stays vector-only without building context", flush=True)
 
     address_location_hint = _extract_metadata_location_hint(ctx)
 

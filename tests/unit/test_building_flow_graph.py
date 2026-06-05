@@ -406,6 +406,159 @@ def test_understand_context_keeps_general_ecm_question_vector_only():
     assert "effective_query" not in result["context"]
 
 
+def test_understand_context_promotes_ventilation_type_overview_with_building_context_to_hybrid():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "what are the other types of ventilation systems?",
+            "messages": [
+                {"role": "user", "content": "what is my ventilation system?"},
+                {
+                    "role": "assistant",
+                    "classification": "building_specific",
+                    "content": "Building ID: 18-80-SKRIKAN4-1\nYour building's ventilation type is Självdrag.",
+                },
+                {"role": "user", "content": "what are the other types of ventilation systems?"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Sveavägen 17",
+                    "address_from_user": "Sveavägen 17",
+                    "byggnadsid": "18-80-SKRIKAN4-1",
+                    "retrieved_facts": {
+                        "ventilation_type": "Självdrag",
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "SQL database ; vector database"
+    assert result["context"]["intent_list"] == ["SQL database", "vector database"]
+    assert "current ventilation type: Självdrag" in result["context"]["effective_query"]
+    assert "ventilation types" in result["context"]["effective_query"]
+    assert result["metadata"]["address"] == "Sveavägen 17"
+
+
+def test_understand_context_promotes_building_concept_definition_followup_to_hybrid():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "vector database",
+            "intents": ["vector database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "what does FTX mean?",
+            "messages": [
+                {"role": "user", "content": "what is my ventilation system?"},
+                {
+                    "role": "assistant",
+                    "classification": "building_specific",
+                    "content": "Building ID: 01-80-FILOSOFEN2-3\nYour building's ventilation type is FTX.",
+                },
+                {"role": "user", "content": "what does FTX mean?"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Professorsslingan 51",
+                    "byggnadsid": "01-80-FILOSOFEN2-3",
+                    "retrieved_facts": {
+                        "ventilation_type": "FTX",
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "SQL database ; vector database"
+    assert result["context"]["intent_list"] == ["SQL database", "vector database"]
+    assert "current ventilation type: FTX" in result["context"]["effective_query"]
+
+
+def test_understand_context_promotes_generic_quality_followup_to_hybrid_with_building_context():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "vector database",
+            "intents": ["vector database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "is that good?",
+            "messages": [
+                {"role": "user", "content": "what is my energy class?"},
+                {
+                    "role": "assistant",
+                    "classification": "building_specific",
+                    "content": "Building ID: 01-80-FILOSOFEN2-3\nYour building's energy class is B.",
+                },
+                {"role": "user", "content": "is that good?"},
+            ],
+            "metadata": {},
+            "session_state": {
+                "metadata": {
+                    "address": "Professorsslingan 51",
+                    "byggnadsid": "01-80-FILOSOFEN2-3",
+                    "retrieved_facts": {
+                        "energy_class": "B",
+                        "energy_performance": 63,
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "SQL database ; vector database"
+    assert result["context"]["intent_list"] == ["SQL database", "vector database"]
+    assert "current energy class: B" in result["context"]["effective_query"]
+    assert "current energy performance: 63" in result["context"]["effective_query"]
+
+
+def test_understand_context_keeps_ventilation_type_overview_vector_only_without_building_context():
+    module = import_building_flow_graph_module()
+    DummyParseIntentAgent.result = {
+        "context": {
+            "parsed_intent": "SQL database",
+            "intents": ["SQL database"],
+            "address": None,
+            "ambigious": False,
+        }
+    }
+
+    result = module.understand_context_node(
+        {
+            "last_message": "what are the other types of ventilation systems?",
+            "messages": [{"role": "user", "content": "what are the other types of ventilation systems?"}],
+            "metadata": {},
+            "session_state": {},
+        }
+    )
+
+    assert result["context"]["parsed_intent"] == "vector database"
+    assert result["context"]["intent_list"] == ["vector database"]
+    assert "effective_query" not in result["context"]
+
+
 def test_understand_context_keeps_stored_address_when_new_turn_omits_it():
     module = import_building_flow_graph_module()
     DummyParseIntentAgent.result = {
@@ -2828,6 +2981,19 @@ def test_llm_summarizer_translates_oden_ventilation_fields_for_beginners():
     assert "epc_venttypftx" not in result["final_response"]
     assert "Energy class" not in result["final_response"]
     assert result["metadata"]["response_fallback"]["reason"] == "direct_fact_response_targeted"
+
+
+def test_targeted_fact_response_does_not_hijack_ventilation_type_overview_question():
+    module = import_building_flow_graph_module()
+
+    response = module._targeted_building_fact_response(
+        user_input="what are the other types of ventilation systems?",
+        current_address="Sveavägen 17",
+        building_id="18-80-SKRIKAN4-1",
+        facts={"ventilation_type": "Självdrag"},
+    )
+
+    assert response is None
 
 
 def test_llm_summarizer_translates_oden_heating_fields_for_beginners():
