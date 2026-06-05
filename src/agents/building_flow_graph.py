@@ -1074,7 +1074,9 @@ ECM_ADVICE_PATTERNS = (
     r"\becms?\b",
     r"\benergy conservation measures?\b",
     r"\benergy efficiency measures?\b",
+    r"\befficiency measures?\b",
     r"\bconservation measures?\b",
+    r"\b(?:measures?|upgrades?|retrofits?|ecms?)\s+for\b",
     r"\brelevant\s+(?:measures?|upgrades?|retrofits?|ecms?)\b",
     r"\bsuitable\s+(?:measures?|upgrades?|retrofits?|ecms?)\b",
     r"\bwhich\s+(?:measures?|upgrades?|retrofits?|ecms?)\b",
@@ -1414,12 +1416,323 @@ def _format_fact_value(value: Any, unit: Optional[str] = None) -> str:
     return f"{text} {unit}" if unit and text else text
 
 
+def _format_fact_value_for_user(key: str, value: Any, unit: Optional[str] = None) -> str:
+    if key == "ventilation_type":
+        normalized = str(value or "").strip().upper()
+        if normalized == "FMED":
+            return "FMED (mechanical exhaust ventilation with heat recovery)"
+        if normalized == "F WITH HEAT RECOVERY":
+            return "F with heat recovery (mechanical exhaust ventilation with heat recovery)"
+    return _format_fact_value(value, unit)
+
+
+FACT_CONCEPTS: Tuple[Dict[str, Any], ...] = (
+    {
+        "key": "energy_class",
+        "label": "energy class",
+        "patterns": (r"\benergy\s+class\b", r"\benergiklass\b"),
+        "explanation": (
+            "Energy classes usually run from A to G, where A is best and G is weakest; "
+            "class {value} means there is likely room to improve the building's energy performance."
+        ),
+    },
+    {
+        "key": "energy_performance",
+        "label": "declared energy performance",
+        "patterns": (r"\benergy\s+performance\b", r"\benergiprestanda\b"),
+        "unit": "kWh/m2-year",
+        "explanation": (
+            "Energy performance is the building's annual energy use per square meter of heated area. "
+            "Lower numbers generally mean a more energy-efficient building."
+        ),
+    },
+    {
+        "key": "specific_energy_use",
+        "label": "specific energy use",
+        "patterns": (r"\benergy\s+index\b", r"\bspecific\s+energy\s+use\b", r"\beindex\b"),
+        "unit": "kWh/m2-year",
+        "preface": "I interpret energy index as specific energy use.",
+        "explanation": (
+            "Specific energy use is an annual kWh per square meter number, which makes buildings of different sizes easier to compare. "
+            "Lower is generally better."
+        ),
+    },
+    {
+        "key": "primary_energy_number",
+        "label": "primary energy number",
+        "patterns": (r"\bprimary\s+energy\b", r"\bprimary\s+energy\s+number\b", r"\bprim[aä]renergital\b"),
+        "unit": "kWh/m2-year",
+        "explanation": (
+            "The primary energy number is the official weighted energy figure used in Swedish energy-class rules. "
+            "Lower is generally better."
+        ),
+    },
+    {
+        "key": "electricity_use",
+        "label": "total electricity consumption",
+        "patterns": (r"\b(?:total\s+)?electricity\s+(?:consumption|use|usage)\b", r"\bel(?:f[oö]rbrukning)?\b"),
+        "unit": "kWh/year",
+        "explanation": (
+            "This is annual electricity use in the building record. "
+            "Depending on the data source, it may describe shared/property electricity rather than every apartment's household electricity."
+        ),
+    },
+    {
+        "key": "heating_system",
+        "label": "heating system",
+        "patterns": (r"\bheating\s+system\b", r"\bmain\s+heating\b", r"\buppv[aä]rmning(?:ssystem)?\b", r"\bv[aä]rmesystem\b"),
+        "explanation": "The heating system is how the building produces or receives heat for space heating and hot water.",
+    },
+    {
+        "key": "ventilation_type",
+        "label": "ventilation type",
+        "patterns": (
+            r"\bventilation\b",
+            r"\bventiallation\b",
+            r"\bventillation\b",
+            r"\bftx\b",
+            r"\bfmed\b",
+            r"\bventilation\s+system\b",
+            r"\bventiallation\s+system\b",
+            r"\bventillation\s+system\b",
+        ),
+        "explanation": "Ventilation matters because it affects air quality, comfort, heat loss, and fan electricity.",
+    },
+    {
+        "key": "construction_year",
+        "label": "construction year",
+        "patterns": (r"\b(?:construction|built|build)\s+year\b", r"\bwhen\s+was\b.*\b(?:built|constructed)\b"),
+        "explanation": (
+            "The construction year gives useful context about likely original insulation, windows, and ventilation design, "
+            "but renovations can change performance a lot."
+        ),
+    },
+    {
+        "key": "energy_declaration_year",
+        "label": "energy declaration year",
+        "patterns": (r"\benergy\s+declaration\s+year\b", r"\bdeclaration\s+year\b", r"\bepc\s+year\b"),
+        "explanation": (
+            "This is the year the energy declaration data was approved. "
+            "If the building has been renovated since then, the current performance may be different."
+        ),
+    },
+    {
+        "key": "district_heating_space_heating",
+        "label": "district heating for space heating",
+        "patterns": (r"\bdistrict\s+heating\b.*\bspace\s+heating\b", r"\bspace\s+heating\b"),
+        "unit": "kWh/year",
+        "explanation": "This is the heat used to warm apartments and common areas, separate from domestic hot water.",
+    },
+    {
+        "key": "district_heating_domestic_hot_water",
+        "label": "district heating for domestic hot water",
+        "patterns": (r"\bdistrict\s+heating\b.*\bhot\s+water\b", r"\bdomestic\s+hot\s+water\b"),
+        "unit": "kWh/year",
+        "explanation": "This is the heat used for tap and shower hot water.",
+    },
+    {
+        "key": "district_heating_use",
+        "label": "total district heating use",
+        "patterns": (r"\btotal\s+district\s+heating\b", r"\bdistrict\s+heating\s+(?:consumption|use|usage)\b"),
+        "unit": "kWh/year",
+        "explanation": (
+            "This is annual purchased district heat for the building. "
+            "High use can come from space heating, domestic hot water, control settings, or heat losses."
+        ),
+    },
+    {
+        "key": "epc_egenatemp",
+        "label": "Atemp/heated area",
+        "patterns": (r"\barea\b", r"\batemp\b", r"\bheated\s+area\b"),
+        "unit": "m2",
+        "explanation": "Atemp is the heated floor area used in Swedish energy declarations.",
+    },
+)
+
+FACT_CONCEPT_BY_KEY: Dict[str, Dict[str, Any]] = {str(concept["key"]): concept for concept in FACT_CONCEPTS}
+
+DIRECT_FACT_SPECS: Tuple[Tuple[str, str, Tuple[str, ...], Optional[str], Optional[str]], ...] = tuple(
+    (
+        str(concept["key"]),
+        str(concept["label"]),
+        tuple(concept.get("patterns") or ()),
+        concept.get("unit"),
+        concept.get("preface"),
+    )
+    for concept in FACT_CONCEPTS
+)
+
+FACT_VALUE_EXPLANATIONS: Dict[str, Dict[str, str]] = {
+    "ventilation_type": {
+        "FMED": (
+            "FMED means mechanical exhaust ventilation with heat recovery: fans remove used indoor air, "
+            "and some of that outgoing heat is recovered instead of being wasted."
+        ),
+        "F WITH HEAT RECOVERY": (
+            "F with heat recovery means mechanical exhaust ventilation where some heat is recovered from outgoing air."
+        ),
+        "FTX": (
+            "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery, "
+            "so outgoing air helps preheat incoming fresh air."
+        ),
+        "FT": "FT ventilation means mechanical supply and exhaust ventilation without heat recovery.",
+        "F": "F ventilation means mechanical exhaust ventilation, where fans remove indoor air.",
+        "S": "Self-draught ventilation relies mainly on natural pressure and temperature differences.",
+        "SJALVDRAG": "Self-draught ventilation relies mainly on natural pressure and temperature differences.",
+        "SJÄLVDRAG": "Self-draught ventilation relies mainly on natural pressure and temperature differences.",
+    },
+    "heating_system": {
+        "DISTRICT HEATING": (
+            "District heating means heat is produced centrally and delivered to the building through hot water pipes. "
+            "The main savings usually come from controls, balancing, hot water, and reducing heat losses."
+        ),
+    },
+}
+
+
+def _fact_value_explanation_keys(value: Any) -> List[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    keys = [raw.upper()]
+    folded = _ascii_fold(raw)
+    if folded:
+        keys.append(folded.upper())
+    return list(dict.fromkeys(keys))
+
+
+def _value_specific_fact_explanation(key: str, value: Any) -> Optional[str]:
+    explanations = FACT_VALUE_EXPLANATIONS.get(key) or {}
+    for candidate in _fact_value_explanation_keys(value):
+        if candidate in explanations:
+            return explanations[candidate]
+    return None
+
+
+PROFILE_FACT_LABEL_RE = re.compile(
+    r"(?im)^\s*(?:energy class|declared energy performance|specific energy use|primary energy number|"
+    r"energy declaration year|construction year|heating system|ventilation|electricity consumption|"
+    r"district heating for space heating|district heating for domestic hot water|total district heating use)\s*:"
+)
+
+
+def _ventilation_explanation(value: Any) -> Optional[str]:
+    return _value_specific_fact_explanation("ventilation_type", value)
+
+
+def _plain_language_fact_explanation(key: str, value: Any) -> Optional[str]:
+    concept = FACT_CONCEPT_BY_KEY.get(key)
+    if not concept:
+        return None
+
+    value_specific = _value_specific_fact_explanation(key, value)
+    concept_explanation = str(concept.get("explanation") or "").strip()
+    if concept_explanation:
+        concept_explanation = concept_explanation.format(value=_format_fact_value_for_user(key, value))
+
+    if value_specific and concept_explanation and concept_explanation not in value_specific:
+        return f"{value_specific} {concept_explanation}"
+    return value_specific or concept_explanation or None
+
+
+def _requested_fact_specs(user_input: Optional[str]) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+    lowered = str(user_input or "").lower()
+    if not lowered.strip():
+        return []
+
+    specs: List[Tuple[str, str, Optional[str], Optional[str]]] = []
+    for key, label, patterns, unit, preface in DIRECT_FACT_SPECS:
+        if any(re.search(pattern, lowered) for pattern in patterns):
+            specs.append((key, label, unit, preface))
+
+    if re.search(r"\bdistrict\s+heating\b", lowered) and re.search(
+        r"\b(?:breakdown|split|space\s+heating|hot\s+water)\b",
+        lowered,
+    ):
+        for extra in (
+            ("district_heating_space_heating", "district heating for space heating", "kWh/year", None),
+            (
+                "district_heating_domestic_hot_water",
+                "district heating for domestic hot water",
+                "kWh/year",
+                None,
+            ),
+        ):
+            if not any(key == extra[0] for key, *_ in specs):
+                specs.append(extra)
+
+    if (
+        re.search(r"\b(?:area|atemp|heated\s+area)\b", lowered)
+        and not any(key == "epc_egenatemp" for key, *_ in specs)
+    ):
+        specs.append(("epc_egenatemp", "Atemp/heated area", "m2", None))
+
+    return specs
+
+
+def _response_looks_like_full_profile(text: Optional[str]) -> bool:
+    if not isinstance(text, str) or not text.strip():
+        return False
+    return len(PROFILE_FACT_LABEL_RE.findall(text)) >= 5
+
+
+def _targeted_building_fact_response(
+    *,
+    user_input: str,
+    current_address: str,
+    building_id: str,
+    facts: Dict[str, Any],
+) -> Optional[str]:
+    specs = _requested_fact_specs(user_input)
+    if not specs:
+        return None
+
+    lines: List[str] = []
+    if building_id and building_id != "building_id_not_available":
+        lines.append(f"Building ID: {building_id}")
+
+    fact_lines: List[str] = []
+    explanations: List[str] = []
+    for key, label, unit, preface in specs:
+        value = facts.get(key)
+        if value in (None, "", [], {}):
+            value = _first_fact_value(facts, (key,))
+        if value in (None, "", [], {}):
+            continue
+        if preface and preface not in explanations:
+            explanations.append(preface)
+        fact_lines.append(f"Your building's {label} is {_format_fact_value_for_user(key, value, unit)}.")
+        explanation = _plain_language_fact_explanation(key, value)
+        if explanation and explanation not in explanations:
+            explanations.append(explanation)
+
+    if not fact_lines:
+        return None
+
+    if lines:
+        lines.append("")
+    lines.extend(fact_lines[:3])
+    if explanations:
+        lines.extend(explanations[:3])
+    return "\n".join(lines)
+
+
 def _deterministic_building_fact_response(
     *,
+    user_input: str = "",
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
 ) -> str:
+    targeted = _targeted_building_fact_response(
+        user_input=user_input,
+        current_address=current_address,
+        building_id=building_id,
+        facts=facts,
+    )
+    if targeted:
+        return targeted
+
     lines: List[str] = []
     if current_address:
         lines.append(str(current_address))
@@ -1563,6 +1876,25 @@ def _building_fact_summary_for_ecm(facts: Dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
+def _short_building_fact_summary_for_advice(facts: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    for key, label, unit in (
+        ("energy_class", "energy class", None),
+        ("energy_performance", "energy performance", "kWh/m2-year"),
+        ("heating_system", "heating", None),
+        ("ventilation_type", "ventilation", None),
+    ):
+        value = (facts or {}).get(key)
+        if _fact_present(value):
+            parts.append(f"{label}: {_format_fact_value(value, unit)}")
+    return "; ".join(parts[:4])
+
+
+def _looks_like_ventilation_focused_request(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    return bool(re.search(r"\b(?:ventilation|ftx|airflow|air\s+flow|fan|filters?)\b", lowered))
+
+
 def _response_has_ecm_recommendations(text: Optional[str]) -> bool:
     lowered = str(text or "").lower()
     if not lowered.strip():
@@ -1595,6 +1927,7 @@ def _response_has_ecm_recommendations(text: Optional[str]) -> bool:
 
 def _deterministic_ecm_response(
     *,
+    user_input: str = "",
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
@@ -1605,14 +1938,42 @@ def _deterministic_ecm_response(
     if current_address:
         lines.append(f"Address: {current_address}")
 
-    summary = _building_fact_summary_for_ecm(facts)
+    summary = _short_building_fact_summary_for_advice(facts)
     if summary:
-        lines.extend(["", f"Known building facts used: {summary}."])
+        lines.extend(["", f"Based on the known facts: {summary}."])
 
     heating = str((facts or {}).get("heating_system") or "").lower()
     ventilation = str((facts or {}).get("ventilation_type") or "").lower()
     has_district_heating = "district heating" in heating
     has_ftx = "ftx" in ventilation
+    ventilation_explanation = _ventilation_explanation((facts or {}).get("ventilation_type"))
+
+    if _looks_like_ventilation_focused_request(user_input):
+        if ventilation_explanation:
+            lines.extend(["", ventilation_explanation])
+        lines.extend(
+            [
+                "",
+                "Energy Conservation Measures (ECMs)",
+                "",
+                "1. Energy conservation / reduce demand and waste",
+                "- Check whether airflow or operating hours are higher than needed while still meeting indoor-air requirements.",
+                "",
+                "2. Energy efficiency / improve equipment and building systems",
+                (
+                    "- Commission the FTX system: clean/replace filters, verify airflow balance, heat-recovery function, bypass settings, and fan operation."
+                    if has_ftx
+                    else "- Verify ventilation airflows, fan operation, filters, and pressure settings; avoid over-ventilation while maintaining indoor air quality."
+                ),
+                "",
+                "3. Energy management measures / controls, monitoring, and routines",
+                "- Track fan electricity, complaints, filter pressure, and heat-recovery/temperature trends so faults are caught early.",
+                "",
+                "4. Renewable energy / add supply after demand is reduced",
+                "- Renewables are not usually the first ventilation measure; consider solar PV only after ventilation demand, controls, and fan efficiency are optimized.",
+            ]
+        )
+        return "\n".join(lines)
 
     lines.extend(
         [
@@ -1620,8 +1981,7 @@ def _deterministic_ecm_response(
             "Energy Conservation Measures (ECMs)",
             "",
             "1. Energy conservation / reduce demand and waste",
-            "- Start with indoor-temperature and comfort mapping before raising heat output. Check overheated apartments, open windows during winter, stairwell/garage heat losses, and resident routines.",
-            "- Reduce domestic-hot-water waste: check circulation temperatures, leaking taps, long waits for hot water, and low-flow fixtures where comfort allows.",
+            "- Map indoor temperatures, overheating, open-window behavior, and domestic-hot-water waste before adding more heat.",
             "",
             "2. Energy efficiency / improve equipment and building systems",
             (
@@ -1629,21 +1989,14 @@ def _deterministic_ecm_response(
                 if has_district_heating
                 else "- Review the main heating plant, pumps, valves, and heat distribution so delivered heat matches actual demand."
             ),
-            "- Balance the radiator/heating distribution so cold apartments are not solved by overheating the whole building.",
-            (
-                "- Commission the FTX system: check heat-recovery function, filters, airflow balance, bypass settings, and fan operation."
-                if has_ftx
-                else "- Verify ventilation airflows and fan operation; avoid over-ventilation while maintaining indoor air quality."
-            ),
             "",
             "3. Energy management measures / controls, monitoring, and routines",
-            "- Track monthly and, if possible, hourly heat, hot-water, and electricity use against outdoor temperature so faults show up quickly.",
-            "- Set a seasonal operations routine: autumn valve checks, heating-curve review, filter replacement, alarm review, and board follow-up of kWh/m2.",
+            "- Track heat, hot water, electricity, indoor temperatures, and complaints against outdoor temperature; use this for seasonal tuning.",
             "",
             "4. Renewable energy / add supply after demand is reduced",
-            "- Assess solar PV only after the low-cost heat, hot-water, controls, and ventilation measures are understood; check roof area, shading, structural limits, grid connection, and self-consumption.",
+            "- Assess solar PV after low-cost demand, efficiency, and control measures are understood; check roof area, shading, structure, grid connection, and self-consumption.",
             "",
-            "Good first step: run a 2-4 week diagnostic using indoor temperatures, district-heating/hot-water trends, ventilation settings, and occupant complaints, then prioritize the measures with measured evidence.",
+            "Good first step: run a 2-4 week diagnostic, then prioritize measures with measured evidence.",
         ]
     )
     return "\n".join(lines)
@@ -4000,11 +4353,34 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         if _is_model_error_response(answer):
             metadata = _deep_merge(metadata, {"response_model_error": answer})
             answer = _deterministic_building_fact_response(
+                user_input=user_input_for_response,
                 current_address=str(current_address),
                 building_id=str(building_id),
                 facts=retrieved_facts,
             )
             print("[llm_summarizer] model error; used deterministic building-fact fallback", flush=True)
+        targeted_fact_answer = _targeted_building_fact_response(
+            user_input=user_input_for_response,
+            current_address=str(current_address),
+            building_id=str(building_id),
+            facts=retrieved_facts,
+        )
+        if targeted_fact_answer and not ecm_request:
+            fallback_reason = (
+                "direct_fact_response_was_too_broad"
+                if _response_looks_like_full_profile(answer)
+                else "direct_fact_response_targeted"
+            )
+            metadata = _deep_merge(
+                metadata,
+                {
+                    "response_fallback": {
+                        "reason": fallback_reason,
+                    }
+                },
+            )
+            answer = targeted_fact_answer
+            print("[llm_summarizer] used targeted direct-fact response", flush=True)
         if ecm_request and not _response_has_ecm_recommendations(answer):
             metadata = _deep_merge(
                 metadata,
@@ -4021,13 +4397,14 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
                 },
             )
             answer = _deterministic_ecm_response(
+                user_input=user_input_for_response,
                 current_address=str(current_address),
                 building_id=str(building_id),
                 facts=retrieved_facts,
             )
             print("[llm_summarizer] used deterministic ECM hierarchy fallback", flush=True)
         answer = ensure_building_identifier_in_response(answer, building_id)
-        answer = apply_response_safety_notes(answer, metadata)
+        answer = apply_response_safety_notes(answer, metadata, user_message=user_input_for_response)
         print("[llm_summarizer] generate_response ✓", flush=True)
     except Exception as e:
         answer = "Sorry, summarizer error."

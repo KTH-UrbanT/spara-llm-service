@@ -763,7 +763,29 @@ def compute_uncertainty(
     }
 
 
-def apply_response_safety_notes(response_text: str, metadata: Dict[str, Any]) -> str:
+def _missing_fact_relevant_to_message(missing_fact: str, user_message: Optional[str]) -> bool:
+    lowered = (user_message or "").lower()
+    if missing_fact == "renovation_information":
+        return bool(
+            re.search(
+                r"\b(?:renovation|renovated|retrofit|upgrade|insulation|window|windows|facade|fa[cç]ade|roof|envelope)\b",
+                lowered,
+            )
+        )
+    if missing_fact == "ventilation_type":
+        return bool(re.search(r"\b(?:ventilation|ftx|airflow|fan|filters?)\b", lowered))
+    if missing_fact == "heating_system":
+        return bool(re.search(r"\b(?:heating|heat|district\s+heating|fj[aä]rrv[aä]rme)\b", lowered))
+    if missing_fact == "electricity_use":
+        return bool(re.search(r"\b(?:electricity|el|power|solar|pv)\b", lowered))
+    return True
+
+
+def apply_response_safety_notes(
+    response_text: str,
+    metadata: Dict[str, Any],
+    user_message: Optional[str] = None,
+) -> str:
     text = (response_text or "").strip()
     metadata = metadata or {}
     additions: List[str] = []
@@ -781,7 +803,11 @@ def apply_response_safety_notes(response_text: str, metadata: Dict[str, Any]) ->
             )
 
     uncertainty = metadata.get("uncertainty") or {}
-    missing = uncertainty.get("missing_facts") or []
+    missing = [
+        fact
+        for fact in (uncertainty.get("missing_facts") or [])
+        if _missing_fact_relevant_to_message(str(fact), user_message)
+    ]
     if missing:
         additions.append(
             "I do not have confirmed data for: " + ", ".join(missing[:4]) + "."

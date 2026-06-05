@@ -2698,8 +2698,9 @@ def test_llm_summarizer_uses_structured_fallback_on_rate_limit():
 
     assert "Error: Rate limit exceeded" not in result["final_response"]
     assert "Building ID: 01-26-SPACKELN6-1" in result["final_response"]
-    assert "Declared energy performance: 86 kWh/m2-year" in result["final_response"]
-    assert "Primary energy number: 155 kWh/m2-year" in result["final_response"]
+    assert "Your building's declared energy performance is 86 kWh/m2-year." in result["final_response"]
+    assert "Energy performance is the building's annual energy use per square meter of heated area." in result["final_response"]
+    assert "Primary energy number: 155 kWh/m2-year" not in result["final_response"]
 
 
 def test_llm_summarizer_fallback_labels_district_heating_breakdown():
@@ -2710,8 +2711,8 @@ def test_llm_summarizer_fallback_labels_district_heating_breakdown():
 
     result = module.llm_summarizer_node(
         {
-            "last_message": "what is my energy performance?",
-            "messages": [{"role": "user", "content": "what is my energy performance?"}],
+            "last_message": "what is the district heating breakdown?",
+            "messages": [{"role": "user", "content": "what is the district heating breakdown?"}],
             "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
             "metadata": {"address": "Examplegatan 10"},
             "aggregated_data": {
@@ -2730,8 +2731,168 @@ def test_llm_summarizer_fallback_labels_district_heating_breakdown():
 
     assert "Total district heating use" not in result["final_response"]
     assert "District heating use: 1169500" not in result["final_response"]
-    assert "District heating for space heating: 1169500 kWh/year" in result["final_response"]
-    assert "District heating for domestic hot water: 33300 kWh/year" in result["final_response"]
+    assert "Your building's district heating for space heating is 1169500 kWh/year." in result["final_response"]
+    assert "Your building's district heating for domestic hot water is 33300 kWh/year." in result["final_response"]
+
+
+def test_llm_summarizer_replaces_overbroad_profile_for_direct_electricity_question():
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "Building ID: 01-84-FURIREN2-1\n\n"
+        "Energy class: E\n"
+        "Declared energy performance: 136 kWh/m2-year\n"
+        "Specific energy use: 129 kWh/m2-year\n"
+        "Primary energy number: 103 kWh/m2-year\n"
+        "Energy declaration year: 2019\n"
+        "Construction year: 1963\n"
+        "Heating system: district heating\n"
+        "Ventilation: FTX\n"
+        "Electricity consumption: 121667 kWh/year"
+    )
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what is total electricity consumption of my building?",
+            "messages": [{"role": "user", "content": "what is total electricity consumption of my building?"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {"address": "Armégatan 32A"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-84-FURIREN2-1",
+                        "address": "Armégatan 32A",
+                        "epc_el_calc": 121667,
+                        "epc_egienergiklass2020_calc": "E",
+                        "epc_egienergiprestanda": 136,
+                        "epc_egispecifikenergianvandning_calc": 129,
+                        "epc_egiprimarenergital2020_calc": 103,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "Your building's total electricity consumption is 121667 kWh/year." in result["final_response"]
+    assert "This is annual electricity use in the building record." in result["final_response"]
+    assert "Energy class: E" not in result["final_response"]
+    assert "Ventilation: FTX" not in result["final_response"]
+    assert "renovation_information" not in result["final_response"]
+    assert result["metadata"]["response_fallback"]["reason"] == "direct_fact_response_was_too_broad"
+
+
+def test_targeted_fact_response_explains_energy_class_for_beginners():
+    module = import_building_flow_graph_module()
+
+    response = module._targeted_building_fact_response(
+        user_input="what is my building's energy class?",
+        current_address="Armégatan 32A",
+        building_id="01-84-FURIREN2-1",
+        facts={"energy_class": "E"},
+    )
+
+    assert "Your building's energy class is E." in response
+    assert "Energy classes usually run from A to G" in response
+    assert "class E means there is likely room to improve" in response
+
+
+def test_llm_summarizer_translates_oden_ventilation_fields_for_beginners():
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "Energy class is a rating of a building's energy performance."
+    )
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what is my ventilation system?",
+            "messages": [{"role": "user", "content": "what is my ventilation system?"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {"address": "Professorsslingan 51"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-80-FILOSOFEN2-3",
+                        "epc_idadr": "Professorsslingan 51",
+                        "epc_venttypf": "Nej",
+                        "epc_venttypft": "Nej",
+                        "epc_venttypftx": "Ja",
+                        "epc_venttypsjalvdrag": "Nej",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "Your building's ventilation type is FTX." in result["final_response"]
+    assert "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery" in result["final_response"]
+    assert "Ventilation matters because it affects air quality" in result["final_response"]
+    assert "epc_venttypftx" not in result["final_response"]
+    assert "Energy class" not in result["final_response"]
+    assert result["metadata"]["response_fallback"]["reason"] == "direct_fact_response_targeted"
+
+
+def test_llm_summarizer_translates_oden_heating_fields_for_beginners():
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "Energy class is a rating of a building's energy performance."
+    )
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what is my heating system?",
+            "messages": [{"role": "user", "content": "what is my heating system?"}],
+            "context": {"parsed_intent": "SQL database", "intent_list": ["SQL database"]},
+            "metadata": {"address": "Professorsslingan 51"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-80-FILOSOFEN2-3",
+                        "epc_idadr": "Professorsslingan 51",
+                        "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "Your building's heating system is district heating." in result["final_response"]
+    assert "District heating means heat is produced centrally" in result["final_response"]
+    assert "epc_huvudsakliguppvarmning_calc" not in result["final_response"]
+    assert "Energy class" not in result["final_response"]
+    assert result["metadata"]["response_fallback"]["reason"] == "direct_fact_response_targeted"
+
+
+def test_llm_summarizer_gives_focused_ftx_explanation_for_ventilation_measures():
+    module = import_building_flow_graph_module()
+
+    result = module.llm_summarizer_node(
+        {
+            "last_message": "what are efficiency measures for ventilation system?",
+            "messages": [{"role": "user", "content": "what are efficiency measures for ventilation system?"}],
+            "context": {
+                "parsed_intent": "SQL database ; vector database",
+                "intent_list": ["SQL database", "vector database"],
+            },
+            "metadata": {"address": "Armégatan 32A"},
+            "aggregated_data": {
+                "generic_sql": [
+                    {
+                        "byggnadsid": "01-84-FURIREN2-1",
+                        "address": "Armégatan 32A",
+                        "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                        "epc_venttypftx": "Ja",
+                        "epc_egienergiklass2020_calc": "E",
+                        "epc_egienergiprestanda": 136,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery" in result["final_response"]
+    assert "Commission the FTX system" in result["final_response"]
+    assert "Energy class:" not in result["final_response"]
+    assert "Electricity consumption:" not in result["final_response"]
+    assert "renovation_information" not in result["final_response"]
 
 
 def test_llm_summarizer_treats_epc_ventilation_electricity_and_date_as_confirmed():
