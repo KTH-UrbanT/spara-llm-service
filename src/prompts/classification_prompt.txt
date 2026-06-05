@@ -20,6 +20,10 @@ A) building_specific  → choose this whenever ANY of the following is true:
      • “at <street + number>”, “for <address>”, “I live at <address>”
      • a concrete BRF name: “BRF Sjöstaden 1”, “I live in BRF Solgläntan 1”
      • patterns like: “Main Street 12”, “Hammarby Allé 24”, “Objektidentitet …”
+     • Use judgment: a concrete BRF name must look like an actual proper name after BRF.
+       Do NOT treat “BRF” followed by a preposition, question word, verb, or descriptive phrase
+       as a BRF name. Examples that are NOT BRF names: “BRF with high heating bills”,
+       “BRF in Stockholm”, “BRF do we have”, “what is BRF”, “how many BRFs”.
   2) The message asks for facts, fields, records, or calculations about the user’s site:
      • “my building”, “our building”, “my apartment building”, “our property”
      • “our energy class”, “our energy performance”, “our ventilation”, “our heating system”
@@ -36,6 +40,9 @@ B) generic  → general knowledge or advice not tied to a specific site:
   • “What does energy class B mean?”  “How to reduce heat loss in old apartments?”
   • “Best ventilation practices?”
   • “We are a BRF in Stockholm. How can we reduce heating costs?”
+  • “We are a BRF with very high heating bills in winter. What can we do?”
+  • “What is BRF?”  “How many BRFs are in Stockholm?”
+  • “What are the home owner company names?”  “How many buildings does StockholmsHem have?”
   • “We have district heating. How can we reduce costs without big renovations?”
   • “Can you recommend common energy-efficiency measures for a BRF?”
   • “We have high heating bills.”
@@ -44,12 +51,18 @@ B) generic  → general knowledge or advice not tied to a specific site:
   A user may mention being a BRF member/board and still want generic advice when no concrete
   BRF name/address/building ID is provided. If a concrete BRF name is provided, route to
   building_specific so the system can resolve that BRF to building ID(s).
+  Public/statistical/entity questions about BRFs, homeowner companies, housing associations,
+  or organizations such as StockholmsHem are generic unless the user explicitly asks to query
+  the system's building database/portfolio or gives a concrete building/site identifier.
 
 C) conversational  → greetings, small talk, meta questions about the app/assistant.
   • “Hi, what is this?” “Who built you?” “Thanks!”
 
 D) cluster  → questions about MULTIPLE buildings, portfolios, or areas.
   • “Compare all buildings in Södermalm”, “Top 10 worst performers in our portfolio”, “Average for buildings in …”
+  • Use cluster for analysis over the system's building dataset or a user portfolio. Do not use
+    cluster for public factual questions such as “How many BRFs are in Stockholm?” or
+    “How many buildings does StockholmsHem have?”; those are generic.
 
 E) draft_energy_report → requests to generate, create, prepare, or download a draft energy report.
   • “Create a energy report for my building”
@@ -68,6 +81,8 @@ F) expert_handoff → requests to escalate the conversation to a human expert / 
 1) A concrete address/building ID or a request for the user’s own facts wins → **building_specific**.
 2) Broad advisory questions without a resolved building stay **generic**, even if the user says they
    represent a BRF. The answer can offer to personalize after receiving a BRF/address/building ID.
+   The word “BRF” alone is not a building identifier. Check whether the text after BRF is a real
+   association name; if it is a descriptive phrase or a question fragment, choose **generic**.
 3) If the user’s primary intent is to generate or download a draft report, choose **draft_energy_report**.
 4) If the user’s primary intent is to escalate to an expert or send the conversation to EKR, choose **expert_handoff** even if the prior conversation was about a building.
 5) If both building_specific and cluster signals appear, choose **cluster** (group request wins).

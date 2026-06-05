@@ -1,4 +1,5 @@
 from tests.support import fresh_import, stub_module
+from pathlib import Path
 
 
 class StubRouterAgent:
@@ -97,6 +98,23 @@ def import_agent_router_module():
         send_expert_handoff_email=lambda thread_id, messages, metadata: True,
     )
     return fresh_import("src.pipeline.agent_router")
+
+
+def test_classification_prompt_requires_brf_name_sanity_check():
+    prompt = Path("src/prompts/classification_prompt.txt").read_text(encoding="utf-8")
+
+    assert "a concrete BRF name must look like an actual proper name after BRF" in prompt
+    assert "BRF with high heating bills" in prompt
+    assert "BRF do we have" in prompt
+    assert "The word “BRF” alone is not a building identifier" in prompt
+
+
+def test_classification_prompt_keeps_public_brf_and_stockholmshem_questions_generic():
+    prompt = Path("src/prompts/classification_prompt.txt").read_text(encoding="utf-8")
+
+    assert "How many BRFs are in Stockholm" in prompt
+    assert "How many buildings does StockholmsHem have" in prompt
+    assert "Public/statistical/entity questions about BRFs" in prompt
 
 
 def test_routes_generic_requests():
@@ -411,6 +429,113 @@ def test_broad_brf_heating_cost_advice_overrides_building_classifier_to_generic(
     assert response["classification"] == "generic"
     assert response["route"] == "generic"
     assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_brf_with_heating_bills_without_name_stays_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "generic BRF heating bill advice"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "We are a BRF with very high heating bills in winter. What can we do?",
+            }
+        ],
+        last_message="We are a BRF with very high heating bills in winter. What can we do?",
+        metadata={},
+        thread_id="thread-broad-brf-winter-bills",
+    )
+
+    assert response["content"] == "generic BRF heating bill advice"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_public_brf_count_question_stays_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "There are about 5,700 BRFs in Stockholm municipality."
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "How many BRFs are in Stockholm?"}],
+        last_message="How many BRFs are in Stockholm?",
+        metadata={},
+        thread_id="thread-public-brf-count",
+    )
+
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_public_stockholmshem_building_count_stays_generic():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "generic StockholmsHem count answer"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "How many buildings StockholmsHem have?"}],
+        last_message="How many buildings StockholmsHem have?",
+        metadata={},
+        thread_id="thread-public-stockholmshem-count",
+    )
+
+    assert response["content"] == "generic StockholmsHem count answer"
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert metadata == {}
+    assert StubBuildingAgent.last_call is None
+
+
+def test_failed_brf_lookup_state_is_cleared_for_public_brf_question():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    StubGenericAgent.next_response = "BRF means bostadsrättsförening."
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {"role": "user", "content": "How many BRF do we have?"},
+            {
+                "role": "assistant",
+                "classification": "building_specific",
+                "content": "I could not find building addresses for BRF do we have.",
+            },
+            {"role": "user", "content": "what is BRF"},
+        ],
+        last_message="what is BRF",
+        metadata={
+            "brf_name": "do we have",
+            "brf_resolution": {"status": "not_found", "brf_name": "do we have"},
+            "clarification": {
+                "needed": True,
+                "reason": "brf_not_found",
+                "question_asked": "I could not find building addresses for BRF do we have.",
+                "resolved": False,
+            },
+        },
+        thread_id="thread-stale-brf-loop",
+    )
+
+    assert response["content"] == "BRF means bostadsrättsförening."
+    assert response["classification"] == "generic"
+    assert response["route"] == "generic"
+    assert "brf_name" not in metadata
+    assert "brf_resolution" not in metadata
+    assert "clarification" not in metadata
     assert StubBuildingAgent.last_call is None
 
 

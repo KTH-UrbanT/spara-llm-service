@@ -56,8 +56,9 @@ def test_building_response_prompt_requires_ecm_style_for_heating_cost_advice():
     assert "reduce heating costs" in prompt
     assert "energy pyramid hierarchy" in prompt
     assert "Energy conservation / reduce demand and waste" in prompt
-    assert "Energy efficiency / improve systems" in prompt
-    assert "Renewable energy / add renewable supply" in prompt
+    assert "Energy efficiency / improve equipment and building systems" in prompt
+    assert "Energy management measures / improve controls, monitoring" in prompt
+    assert "Renewable energy / add renewable supply after demand, efficiency, and management" in prompt
 
 
 def test_ensure_building_identifier_in_response_prefixes_missing_id():

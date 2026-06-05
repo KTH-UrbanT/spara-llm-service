@@ -241,9 +241,34 @@ ADDRESS_INTRO_RE = re.compile(
 BRF_NAME_RE = re.compile(
     r"\b(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+"
     r"([A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 .'\-]*?)"
-    r"(?=\s*(?:[,.;:!?]|$|\bwhat\b|\bwhich\b|\bhow\b|\bwhy\b|\bvad\b|\bhur\b|\bvilken\b|\bvilket\b|\bmed\b|\bwith\b))",
+    r"(?=\s*(?:[,.;:!?]|$|\bwhat\b|\bwhich\b|\bhow\b|\bwhy\b|\bdo\b|\bdoes\b|\bis\b|\bare\b|\bhave\b|\bhas\b|\bcan\b|\bcould\b|\bshould\b|\bwould\b|\bplease\b|\bvad\b|\bhur\b|\bvilken\b|\bvilket\b|\bmed\b|\bwith\b))",
     flags=re.IGNORECASE,
 )
+
+INVALID_BRF_NAME_START_RE = re.compile(
+    r"^(?:a|an|the|with|without|in|at|on|from|for|to|of|do|does|did|can|could|"
+    r"should|would|will|is|are|was|were|have|has|had|what|which|how|why|when|"
+    r"where|who|please|tell|give|show|list|count|many|home|owner|homeowner|"
+    r"housing|building|buildings|company|companies|municipality|kommun)\b",
+    flags=re.IGNORECASE,
+)
+
+INVALID_BRF_NAME_PHRASE_RE = re.compile(
+    r"\b(?:do\s+we\s+have|how\s+many|what\s+is\s+brf|home\s*owner|"
+    r"heating\s+bills?|heating\s+costs?|what\s+can\s+we\s+do|stockholmshem)\b",
+    flags=re.IGNORECASE,
+)
+
+STALE_BRF_CLARIFICATION_REASONS = {
+    "missing_brf_name",
+    "brf_not_found",
+    "brf_lookup_failed",
+}
+
+STALE_BRF_RESOLUTION_STATUSES = {
+    "not_found",
+    "lookup_error",
+}
 
 BUILDING_ID_RE = re.compile(
     r"\b\d{2}-\d{2}-[A-Za-zÅÄÖåäö0-9:_-]+-\d+\b",
@@ -731,6 +756,10 @@ def _clean_brf_name(value: Optional[str]) -> Optional[str]:
     ).strip(" .,:;!?\"'")
     if re.fullmatch(r"(?:in|at|on|from|i|på)\s+[A-Za-zÅÄÖåäö .'\-]+", cleaned, flags=re.IGNORECASE):
         return None
+    if INVALID_BRF_NAME_START_RE.search(cleaned):
+        return None
+    if INVALID_BRF_NAME_PHRASE_RE.search(cleaned):
+        return None
     return cleaned or None
 
 
@@ -854,8 +883,10 @@ def _select_brf_resolution_option(
         return None
 
     options = pending_resolution.get("options") or []
+    choice_match = re.fullmatch(r"(?:use\s+)?(?:option|choice|number|nr|#)?\s*(\d+)", text)
+    choice_text = choice_match.group(1) if choice_match else text
     for option in options:
-        if text == _normalize_selection_text(option.get("choice")):
+        if choice_text == _normalize_selection_text(option.get("choice")):
             return dict(option)
 
     for option in options:
@@ -888,6 +919,60 @@ def _has_resolved_brf_selection(metadata: Dict[str, Any]) -> bool:
     return bool(
         status in RESOLVED_BRF_STATUSES
         or metadata.get("selected_brf_building_id")
+    )
+
+
+def _metadata_has_failed_brf_lookup(metadata: Optional[Dict[str, Any]]) -> bool:
+    metadata = metadata or {}
+    clarification = metadata.get("clarification")
+    if isinstance(clarification, dict) and clarification.get("reason") in STALE_BRF_CLARIFICATION_REASONS:
+        return True
+
+    resolution = metadata.get("brf_resolution")
+    if isinstance(resolution, dict) and resolution.get("status") in STALE_BRF_RESOLUTION_STATUSES:
+        return True
+
+    return False
+
+
+def _clear_failed_brf_lookup_state(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    cleaned = dict(metadata or {})
+    clarification = cleaned.get("clarification")
+    if isinstance(clarification, dict) and clarification.get("reason") in STALE_BRF_CLARIFICATION_REASONS:
+        cleaned.pop("clarification", None)
+
+    resolution = cleaned.get("brf_resolution")
+    if isinstance(resolution, dict) and resolution.get("status") in STALE_BRF_RESOLUTION_STATUSES:
+        cleaned.pop("brf_resolution", None)
+        cleaned.pop("brf_name", None)
+
+    cleaned.pop("pending_brf_resolution", None)
+    return cleaned
+
+
+def _looks_like_brf_resolution_continuation(message: Optional[str]) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+
+    normalized = _normalize_selection_text(text)
+    return bool(
+        _extract_brf_name_from_text(text)
+        or _extract_building_id_from_text(text)
+        or _looks_like_compact_address(text, allow_four_digit_number=True)
+        or re.fullmatch(r"(?:use\s+)?(?:option|choice|number|nr|#)?\s*\d+", normalized)
+    )
+
+
+def _looks_like_new_question_away_from_brf_resolution(message: Optional[str]) -> bool:
+    text = str(message or "").strip()
+    if not text or _looks_like_brf_resolution_continuation(text):
+        return False
+
+    lowered = text.lower()
+    return bool(
+        "?" in text
+        or re.search(r"\b(?:what|how|why|when|where|which|who|tell|show|give|list|count)\b", lowered)
     )
 
 
@@ -1375,6 +1460,191 @@ def _deterministic_building_fact_response(
     lines.append(
         "I found the building record, but the response model is temporarily busy. "
         "Please retry shortly if you need a fuller explanation."
+    )
+    return "\n".join(lines)
+
+
+def _fact_present(value: Any) -> bool:
+    return value not in (None, "", [], {})
+
+
+def _first_fact_value(facts: Dict[str, Any], keys: Tuple[str, ...]) -> Any:
+    lower_map = {str(key).lower(): key for key in (facts or {}).keys()}
+    for key in keys:
+        original = lower_map.get(key.lower())
+        if original is not None and _fact_present((facts or {}).get(original)):
+            return facts.get(original)
+    return None
+
+
+def _normalize_frontend_building_metadata(
+    *,
+    metadata: Dict[str, Any],
+    retrieved_facts: Dict[str, Any],
+    current_address: str,
+    building_id: str,
+    identity_check: Dict[str, Any],
+    epc_record_address: Optional[str],
+) -> Dict[str, Any]:
+    normalized = dict(metadata or {})
+    facts = dict(retrieved_facts or {})
+    usable_building_id = (
+        str(building_id).strip()
+        if building_id and str(building_id).strip() != "building_id_not_available"
+        else None
+    )
+    requested_address = (
+        current_address
+        or normalized.get("requested_address")
+        or normalized.get("address_from_user")
+        or normalized.get("address")
+        or _first_fact_value(facts, ("address", "official_address", "epc_idadr"))
+        or (identity_check or {}).get("matched_address")
+        or ""
+    )
+    matched_address = (
+        (identity_check or {}).get("matched_address")
+        or epc_record_address
+        or _first_fact_value(facts, ("address", "official_address", "epc_idadr"))
+        or requested_address
+    )
+    matched_building_id = (
+        (identity_check or {}).get("matched_building_id")
+        or normalized.get("byggnadsid")
+        or normalized.get("building_id")
+        or usable_building_id
+    )
+
+    if usable_building_id:
+        normalized.setdefault("byggnadsid", usable_building_id)
+        facts.setdefault("byggnadsid", usable_building_id)
+        facts.setdefault("building_id", usable_building_id)
+    if requested_address:
+        normalized.setdefault("address", requested_address)
+        normalized.setdefault("address_from_user", requested_address)
+        normalized.setdefault("requested_address", requested_address)
+        facts.setdefault("address", requested_address)
+        facts.setdefault("address_from_user", requested_address)
+    if epc_record_address:
+        normalized.setdefault("epc_record_address", epc_record_address)
+        facts.setdefault("epc_idadr", epc_record_address)
+
+    existing_match = normalized.get("building_match") if isinstance(normalized.get("building_match"), dict) else {}
+    status = str((identity_check or {}).get("status") or "").lower()
+    normalized["building_match"] = _deep_merge(
+        existing_match,
+        {
+            "input_address": requested_address or existing_match.get("input_address"),
+            "matched_address": matched_address or existing_match.get("matched_address"),
+            "building_id": matched_building_id or existing_match.get("building_id"),
+            "match_confidence": "high" if status == "passed" else existing_match.get("match_confidence", "medium"),
+            "ambiguous": bool((identity_check or {}).get("ambiguous", False)),
+        },
+    )
+    normalized["retrieved_facts"] = facts
+    return normalized
+
+
+def _building_fact_summary_for_ecm(facts: Dict[str, Any]) -> str:
+    parts: List[str] = []
+    for key, label, unit in (
+        ("energy_class", "energy class", None),
+        ("energy_performance", "declared energy performance", "kWh/m2-year"),
+        ("specific_energy_use", "specific energy use", "kWh/m2-year"),
+        ("primary_energy_number", "primary energy number", "kWh/m2-year"),
+        ("energy_declaration_year", "energy declaration year", None),
+        ("construction_year", "construction year", None),
+        ("heating_system", "heating system", None),
+        ("ventilation_type", "ventilation", None),
+    ):
+        value = (facts or {}).get(key)
+        if _fact_present(value):
+            parts.append(f"{label}: {_format_fact_value(value, unit)}")
+    return "; ".join(parts)
+
+
+def _response_has_ecm_recommendations(text: Optional[str]) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+    required_sections = (
+        "energy conservation",
+        "energy efficiency",
+        "energy management",
+        "renewable",
+    )
+    if not all(section in lowered for section in required_sections):
+        return False
+    action_terms = (
+        "check",
+        "adjust",
+        "optimize",
+        "optimise",
+        "balance",
+        "monitor",
+        "measure",
+        "commission",
+        "setpoint",
+        "heating curve",
+        "domestic hot water",
+        "ventilation",
+        "solar",
+    )
+    return sum(1 for term in action_terms if term in lowered) >= 3
+
+
+def _deterministic_ecm_response(
+    *,
+    current_address: str,
+    building_id: str,
+    facts: Dict[str, Any],
+) -> str:
+    lines: List[str] = []
+    if building_id and building_id != "building_id_not_available":
+        lines.append(f"Building ID: {building_id}")
+    if current_address:
+        lines.append(f"Address: {current_address}")
+
+    summary = _building_fact_summary_for_ecm(facts)
+    if summary:
+        lines.extend(["", f"Known building facts used: {summary}."])
+
+    heating = str((facts or {}).get("heating_system") or "").lower()
+    ventilation = str((facts or {}).get("ventilation_type") or "").lower()
+    has_district_heating = "district heating" in heating
+    has_ftx = "ftx" in ventilation
+
+    lines.extend(
+        [
+            "",
+            "Energy Conservation Measures (ECMs)",
+            "",
+            "1. Energy conservation / reduce demand and waste",
+            "- Start with indoor-temperature and comfort mapping before raising heat output. Check overheated apartments, open windows during winter, stairwell/garage heat losses, and resident routines.",
+            "- Reduce domestic-hot-water waste: check circulation temperatures, leaking taps, long waits for hot water, and low-flow fixtures where comfort allows.",
+            "",
+            "2. Energy efficiency / improve equipment and building systems",
+            (
+                "- Review the district-heating substation, heat exchangers, pumps, and radiator valves; tune the heating curve and return temperatures."
+                if has_district_heating
+                else "- Review the main heating plant, pumps, valves, and heat distribution so delivered heat matches actual demand."
+            ),
+            "- Balance the radiator/heating distribution so cold apartments are not solved by overheating the whole building.",
+            (
+                "- Commission the FTX system: check heat-recovery function, filters, airflow balance, bypass settings, and fan operation."
+                if has_ftx
+                else "- Verify ventilation airflows and fan operation; avoid over-ventilation while maintaining indoor air quality."
+            ),
+            "",
+            "3. Energy management measures / controls, monitoring, and routines",
+            "- Track monthly and, if possible, hourly heat, hot-water, and electricity use against outdoor temperature so faults show up quickly.",
+            "- Set a seasonal operations routine: autumn valve checks, heating-curve review, filter replacement, alarm review, and board follow-up of kWh/m2.",
+            "",
+            "4. Renewable energy / add supply after demand is reduced",
+            "- Assess solar PV only after the low-cost heat, hot-water, controls, and ventilation measures are understood; check roof area, shading, structural limits, grid connection, and self-consumption.",
+            "",
+            "Good first step: run a 2-4 week diagnostic using indoor temperatures, district-heating/hot-water trends, ventilation settings, and occupant complaints, then prioritize the measures with measured evidence.",
+        ]
     )
     return "\n".join(lines)
 
@@ -1903,12 +2173,16 @@ def _metadata_brf_name(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
     metadata = metadata or {}
     value = metadata.get("brf_name")
     if value not in (None, ""):
-        return str(value).strip()
+        cleaned = _clean_brf_name(str(value).strip())
+        if cleaned:
+            return cleaned
 
     for key in ("brf_resolution", "pending_brf_resolution"):
         block = metadata.get(key)
         if isinstance(block, dict) and block.get("brf_name") not in (None, ""):
-            return str(block.get("brf_name")).strip()
+            cleaned = _clean_brf_name(str(block.get("brf_name")).strip())
+            if cleaned:
+                return cleaned
 
     return None
 
@@ -2536,6 +2810,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
     ctx = dict(state.get("context") or {})
     last_message = state.get("last_message") or ""
     pending = md.get("pending_brf_resolution")
+    current_brf_name = _extract_brf_name_from_text(last_message)
 
     if isinstance(pending, dict):
         if _has_resolved_brf_selection(md):
@@ -2599,6 +2874,19 @@ def brf_resolution_node(state: GraphState) -> GraphState:
                 "last_message": original_question,
             }
 
+        if _looks_like_new_question_away_from_brf_resolution(last_message):
+            md.pop("pending_brf_resolution", None)
+            resolution = md.get("brf_resolution")
+            if isinstance(resolution, dict) and resolution.get("status") == "needs_user_selection":
+                md.pop("brf_resolution", None)
+                md.pop("brf_candidate_buildings", None)
+                md.pop("brf_name", None)
+            clarification = md.get("clarification")
+            if isinstance(clarification, dict) and clarification.get("reason") == "ambiguous_brf":
+                md.pop("clarification", None)
+            print("[brf_resolution] cleared pending BRF selection after topic change", flush=True)
+            return {"metadata": md}
+
         question = pending.get("question") or _build_brf_selection_question(
             pending.get("brf_name") or "the BRF",
             pending.get("options") or [],
@@ -2613,12 +2901,26 @@ def brf_resolution_node(state: GraphState) -> GraphState:
         print("[brf_resolution] pending selection not resolved", flush=True)
         return {"metadata": md}
 
-    brf_name = (
-        _extract_brf_name_from_text(last_message)
-        or _metadata_brf_name(md)
-        or _extract_recent_brf_name_from_messages(state.get("messages"))
+    if _has_resolved_brf_selection(md) and not current_brf_name:
+        print("[brf_resolution] BRF selection already resolved", flush=True)
+        return {}
+
+    failed_brf_lookup = _metadata_has_failed_brf_lookup(md)
+    should_reuse_brf_context = bool(
+        current_brf_name
+        or _looks_like_identity_followup(last_message, ctx)
+        or (not failed_brf_lookup and _looks_like_building_ecm_advice(last_message))
     )
+    brf_name = current_brf_name
+    if not brf_name and should_reuse_brf_context:
+        brf_name = _metadata_brf_name(md) or _extract_recent_brf_name_from_messages(state.get("messages"))
+
     if not brf_name:
+        if failed_brf_lookup:
+            cleaned_md = _clear_failed_brf_lookup_state(md)
+            if cleaned_md != md:
+                print("[brf_resolution] cleared failed BRF lookup state", flush=True)
+                return {"metadata": cleaned_md}
         print("[brf_resolution] no BRF name found", flush=True)
         return {}
 
@@ -3634,6 +3936,12 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
             "retrieved_facts": retrieved_facts,
         },
     )
+    current_address = (
+        current_address
+        or _first_fact_value(retrieved_facts, ("address", "official_address", "epc_idadr"))
+        or identity_check.get("matched_address")
+        or ""
+    )
     if current_address and epc_record_address:
         requested_norm = _normalize_address(current_address)
         record_norm = _normalize_address(epc_record_address)
@@ -3651,6 +3959,15 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
                     ),
                 },
             )
+    metadata = _normalize_frontend_building_metadata(
+        metadata=metadata,
+        retrieved_facts=retrieved_facts,
+        current_address=str(current_address),
+        building_id=str(building_id),
+        identity_check=identity_check,
+        epc_record_address=epc_record_address,
+    )
+    retrieved_facts = metadata.get("retrieved_facts") or retrieved_facts
     metadata["data_freshness"] = compute_data_freshness(
         metadata,
         state.get("aggregated_data"),
@@ -3667,8 +3984,10 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         or str(ctx.get("parsed_intent") or "")
         or "No specific action was recorded."
     )
+    user_input_for_response = ctx.get("answer_focus") or state.get("last_message") or ""
+    ecm_request = _looks_like_building_ecm_advice(user_input_for_response)
     prompt = build_building_response_prompt(
-        user_input=ctx.get("answer_focus") or state.get("last_message") or "",
+        user_input=user_input_for_response,
         current_address=str(current_address),
         history=state.get("messages") or [],
         action_description=action_description,
@@ -3686,6 +4005,27 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
                 facts=retrieved_facts,
             )
             print("[llm_summarizer] model error; used deterministic building-fact fallback", flush=True)
+        if ecm_request and not _response_has_ecm_recommendations(answer):
+            metadata = _deep_merge(
+                metadata,
+                {
+                    "response_fallback": {
+                        "reason": "ecm_response_missing_recommendations",
+                        "hierarchy": [
+                            "energy_conservation",
+                            "energy_efficiency",
+                            "energy_management_measures",
+                            "renewable_energy",
+                        ],
+                    }
+                },
+            )
+            answer = _deterministic_ecm_response(
+                current_address=str(current_address),
+                building_id=str(building_id),
+                facts=retrieved_facts,
+            )
+            print("[llm_summarizer] used deterministic ECM hierarchy fallback", flush=True)
         answer = ensure_building_identifier_in_response(answer, building_id)
         answer = apply_response_safety_notes(answer, metadata)
         print("[llm_summarizer] generate_response ✓", flush=True)

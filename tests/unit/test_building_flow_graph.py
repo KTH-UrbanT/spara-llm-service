@@ -1094,6 +1094,47 @@ def test_brf_resolution_does_not_treat_location_phrase_as_brf_name():
         )
         is None
     )
+    assert (
+        module._extract_brf_name_from_text(
+            "We are a BRF with very high heating bills in winter. What can we do?"
+        )
+        is None
+    )
+    assert module._extract_brf_name_from_text("How many BRF do we have?") is None
+
+
+def test_brf_resolution_clears_failed_lookup_for_new_public_question():
+    module = import_building_flow_graph_module()
+    module._lookup_brf_addresses = lambda brf_name: (_ for _ in ()).throw(
+        AssertionError("stale BRF lookup should not be retried")
+    )
+
+    result = module.brf_resolution_node(
+        {
+            "last_message": "what is BRF",
+            "messages": [
+                {"role": "user", "content": "How many BRF do we have?"},
+                {"role": "assistant", "content": "I could not find building addresses for BRF do we have."},
+                {"role": "user", "content": "what is BRF"},
+            ],
+            "context": {"parsed_intent": "vector database", "intent_list": ["vector database"]},
+            "metadata": {
+                "brf_name": "do we have",
+                "brf_resolution": {"status": "not_found", "brf_name": "do we have"},
+                "clarification": {
+                    "needed": True,
+                    "reason": "brf_not_found",
+                    "question_asked": "I could not find building addresses for BRF do we have.",
+                    "resolved": False,
+                },
+            },
+        }
+    )
+
+    metadata = result["metadata"]
+    assert "brf_name" not in metadata
+    assert "brf_resolution" not in metadata
+    assert "clarification" not in metadata
 
 
 def test_brf_resolution_selects_pending_building_and_restores_original_question():
@@ -2737,3 +2778,11 @@ def test_llm_summarizer_treats_epc_ventilation_electricity_and_date_as_confirmed
     assert "electricity_use" not in uncertainty["missing_facts"]
     assert "energy_declaration_year" not in uncertainty["missing_facts"]
     assert uncertainty["missing_facts"] == ["renovation_information"]
+    assert result["metadata"]["response_fallback"]["reason"] == "ecm_response_missing_recommendations"
+    assert result["metadata"]["building_match"]["building_id"] == "01-80-LISSABON2-2"
+    assert result["metadata"]["retrieved_facts"]["address"] == "Öregrundsgatan 9"
+    assert "Energy Conservation Measures (ECMs)" in result["final_response"]
+    assert "1. Energy conservation / reduce demand and waste" in result["final_response"]
+    assert "2. Energy efficiency / improve equipment and building systems" in result["final_response"]
+    assert "3. Energy management measures / controls, monitoring, and routines" in result["final_response"]
+    assert "4. Renewable energy / add supply after demand is reduced" in result["final_response"]

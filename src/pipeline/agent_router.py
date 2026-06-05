@@ -360,9 +360,34 @@ ADDRESS_INTRO_RE = re.compile(
 BRF_NAME_RE = re.compile(
     r"\b(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+"
     r"([A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 .'\-]*?)"
-    r"(?=\s*(?:[,.;:!?]|$|\bwhat\b|\bwhich\b|\bhow\b|\bwhy\b|\bcan\b|\bplease\b|\bvad\b|\bhur\b|\bvilken\b|\bvilket\b|\bmed\b|\bwith\b))",
+    r"(?=\s*(?:[,.;:!?]|$|\bwhat\b|\bwhich\b|\bhow\b|\bwhy\b|\bdo\b|\bdoes\b|\bis\b|\bare\b|\bhave\b|\bhas\b|\bcan\b|\bcould\b|\bshould\b|\bwould\b|\bplease\b|\bvad\b|\bhur\b|\bvilken\b|\bvilket\b|\bmed\b|\bwith\b))",
     flags=re.IGNORECASE,
 )
+
+INVALID_BRF_NAME_START_RE = re.compile(
+    r"^(?:a|an|the|with|without|in|at|on|from|for|to|of|do|does|did|can|could|"
+    r"should|would|will|is|are|was|were|have|has|had|what|which|how|why|when|"
+    r"where|who|please|tell|give|show|list|count|many|home|owner|homeowner|"
+    r"housing|building|buildings|company|companies|municipality|kommun)\b",
+    flags=re.IGNORECASE,
+)
+
+INVALID_BRF_NAME_PHRASE_RE = re.compile(
+    r"\b(?:do\s+we\s+have|how\s+many|what\s+is\s+brf|home\s*owner|"
+    r"heating\s+bills?|heating\s+costs?|what\s+can\s+we\s+do|stockholmshem)\b",
+    flags=re.IGNORECASE,
+)
+
+STALE_BRF_CLARIFICATION_REASONS = {
+    "missing_brf_name",
+    "brf_not_found",
+    "brf_lookup_failed",
+}
+
+STALE_BRF_RESOLUTION_STATUSES = {
+    "not_found",
+    "lookup_error",
+}
 
 
 def _looks_like_compact_address(text: Optional[str], *, allow_four_digit_number: bool = False) -> bool:
@@ -415,6 +440,10 @@ def _clean_brf_name(value: Optional[str]) -> Optional[str]:
     if not cleaned:
         return None
     if re.fullmatch(r"(?:in|at|on|from|i|på)\s+[A-Za-zÅÄÖåäö .'\-]+", cleaned, flags=re.IGNORECASE):
+        return None
+    if INVALID_BRF_NAME_START_RE.search(cleaned):
+        return None
+    if INVALID_BRF_NAME_PHRASE_RE.search(cleaned):
         return None
     return cleaned or None
 
@@ -558,6 +587,26 @@ def _has_explicit_site_identifier(message: str) -> bool:
         or STREET_ADDRESS_FRAGMENT_RE.search(text)
         or _extract_concrete_brf_name(text)
     )
+
+
+def _generic_public_brf_or_org_question_without_identity(message: str) -> bool:
+    lowered = str(message or "").lower()
+    if not lowered.strip():
+        return False
+    if _has_explicit_site_identifier(message):
+        return False
+
+    patterns = (
+        r"\bwhat\s+(?:is|does)\s+(?:a\s+)?brf\b",
+        r"\bwhat\s+does\s+brf\s+(?:mean|stand\s+for)\b",
+        r"\bhow\s+many\s+brfs?\b",
+        r"\bhow\s+many\s+brf\b",
+        r"\b(?:home\s*owner|homeowner|housing)\s+(?:companies|associations?)\b",
+        r"\bstockholmshem\b.*\b(?:how\s+many|buildings?|names?)\b",
+        r"\bhow\s+many\b.*\bstockholmshem\b.*\bbuildings?\b",
+        r"\bhow\s+many\s+buildings?\b.*\bstockholmshem\b",
+    )
+    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def _looks_like_advisory_request(message: str) -> bool:
@@ -717,6 +766,40 @@ def _requires_building_specific_followup(
     ) and _has_recent_building_context(messages, metadata)
 
 
+def _metadata_has_failed_brf_lookup(metadata: Dict[str, Any]) -> bool:
+    metadata = metadata or {}
+    clarification = metadata.get("clarification") or {}
+    brf_resolution = metadata.get("brf_resolution") or {}
+    return bool(
+        clarification.get("reason") in STALE_BRF_CLARIFICATION_REASONS
+        or brf_resolution.get("status") in STALE_BRF_RESOLUTION_STATUSES
+    )
+
+
+def _looks_like_brf_resolution_continuation(message: str) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+    return bool(
+        BUILDING_ID_RE.search(text)
+        or _looks_like_address(text)
+        or STREET_ADDRESS_FRAGMENT_RE.search(text)
+        or _extract_concrete_brf_name(text)
+        or re.fullmatch(r"\d+", text)
+    )
+
+
+def _clear_failed_brf_lookup_state(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = dict(metadata or {})
+    cleaned.pop("brf_name", None)
+    cleaned.pop("brf_resolution", None)
+    cleaned.pop("pending_brf_resolution", None)
+    clarification = cleaned.get("clarification")
+    if isinstance(clarification, dict) and clarification.get("reason") in STALE_BRF_CLARIFICATION_REASONS:
+        cleaned.pop("clarification", None)
+    return cleaned
+
+
 def _normalize_response(
     *,
     content: str,
@@ -750,6 +833,14 @@ class AgentRouter:
 
     def route_message(self, messages, last_message, metadata, thread_id) -> Dict[str, Any]:
         base_metadata = dict(metadata or {})
+        cleared_failed_brf_lookup = False
+        if (
+            _metadata_has_failed_brf_lookup(base_metadata)
+            and not _looks_like_brf_resolution_continuation(last_message)
+        ):
+            base_metadata = _clear_failed_brf_lookup_state(base_metadata)
+            cleared_failed_brf_lookup = True
+
         last_assistant_asked_handoff = _last_assistant_asked_for_expert_handoff(messages)
         pending_handoff = bool(base_metadata.get("expert_handoff_pending_confirmation")) or last_assistant_asked_handoff
         explicit_handoff_send = (
@@ -908,7 +999,7 @@ class AgentRouter:
             return out, metadata_updated
 
         # Try to read prior classification if present
-        if len(messages) != 1:
+        if len(messages) != 1 and not cleared_failed_brf_lookup:
             previous_classification = (messages[-2] or {}).get("classification")
         else:
             previous_classification = None
@@ -936,6 +1027,7 @@ class AgentRouter:
             messages,
             base_metadata,
         )
+        public_brf_or_org_question = _generic_public_brf_or_org_question_without_identity(last_message)
         requires_building_specific = (
             _requires_building_specific_flow(last_message)
             or _requires_building_specific_followup(last_message, messages, base_metadata)
@@ -943,6 +1035,7 @@ class AgentRouter:
         if (
             broad_advice_without_identity
             or generic_advisory_continuation
+            or public_brf_or_org_question
         ) and not expert_handoff_requested_by_phrase:
             if classified in {"building_specific", "expert_handoff", "conversational"}:
                 classified = "generic"
