@@ -1458,6 +1458,45 @@ def test_out_of_scope_questions_respond_in_swedish():
     assert metadata["out_of_scope_type"] == "legal_advice"
 
 
+def test_green_loan_rebate_question_does_not_use_building_profile_context():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "building_specific"
+    StubBuildingAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "assistant",
+                "classification": "building_specific",
+                "content": "Building ID: 01-80-LISSABON2-2\nEnergy class: F",
+                "metadata": {
+                    "address": "Öregrundsgatan 9",
+                    "byggnadsid": "01-80-LISSABON2-2",
+                },
+            },
+            {
+                "role": "user",
+                "content": "Can you calculate exactly which green loan rebate we qualify for?",
+            },
+        ],
+        last_message="Can you calculate exactly which green loan rebate we qualify for?",
+        metadata={"address": "Öregrundsgatan 9", "byggnadsid": "01-80-LISSABON2-2"},
+        thread_id="thread-green-loan-rebate",
+    )
+
+    assert response["classification"] == "out_of_scope"
+    assert response["route"] == "out_of_scope"
+    assert response["agent_answered"] == "boundary"
+    assert "financial advice" in response["content"]
+    assert "financial specialist" in response["content"]
+    assert "Building ID" not in response["content"]
+    assert "Energy class" not in response["content"]
+    assert metadata["out_of_scope"] is True
+    assert metadata["out_of_scope_type"] == "financial_advice"
+    assert StubBuildingAgent.last_call is None
+
+
 def test_contact_details_update_does_not_use_building_context_or_claim_update():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "building_specific"

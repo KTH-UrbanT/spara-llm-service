@@ -58,6 +58,8 @@ Instructions:
 - Keep the output in a clear, user-friendly format.
 - Only use information that exists in the provided context, results, or metadata.
 - Do not make assumptions about building identity or building data.
+- Financial eligibility / green-loan rebate questions are scope-limited. If the user asks which loan, green-loan rebate, interest rebate, grant, subsidy, incentive, or financial product they qualify for, or asks you to calculate it exactly, do not calculate eligibility, promise approval, recommend a financial product, or make a financial decision.
+- For finance/eligibility questions, do not dump the full building profile. Give a short scope-safe answer: say that exact eligibility depends on lender/program rules, renovation scope, costs, ownership, timing, and documentation that are not fully available here; suggest checking with the bank/program administrator, EKR advisor, or financial specialist. Mention at most one or two relevant building facts only if directly useful.
 
 Required behavior:
 - If no address and no building ID are provided: ask for the building address.

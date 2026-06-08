@@ -3,6 +3,7 @@ from src.pipeline.safety_analysis import (
     assess_boundary_safety,
     assess_building_identity,
     build_out_of_scope_response,
+    detect_out_of_scope,
     extract_retrieved_facts,
 )
 
@@ -85,6 +86,17 @@ def test_boundary_safety_flags_direct_answer_to_risky_question():
         "missing_refusal_or_scope_limit",
         "missing_redirect_target",
     ]
+
+
+def test_green_loan_rebate_exact_qualification_is_financial_boundary():
+    detected = detect_out_of_scope(
+        "Can you calculate exactly which green loan rebate we qualify for?"
+    )
+
+    assert detected == {
+        "out_of_scope_type": "financial_advice",
+        "redirect_to": "advisor_or_financial_specialist",
+    }
 
 
 def test_message_metadata_includes_safety_boundary_evidence():

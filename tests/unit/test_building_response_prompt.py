@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from src.agents.building_response_prompt import (
     build_building_response_prompt,
     ensure_building_identifier_in_response,
@@ -140,6 +142,43 @@ def test_building_response_prompt_prefers_normalized_facts_over_legacy_epc_field
     assert 'If normalized facts or the compact card say energy class is "F"' in prompt
     assert "If raw EPC fields conflict with normalized facts, use the normalized facts" in prompt
     assert "Do not let epc_egienergiklass or epc_egienergiklass2016_calc override" in prompt
+
+
+def test_openai_response_generation_prompt_limits_green_loan_rebate_answers():
+    prompt = Path("src/prompts/openai_response_prompt.txt").read_text(encoding="utf-8")
+
+    assert "Financial eligibility / green-loan rebate rule" in prompt
+    assert "do not calculate eligibility" in prompt
+    assert "Do not answer these requests by dumping building facts" in prompt
+    assert "Never list the full building profile for a finance/eligibility question" in prompt
+
+
+def test_building_response_prompt_limits_green_loan_rebate_answers():
+    prompt = build_building_response_prompt(
+        user_input="Can you calculate exactly which green loan rebate we qualify for?",
+        current_address="Öregrundsgatan 9",
+        history=[
+            {
+                "role": "user",
+                "content": "Can you calculate exactly which green loan rebate we qualify for?",
+            }
+        ],
+        action_description="SQL database",
+        results={"energy_class": "F", "primary_energy_number": 144},
+        metadata={
+            "byggnadsid": "01-80-LISSABON2-2",
+            "retrieved_facts": {
+                "energy_class": "F",
+                "primary_energy_number": 144,
+            },
+        },
+        building_id="01-80-LISSABON2-2",
+    )
+
+    assert "Financial eligibility / green-loan rebate questions are scope-limited" in prompt
+    assert "do not calculate eligibility" in prompt
+    assert "do not dump the full building profile" in prompt
+    assert "Mention at most one or two relevant building facts" in prompt
 
 
 def test_ensure_building_identifier_in_response_prefixes_missing_id():
