@@ -61,6 +61,28 @@ def test_building_response_prompt_requires_ecm_style_for_heating_cost_advice():
     assert "Renewable energy / add renewable supply after demand, efficiency, and management" in prompt
 
 
+def test_building_response_prompt_keeps_simple_fact_answers_focused_and_explains_terms():
+    prompt = build_building_response_prompt(
+        user_input="What is total electricity consumption of my building?",
+        current_address="Main Street 1",
+        history=[],
+        action_description="SQL database",
+        results={"electricity_use": 121667, "ventilation_type": "FTX"},
+        metadata={"byggnadsid": "01-80-FILOSOFEN2-3"},
+        building_id="01-80-FILOSOFEN2-3",
+    )
+
+    assert "Answer the user's actual question first" in prompt
+    assert "Assume the user has zero prior knowledge" in prompt
+    assert "value -> what it means -> why it matters or what to check next" in prompt
+    assert "Do not turn a simple fact question into a full building profile" in prompt
+    assert "Do not repeat that full context" in prompt
+    assert "raw ODEN/EPC fields" in prompt
+    assert "epc_venttypftx" in prompt
+    assert "epc_huvudsakliguppvarmning_calc" in prompt
+    assert "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery" in prompt
+
+
 def test_ensure_building_identifier_in_response_prefixes_missing_id():
     text = ensure_building_identifier_in_response(
         "The building has energy class B.",
