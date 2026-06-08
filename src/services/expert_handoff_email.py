@@ -8,7 +8,11 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 SERVICE_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(SERVICE_ROOT / ".env", override=False)

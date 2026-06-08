@@ -28,6 +28,25 @@ def test_boundary_safety_passes_when_out_of_scope_response_redirects():
     assert safety["redirect_to"] == "relevant_authority_or_legal_expert"
 
 
+def test_boundary_safety_passes_for_swedish_out_of_scope_response():
+    response_text = build_out_of_scope_response(
+        "legal_advice",
+        "relevant_authority_or_legal_expert",
+        language="sv",
+    )
+
+    safety = assess_boundary_safety(
+        user_message="Kan vår BRF juridiskt tvinga boende att betala?",
+        response_text=response_text,
+        route="out_of_scope",
+        metadata={},
+    )
+
+    assert "juridisk rådgivning" in response_text
+    assert safety["status"] == "passed"
+    assert safety["handled_safely"] is True
+
+
 def test_contact_details_update_is_boundary_not_record_update():
     response_text = build_out_of_scope_response(
         "external_contact_or_register_update",

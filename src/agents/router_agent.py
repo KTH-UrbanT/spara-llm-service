@@ -265,6 +265,18 @@ class RouterAgent(BaseAgent):
             "please send the email",
             "yes send the email",
             "yes please send the email",
+            "ja",
+            "ja tack",
+            "gärna",
+            "garna",
+            "skicka",
+            "skicka den",
+            "skicka det",
+            "skicka mejlet",
+            "skicka e-post",
+            "skicka epost",
+            "ja skicka",
+            "ja skicka mejlet",
         }
         return normalized in positive_responses
 
@@ -282,6 +294,11 @@ class RouterAgent(BaseAgent):
             "cancel",
             "not now",
             "never mind",
+            "nej",
+            "nej tack",
+            "skicka inte",
+            "inte nu",
+            "avbryt",
         }
         return normalized in negative_responses
 

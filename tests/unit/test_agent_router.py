@@ -15,11 +15,11 @@ class StubRouterAgent:
 
     def is_confirmation(self, message):
         normalized = message.strip().lower()
-        return normalized == "yes"
+        return normalized in {"yes", "ja"}
 
     def is_rejection(self, message):
         normalized = message.strip().lower()
-        return normalized == "no"
+        return normalized in {"no", "nej"}
 
     def classify_question(self, message, previous_classification):
         type(self).last_call = (message, previous_classification)
@@ -159,6 +159,27 @@ def test_fast_conversational_greeting_skips_conversational_agent():
     assert response["agent_answered"] == "fast_conversational"
     assert "energy advice" in response["content"]
     assert "If you want building-specific advice" in response["content"]
+    assert metadata == {"kept": True}
+    assert StubConversationalAgent.last_call is None
+
+
+def test_fast_conversational_greeting_responds_in_swedish():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubConversationalAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "hej"}],
+        last_message="hej",
+        metadata={"kept": True},
+        thread_id="thread-fast-sv",
+    )
+
+    assert response["classification"] == "conversational"
+    assert response["agent_answered"] == "fast_conversational"
+    assert response["content"].startswith("Hej!")
+    assert "byggnadsspecifika råd" in response["content"]
     assert metadata == {"kept": True}
     assert StubConversationalAgent.last_call is None
 
@@ -331,6 +352,34 @@ def test_fast_multi_address_policy_question_skips_classifier_and_building_agent(
     assert "building ID" in response["content"]
     assert "actual addresses" in response["content"]
     assert metadata["kept"] is True
+    assert metadata["clarification"]["reason"] == "missing_multi_address_values"
+    assert StubRouterAgent.last_call is None
+    assert StubBuildingAgent.last_call is None
+
+
+def test_fast_multi_address_policy_question_responds_in_swedish():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    StubRouterAgent.last_call = None
+    StubBuildingAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[
+            {
+                "role": "user",
+                "content": "Vår fastighet har flera adresser. Vilken adress använder du?",
+            }
+        ],
+        last_message="Vår fastighet har flera adresser. Vilken adress använder du?",
+        metadata={},
+        thread_id="thread-multi-address-policy-sv",
+    )
+
+    assert response["classification"] == "building_specific"
+    assert response["agent_answered"] == "fast_multi_address_clarification"
+    assert response["route"] == "clarification"
+    assert "Dela de faktiska adresserna" in response["content"]
     assert metadata["clarification"]["reason"] == "missing_multi_address_values"
     assert StubRouterAgent.last_call is None
     assert StubBuildingAgent.last_call is None
@@ -1316,6 +1365,23 @@ def test_routes_draft_report_requests():
     )
 
 
+def test_expert_handoff_offer_responds_in_swedish():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "Jag behöver en expert"}],
+        last_message="Jag behöver en expert",
+        metadata={},
+        thread_id="thread-expert-sv",
+    )
+
+    assert response["classification"] == "expert_handoff"
+    assert "Vill du att jag skickar det?" in response["content"]
+    assert metadata["expert_handoff_pending_confirmation"] is True
+
+
 def test_report_requests_clear_stale_expert_handoff_confirmation():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "expert_handoff"
@@ -1370,6 +1436,25 @@ def test_out_of_scope_questions_are_handled_safely():
     assert response["classification"] == "out_of_scope"
     assert response["route"] == "out_of_scope"
     assert metadata["out_of_scope"] is True
+    assert metadata["out_of_scope_type"] == "legal_advice"
+
+
+def test_out_of_scope_questions_respond_in_swedish():
+    module = import_agent_router_module()
+    StubRouterAgent.next_classification = "generic"
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "Kan vår BRF juridiskt tvinga boende att betala?"}],
+        last_message="Kan vår BRF juridiskt tvinga boende att betala?",
+        metadata={},
+        thread_id="thread-out-of-scope-sv",
+    )
+
+    assert response["classification"] == "out_of_scope"
+    assert response["route"] == "out_of_scope"
+    assert "juridisk rådgivning" in response["content"]
+    assert "myndighet" in response["content"]
     assert metadata["out_of_scope_type"] == "legal_advice"
 
 

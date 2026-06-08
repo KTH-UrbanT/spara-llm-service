@@ -30,6 +30,7 @@ from src.pipeline.safety_analysis import (
     compute_uncertainty,
     extract_retrieved_facts,
 )
+from src.pipeline.response_language import choose_language_text, response_language_for_message
 from typing import Annotated
 import operator
 
@@ -161,6 +162,14 @@ def _deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[k] = v
     return out
+
+
+def _response_language_from_state(state: Dict[str, Any]) -> str:
+    return response_language_for_message(
+        (state or {}).get("last_message"),
+        metadata=(state or {}).get("metadata") or {},
+        messages=(state or {}).get("messages") or [],
+    )
 
 def _latest_session_state(session_state: Any) -> Dict[str, Any]:
     if isinstance(session_state, dict):
@@ -852,9 +861,17 @@ def _summarize_brf_addresses(addresses: List[str], limit: int = 6) -> str:
     return summary
 
 
-def _build_brf_selection_question(brf_name: str, options: List[Dict[str, Any]]) -> str:
+def _build_brf_selection_question(
+    brf_name: str,
+    options: List[Dict[str, Any]],
+    language: Optional[str] = None,
+) -> str:
     lines = [
-        f"I found more than one building for BRF {brf_name}. Which building should I use?",
+        choose_language_text(
+            language,
+            english=f"I found more than one building for BRF {brf_name}. Which building should I use?",
+            swedish=f"Jag hittade fler än en byggnad för BRF {brf_name}. Vilken byggnad ska jag använda?",
+        ),
         "",
     ]
     for option in options or []:
@@ -863,7 +880,11 @@ def _build_brf_selection_question(brf_name: str, options: List[Dict[str, Any]]) 
     lines.extend(
         [
             "",
-            "Reply with the number, the building ID, or one of the listed addresses.",
+            choose_language_text(
+                language,
+                english="Reply with the number, the building ID, or one of the listed addresses.",
+                swedish="Svara med numret, byggnadsid eller en av de listade adresserna.",
+            ),
         ]
     )
     return "\n".join(lines)
@@ -1562,6 +1583,62 @@ DIRECT_FACT_SPECS: Tuple[Tuple[str, str, Tuple[str, ...], Optional[str], Optiona
     for concept in FACT_CONCEPTS
 )
 
+FACT_LABEL_TRANSLATIONS_SV: Dict[str, str] = {
+    "energy_class": "energiklass",
+    "energy_performance": "deklarerad energiprestanda",
+    "specific_energy_use": "specifik energianvändning",
+    "primary_energy_number": "primärenergital",
+    "electricity_use": "total elanvändning",
+    "heating_system": "värmesystem",
+    "ventilation_type": "ventilationstyp",
+    "construction_year": "byggår",
+    "energy_declaration_year": "energideklarationsår",
+    "district_heating_space_heating": "fjärrvärme för uppvärmning",
+    "district_heating_domestic_hot_water": "fjärrvärme för tappvarmvatten",
+    "district_heating_use": "total fjärrvärmeanvändning",
+    "epc_egenatemp": "Atemp/uppvärmd area",
+}
+
+FACT_CONCEPT_EXPLANATIONS_SV: Dict[str, str] = {
+    "energy_class": (
+        "Energiklasser går vanligtvis från A till G, där A är bäst och G är svagast; "
+        "klass {value} betyder att det sannolikt finns utrymme att förbättra byggnadens energiprestanda."
+    ),
+    "energy_performance": (
+        "Energiprestanda är byggnadens årliga energianvändning per kvadratmeter uppvärmd area. "
+        "Lägre värden betyder vanligtvis en mer energieffektiv byggnad."
+    ),
+    "specific_energy_use": (
+        "Specifik energianvändning är ett årligt kWh-per-kvadratmeter-tal som gör byggnader av olika storlek lättare att jämföra. "
+        "Lägre är vanligtvis bättre."
+    ),
+    "primary_energy_number": (
+        "Primärenergitalet är det officiella viktade energitalet som används i svenska energiklassregler. "
+        "Lägre är vanligtvis bättre."
+    ),
+    "electricity_use": (
+        "Detta är årlig elanvändning i byggnadsposten. Beroende på datakällan kan den avse fastighetsel "
+        "snarare än hushållsel i varje lägenhet."
+    ),
+    "heating_system": "Värmesystemet beskriver hur byggnaden producerar eller tar emot värme för uppvärmning och varmvatten.",
+    "ventilation_type": "Ventilationen påverkar luftkvalitet, komfort, värmeförluster och fläktel.",
+    "construction_year": (
+        "Byggåret ger viktig kontext om sannolik ursprunglig isolering, fönster och ventilation, "
+        "men renoveringar kan ha ändrat prestandan mycket."
+    ),
+    "energy_declaration_year": (
+        "Detta är året då energideklarationsdatan godkändes. Om byggnaden har renoverats sedan dess "
+        "kan dagens prestanda vara annorlunda."
+    ),
+    "district_heating_space_heating": "Detta är värmen som används för att värma lägenheter och gemensamma ytor, separat från tappvarmvatten.",
+    "district_heating_domestic_hot_water": "Detta är värmen som används för tapp- och duschvarmvatten.",
+    "district_heating_use": (
+        "Detta är årlig inköpt fjärrvärme för byggnaden. Hög användning kan bero på uppvärmning, "
+        "tappvarmvatten, styrinställningar eller värmeförluster."
+    ),
+    "epc_egenatemp": "Atemp är den uppvärmda golvarean som används i svenska energideklarationer.",
+}
+
 FACT_VALUE_EXPLANATIONS: Dict[str, Dict[str, str]] = {
     "ventilation_type": {
         "FMED": (
@@ -1585,6 +1662,33 @@ FACT_VALUE_EXPLANATIONS: Dict[str, Dict[str, str]] = {
         "DISTRICT HEATING": (
             "District heating means heat is produced centrally and delivered to the building through hot water pipes. "
             "The main savings usually come from controls, balancing, hot water, and reducing heat losses."
+        ),
+    },
+}
+
+FACT_VALUE_EXPLANATIONS_SV: Dict[str, Dict[str, str]] = {
+    "ventilation_type": {
+        "FMED": (
+            "FMED betyder mekanisk frånluftsventilation med värmeåtervinning: fläktar tar bort använd inomhusluft, "
+            "och en del av värmen i frånluften återvinns i stället för att gå förlorad."
+        ),
+        "F WITH HEAT RECOVERY": (
+            "F med värmeåtervinning betyder mekanisk frånluftsventilation där en del värme återvinns från frånluften."
+        ),
+        "FTX": (
+            "FTX-ventilation betyder mekanisk till- och frånluftsventilation med värmeåtervinning, "
+            "så frånluften hjälper till att förvärma inkommande friskluft."
+        ),
+        "FT": "FT-ventilation betyder mekanisk till- och frånluftsventilation utan värmeåtervinning.",
+        "F": "F-ventilation betyder mekanisk frånluftsventilation, där fläktar tar bort inomhusluft.",
+        "S": "Självdrag bygger främst på naturliga tryck- och temperaturskillnader.",
+        "SJALVDRAG": "Självdrag bygger främst på naturliga tryck- och temperaturskillnader.",
+        "SJÄLVDRAG": "Självdrag bygger främst på naturliga tryck- och temperaturskillnader.",
+    },
+    "heating_system": {
+        "DISTRICT HEATING": (
+            "Fjärrvärme betyder att värmen produceras centralt och levereras till byggnaden via varmvattenledningar. "
+            "De viktigaste besparingarna kommer oftast från styrning, injustering, varmvatten och minskade värmeförluster."
         ),
     },
 }
@@ -1634,6 +1738,36 @@ FACT_CONCEPT_OVERVIEWS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+FACT_CONCEPT_OVERVIEWS_SV: Dict[str, Dict[str, Any]] = {
+    "heating_system": {
+        "title": "Andra vanliga värmesystem för byggnader är:",
+        "items": (
+            ("Fjärrvärme", "värme produceras centralt och levereras till byggnaden via varmvattenledningar."),
+            ("Värmepumpar", "använder el för att flytta värme från luft, mark, berg eller frånluft in i byggnaden."),
+            ("Direktverkande el", "använder el direkt för värme; det är enkelt men kan bli dyrt i större byggnader."),
+            ("Pannsystem", "producerar värme i byggnaden, till exempel med biobränsle, gas eller olja i äldre system."),
+            ("Frånluftsvärmepumpar", "återvinner värme från utgående ventilationsluft och återanvänder den för värme eller varmvatten."),
+        ),
+        "closing": (
+            "För många svenska flerbostadshus är fjärrvärme vanligt. Att byta värmesystem är oftast ett stort projekt, "
+            "så det är normalt klokt att optimera styrning, injustering och varmvattenanvändning först."
+        ),
+    },
+    "ventilation_type": {
+        "title": "Andra vanliga ventilationssystem är:",
+        "items": (
+            ("Självdrag", "luft rör sig främst genom naturliga tryck- och temperaturskillnader."),
+            ("F", "mekanisk frånluftsventilation, där fläktar tar bort inomhusluft."),
+            ("FT", "mekanisk till- och frånluftsventilation utan värmeåtervinning."),
+            ("FTX", "mekanisk till- och frånluftsventilation med värmeåtervinning."),
+            ("FMED", "mekanisk frånluftsventilation med värmeåtervinning."),
+        ),
+        "closing": (
+            "Bästa alternativet beror på byggnadens ålder, kanaler, behov av inomhusluft, komfortproblem och renoveringsomfattning."
+        ),
+    },
+}
+
 
 def _fact_value_explanation_keys(value: Any) -> List[str]:
     raw = str(value or "").strip()
@@ -1646,8 +1780,30 @@ def _fact_value_explanation_keys(value: Any) -> List[str]:
     return list(dict.fromkeys(keys))
 
 
-def _value_specific_fact_explanation(key: str, value: Any) -> Optional[str]:
-    explanations = FACT_VALUE_EXPLANATIONS.get(key) or {}
+def _fact_label(key: str, fallback: str, language: Optional[str] = None) -> str:
+    if language == "sv":
+        return FACT_LABEL_TRANSLATIONS_SV.get(key, fallback)
+    return fallback
+
+
+def _fact_preface(text: Optional[str], language: Optional[str] = None) -> Optional[str]:
+    if not text:
+        return None
+    if language == "sv" and text == "I interpret energy index as specific energy use.":
+        return "Jag tolkar energy index som specifik energianvändning."
+    return text
+
+
+def _value_specific_fact_explanation(
+    key: str,
+    value: Any,
+    language: Optional[str] = None,
+) -> Optional[str]:
+    explanations = (
+        FACT_VALUE_EXPLANATIONS_SV.get(key)
+        if language == "sv"
+        else FACT_VALUE_EXPLANATIONS.get(key)
+    ) or {}
     for candidate in _fact_value_explanation_keys(value):
         if candidate in explanations:
             return explanations[candidate]
@@ -1661,17 +1817,24 @@ PROFILE_FACT_LABEL_RE = re.compile(
 )
 
 
-def _ventilation_explanation(value: Any) -> Optional[str]:
-    return _value_specific_fact_explanation("ventilation_type", value)
+def _ventilation_explanation(value: Any, language: Optional[str] = None) -> Optional[str]:
+    return _value_specific_fact_explanation("ventilation_type", value, language)
 
 
-def _plain_language_fact_explanation(key: str, value: Any) -> Optional[str]:
+def _plain_language_fact_explanation(
+    key: str,
+    value: Any,
+    language: Optional[str] = None,
+) -> Optional[str]:
     concept = FACT_CONCEPT_BY_KEY.get(key)
     if not concept:
         return None
 
-    value_specific = _value_specific_fact_explanation(key, value)
-    concept_explanation = str(concept.get("explanation") or "").strip()
+    value_specific = _value_specific_fact_explanation(key, value, language)
+    if language == "sv":
+        concept_explanation = FACT_CONCEPT_EXPLANATIONS_SV.get(key, "")
+    else:
+        concept_explanation = str(concept.get("explanation") or "").strip()
     if concept_explanation:
         concept_explanation = concept_explanation.format(value=_format_fact_value_for_user(key, value))
 
@@ -1839,13 +2002,18 @@ def _deterministic_fact_concept_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: Optional[str] = None,
 ) -> Optional[str]:
     focus_key = _concept_overview_focus_key(user_input, facts)
     if not focus_key:
         return None
 
     concept = FACT_CONCEPT_BY_KEY.get(focus_key) or {}
-    overview = FACT_CONCEPT_OVERVIEWS.get(focus_key) or {}
+    overview = (
+        FACT_CONCEPT_OVERVIEWS_SV.get(focus_key)
+        if language == "sv"
+        else FACT_CONCEPT_OVERVIEWS.get(focus_key)
+    ) or {}
     if not overview:
         return None
 
@@ -1857,10 +2025,14 @@ def _deterministic_fact_concept_response(
         lines.extend(
             [
                 "",
-                f"Your building's {concept.get('label', focus_key)} is {_format_fact_value_for_user(focus_key, value, concept.get('unit'))}.",
+                choose_language_text(
+                    language,
+                    english=f"Your building's {concept.get('label', focus_key)} is {_format_fact_value_for_user(focus_key, value, concept.get('unit'))}.",
+                    swedish=f"Din byggnads {_fact_label(focus_key, str(concept.get('label', focus_key)), language)} är {_format_fact_value_for_user(focus_key, value, concept.get('unit'))}.",
+                ),
             ]
         )
-        explanation = _plain_language_fact_explanation(focus_key, value)
+        explanation = _plain_language_fact_explanation(focus_key, value, language)
         if explanation:
             lines.append(explanation)
 
@@ -1883,6 +2055,7 @@ def _targeted_building_fact_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: Optional[str] = None,
 ) -> Optional[str]:
     specs = _requested_fact_specs(user_input)
     if not specs:
@@ -1900,10 +2073,18 @@ def _targeted_building_fact_response(
             value = _first_fact_value(facts, (key,))
         if value in (None, "", [], {}):
             continue
-        if preface and preface not in explanations:
-            explanations.append(preface)
-        fact_lines.append(f"Your building's {label} is {_format_fact_value_for_user(key, value, unit)}.")
-        explanation = _plain_language_fact_explanation(key, value)
+        localized_preface = _fact_preface(preface, language)
+        if localized_preface and localized_preface not in explanations:
+            explanations.append(localized_preface)
+        localized_label = _fact_label(key, label, language)
+        fact_lines.append(
+            choose_language_text(
+                language,
+                english=f"Your building's {localized_label} is {_format_fact_value_for_user(key, value, unit)}.",
+                swedish=f"Din byggnads {localized_label} är {_format_fact_value_for_user(key, value, unit)}.",
+            )
+        )
+        explanation = _plain_language_fact_explanation(key, value, language)
         if explanation and explanation not in explanations:
             explanations.append(explanation)
 
@@ -1924,12 +2105,14 @@ def _deterministic_building_fact_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: Optional[str] = None,
 ) -> str:
     targeted = _targeted_building_fact_response(
         user_input=user_input,
         current_address=current_address,
         building_id=building_id,
         facts=facts,
+        language=language,
     )
     if targeted:
         return targeted
@@ -1961,7 +2144,7 @@ def _deterministic_building_fact_response(
     ):
         value = facts.get(key)
         if value not in (None, "", [], {}):
-            fact_lines.append(f"{label}: {_format_fact_value(value, unit)}")
+            fact_lines.append(f"{_fact_label(key, label, language)}: {_format_fact_value(value, unit)}")
 
     if fact_lines:
         if lines:
@@ -1972,8 +2155,17 @@ def _deterministic_building_fact_response(
     if lines:
         lines.append("")
     lines.append(
-        "I found the building record, but the response model is temporarily busy. "
-        "Please retry shortly if you need a fuller explanation."
+        choose_language_text(
+            language,
+            english=(
+                "I found the building record, but the response model is temporarily busy. "
+                "Please retry shortly if you need a fuller explanation."
+            ),
+            swedish=(
+                "Jag hittade byggnadsposten, men svarsmodellen är tillfälligt upptagen. "
+                "Försök igen strax om du behöver en mer utförlig förklaring."
+            ),
+        )
     )
     return "\n".join(lines)
 
@@ -2077,7 +2269,10 @@ def _building_fact_summary_for_ecm(facts: Dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def _short_building_fact_summary_for_advice(facts: Dict[str, Any]) -> str:
+def _short_building_fact_summary_for_advice(
+    facts: Dict[str, Any],
+    language: Optional[str] = None,
+) -> str:
     parts: List[str] = []
     for key, label, unit in (
         ("energy_class", "energy class", None),
@@ -2087,7 +2282,7 @@ def _short_building_fact_summary_for_advice(facts: Dict[str, Any]) -> str:
     ):
         value = (facts or {}).get(key)
         if _fact_present(value):
-            parts.append(f"{label}: {_format_fact_value(value, unit)}")
+            parts.append(f"{_fact_label(key, label, language)}: {_format_fact_value(value, unit)}")
     return "; ".join(parts[:4])
 
 
@@ -2132,26 +2327,60 @@ def _deterministic_ecm_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: Optional[str] = None,
 ) -> str:
     lines: List[str] = []
     if building_id and building_id != "building_id_not_available":
         lines.append(f"Building ID: {building_id}")
     if current_address:
-        lines.append(f"Address: {current_address}")
+        lines.append(choose_language_text(language, english=f"Address: {current_address}", swedish=f"Adress: {current_address}"))
 
-    summary = _short_building_fact_summary_for_advice(facts)
+    summary = _short_building_fact_summary_for_advice(facts, language)
     if summary:
-        lines.extend(["", f"Based on the known facts: {summary}."])
+        lines.extend(
+            [
+                "",
+                choose_language_text(
+                    language,
+                    english=f"Based on the known facts: {summary}.",
+                    swedish=f"Baserat på kända fakta: {summary}.",
+                ),
+            ]
+        )
 
     heating = str((facts or {}).get("heating_system") or "").lower()
     ventilation = str((facts or {}).get("ventilation_type") or "").lower()
     has_district_heating = "district heating" in heating
     has_ftx = "ftx" in ventilation
-    ventilation_explanation = _ventilation_explanation((facts or {}).get("ventilation_type"))
+    ventilation_explanation = _ventilation_explanation((facts or {}).get("ventilation_type"), language)
 
     if _looks_like_ventilation_focused_request(user_input):
         if ventilation_explanation:
             lines.extend(["", ventilation_explanation])
+        if language == "sv":
+            lines.extend(
+                [
+                    "",
+                    "Energieffektiviseringsåtgärder (ECMs)",
+                    "",
+                    "1. Energibesparing / minska behov och spill",
+                    "- Kontrollera om luftflöden eller drifttider är högre än nödvändigt, samtidigt som kraven på inomhusluft uppfylls.",
+                    "",
+                    "2. Energieffektivitet / förbättra utrustning och byggnadssystem",
+                    (
+                        "- Funktionskontrollera FTX-systemet: rengör/byt filter, verifiera luftflödesbalans, värmeåtervinning, bypass-inställningar och fläktdrift."
+                        if has_ftx
+                        else "- Verifiera ventilationsflöden, fläktdrift, filter och tryckinställningar; undvik överventilation utan att försämra luftkvaliteten."
+                    ),
+                    "",
+                    "3. Energiledning / styrning, uppföljning och rutiner",
+                    "- Följ upp fläktel, klagomål, filtertryck och temperatur-/värmeåtervinningstrender så att fel upptäcks tidigt.",
+                    "",
+                    "4. Förnybar energi / tillför energi först efter minskat behov",
+                    "- Förnybart är oftast inte den första ventilationsåtgärden; överväg solceller först när ventilationsbehov, styrning och fläkteffektivitet är optimerade.",
+                ]
+            )
+            return "\n".join(lines)
         lines.extend(
             [
                 "",
@@ -2172,6 +2401,33 @@ def _deterministic_ecm_response(
                 "",
                 "4. Renewable energy / add supply after demand is reduced",
                 "- Renewables are not usually the first ventilation measure; consider solar PV only after ventilation demand, controls, and fan efficiency are optimized.",
+            ]
+        )
+        return "\n".join(lines)
+
+    if language == "sv":
+        lines.extend(
+            [
+                "",
+                "Energieffektiviseringsåtgärder (ECMs)",
+                "",
+                "1. Energibesparing / minska behov och spill",
+                "- Kartlägg inomhustemperaturer, övertemperaturer, vädringsbeteende och spill i tappvarmvatten innan mer värme tillförs.",
+                "",
+                "2. Energieffektivitet / förbättra utrustning och byggnadssystem",
+                (
+                    "- Se över fjärrvärmeundercentral, värmeväxlare, pumpar och radiatorventiler; justera värmekurva och returtemperaturer."
+                    if has_district_heating
+                    else "- Se över huvudvärmesystem, pumpar, ventiler och värmedistribution så att levererad värme matchar faktiskt behov."
+                ),
+                "",
+                "3. Energiledning / styrning, uppföljning och rutiner",
+                "- Följ upp värme, varmvatten, el, inomhustemperaturer och klagomål mot utomhustemperatur; använd detta för säsongsvis injustering.",
+                "",
+                "4. Förnybar energi / tillför energi först efter minskat behov",
+                "- Bedöm solceller efter att låga kostnader, effektivisering och styråtgärder är utredda; kontrollera takyta, skuggning, bärighet, nätanslutning och egenanvändning.",
+                "",
+                "Bra första steg: gör en 2-4 veckors diagnostik och prioritera sedan åtgärder med stöd i uppmätta data.",
             ]
         )
         return "\n".join(lines)
@@ -2906,54 +3162,101 @@ def _resolve_single_address_candidate(address: str, metadata: Optional[Dict[str,
     }
 
 
-def _format_multi_address_candidate_line(candidate: Dict[str, Any]) -> str:
-    address = candidate.get("address") or "Unknown address"
+def _format_multi_address_candidate_line(
+    candidate: Dict[str, Any],
+    language: Optional[str] = None,
+) -> str:
+    address = candidate.get("address") or choose_language_text(
+        language,
+        english="Unknown address",
+        swedish="Okänd adress",
+    )
     building_id = candidate.get("building_id")
     if building_id:
         return f"- {address}: Building ID {building_id}"
     if candidate.get("building_ids"):
-        return f"- {address}: multiple building IDs ({', '.join(candidate['building_ids'])})"
+        return choose_language_text(
+            language,
+            english=f"- {address}: multiple building IDs ({', '.join(candidate['building_ids'])})",
+            swedish=f"- {address}: flera byggnadsid ({', '.join(candidate['building_ids'])})",
+        )
     message = str(candidate.get("message") or "").lower()
     if "timeout" in message or "timed out" in message:
-        return f"- {address}: lookup timed out before a building record could be confirmed"
-    return f"- {address}: no building record found"
+        return choose_language_text(
+            language,
+            english=f"- {address}: lookup timed out before a building record could be confirmed",
+            swedish=f"- {address}: uppslagningen tog för lång tid innan en byggnadspost kunde bekräftas",
+        )
+    return choose_language_text(
+        language,
+        english=f"- {address}: no building record found",
+        swedish=f"- {address}: ingen byggnadspost hittades",
+    )
 
 
 def _build_multi_address_resolution_response(
     candidates: List[Dict[str, Any]],
     status: str,
     shared_building_id: Optional[str] = None,
+    language: Optional[str] = None,
 ) -> str:
     addresses = [str(candidate.get("address") or "").strip() for candidate in candidates if candidate.get("address")]
-    first_address = addresses[0] if addresses else "the first address"
     alternate_addresses = [address for address in addresses[1:] if address]
     address_summary = " and ".join(addresses[:2]) if len(addresses) == 2 else ", ".join(addresses)
 
     if status == "same_building" and shared_building_id:
         alternate_text = (
-            f" I will treat {', '.join(alternate_addresses)} as alternate address(es) for the same building."
+            choose_language_text(
+                language,
+                english=f" I will treat {', '.join(alternate_addresses)} as alternate address(es) for the same building.",
+                swedish=f" Jag behandlar {', '.join(alternate_addresses)} som alternativa adresser för samma byggnad.",
+            )
             if alternate_addresses
             else ""
         )
-        return (
-            f"Building ID: {shared_building_id}\n\n"
-            f"{address_summary} resolve to the same building record, so I can use either address. "
-            f"I use the building ID as the source of truth and will use the latest available EPC/building record for that building."
-            f"{alternate_text} You can override this by giving a specific address or building ID."
+        return choose_language_text(
+            language,
+            english=(
+                f"Building ID: {shared_building_id}\n\n"
+                f"{address_summary} resolve to the same building record, so I can use either address. "
+                f"I use the building ID as the source of truth and will use the latest available EPC/building record for that building."
+                f"{alternate_text} You can override this by giving a specific address or building ID."
+            ),
+            swedish=(
+                f"Building ID: {shared_building_id}\n\n"
+                f"{address_summary} pekar på samma byggnadspost, så jag kan använda vilken som helst av adresserna. "
+                f"Jag använder byggnadsid som källa till sanningen och använder den senaste tillgängliga EPC-/byggnadsposten för byggnaden."
+                f"{alternate_text} Du kan ändra detta genom att ange en specifik adress eller byggnadsid."
+            ),
         )
 
-    lines = [_format_multi_address_candidate_line(candidate) for candidate in candidates]
+    lines = [_format_multi_address_candidate_line(candidate, language) for candidate in candidates]
     if status == "different_buildings":
-        return (
-            "I found different building IDs for those addresses, so I should not choose automatically.\n\n"
-            + "\n".join(lines)
-            + "\n\nWhich building ID should I use? You can reply with the building ID, option number, or one of the listed addresses."
+        return choose_language_text(
+            language,
+            english=(
+                "I found different building IDs for those addresses, so I should not choose automatically.\n\n"
+                + "\n".join(lines)
+                + "\n\nWhich building ID should I use? You can reply with the building ID, option number, or one of the listed addresses."
+            ),
+            swedish=(
+                "Jag hittade olika byggnadsid för adresserna, så jag bör inte välja automatiskt.\n\n"
+                + "\n".join(lines)
+                + "\n\nVilket byggnadsid ska jag använda? Du kan svara med byggnadsid, alternativets nummer eller en av de listade adresserna."
+            ),
         )
 
     if status == "partial_match":
-        return (
-            "I could only resolve some of those addresses. I use the building ID as the source of truth, so please confirm which building ID to use.\n\n"
-            + "\n".join(lines)
+        return choose_language_text(
+            language,
+            english=(
+                "I could only resolve some of those addresses. I use the building ID as the source of truth, so please confirm which building ID to use.\n\n"
+                + "\n".join(lines)
+            ),
+            swedish=(
+                "Jag kunde bara matcha några av adresserna. Jag använder byggnadsid som källa till sanningen, så bekräfta vilket byggnadsid jag ska använda.\n\n"
+                + "\n".join(lines)
+            ),
         )
 
     timed_out = any(
@@ -2962,14 +3265,28 @@ def _build_multi_address_resolution_response(
         for candidate in candidates
     )
     if timed_out:
-        return (
-            "I could not finish the address lookup before ODEN responded. Please try again, or provide the BRF name, organization number, or exact building ID.\n\n"
-            + "\n".join(lines)
+        return choose_language_text(
+            language,
+            english=(
+                "I could not finish the address lookup before ODEN responded. Please try again, or provide the BRF name, organization number, or exact building ID.\n\n"
+                + "\n".join(lines)
+            ),
+            swedish=(
+                "Jag kunde inte slutföra adressuppslagningen innan ODEN svarade. Försök igen, eller ange BRF-namn, organisationsnummer eller exakt byggnadsid.\n\n"
+                + "\n".join(lines)
+            ),
         )
 
-    return (
-        "I could not resolve those addresses to a building record. Please provide the city/postcode, BRF name, organization number, or exact building ID.\n\n"
-        + "\n".join(lines)
+    return choose_language_text(
+        language,
+        english=(
+            "I could not resolve those addresses to a building record. Please provide the city/postcode, BRF name, organization number, or exact building ID.\n\n"
+            + "\n".join(lines)
+        ),
+        swedish=(
+            "Jag kunde inte matcha adresserna mot en byggnadspost. Ange stad/postnummer, BRF-namn, organisationsnummer eller exakt byggnadsid.\n\n"
+            + "\n".join(lines)
+        ),
     )
 
 
@@ -2978,6 +3295,7 @@ def resolve_multi_address_identity_message(
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     md = dict(metadata or {})
+    response_language = response_language_for_message(last_message, metadata=md)
     candidates = _extract_address_candidates_from_text(last_message)
     if len(candidates) < 2:
         return None
@@ -3011,6 +3329,7 @@ def resolve_multi_address_identity_message(
         resolved,
         status,
         shared_building_id=shared_building_id,
+        language=response_language,
     )
     metadata_updates = {
         "address_candidates": candidates,
@@ -3386,6 +3705,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
     md = dict(state.get("metadata") or {})
     ctx = dict(state.get("context") or {})
     last_message = state.get("last_message") or ""
+    response_language = _response_language_from_state(state)
     pending = md.get("pending_brf_resolution")
     current_brf_name = _extract_brf_name_from_text(last_message)
 
@@ -3467,6 +3787,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
         question = pending.get("question") or _build_brf_selection_question(
             pending.get("brf_name") or "the BRF",
             pending.get("options") or [],
+            response_language,
         )
         md["clarification"] = {
             "needed": True,
@@ -3504,9 +3825,16 @@ def brf_resolution_node(state: GraphState) -> GraphState:
     try:
         rows = _lookup_brf_addresses(brf_name)
     except Exception as exc:
-        question = (
-            f"I could not look up BRF {brf_name} right now. "
-            "Please share the full street address so I can use the correct building."
+        question = choose_language_text(
+            response_language,
+            english=(
+                f"I could not look up BRF {brf_name} right now. "
+                "Please share the full street address so I can use the correct building."
+            ),
+            swedish=(
+                f"Jag kunde inte slå upp BRF {brf_name} just nu. "
+                "Dela den fullständiga gatuadressen så att jag använder rätt byggnad."
+            ),
         )
         md = _deep_merge(
             md,
@@ -3531,9 +3859,16 @@ def brf_resolution_node(state: GraphState) -> GraphState:
 
     options = _group_brf_address_rows(rows)
     if not options:
-        question = (
-            f"I could not find building addresses for BRF {brf_name}. "
-            "Please share the full street address so I can use the correct building."
+        question = choose_language_text(
+            response_language,
+            english=(
+                f"I could not find building addresses for BRF {brf_name}. "
+                "Please share the full street address so I can use the correct building."
+            ),
+            swedish=(
+                f"Jag kunde inte hitta byggnadsadresser för BRF {brf_name}. "
+                "Dela den fullständiga gatuadressen så att jag använder rätt byggnad."
+            ),
         )
         md = _deep_merge(
             md,
@@ -3593,7 +3928,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
         print(f"[brf_resolution] unique byggnadsid={option.get('byggnadsid')!r}", flush=True)
         return {"metadata": md}
 
-    question = _build_brf_selection_question(brf_name, options)
+    question = _build_brf_selection_question(brf_name, options, response_language)
     md = _deep_merge(
         md,
         {
@@ -3902,6 +4237,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
         return {"done_generic_sql": True}
 
     md = state.get("metadata", {}) or {}
+    response_language = _response_language_from_state(state)
     addr = md.get("address")
     explicit_building_id = _explicit_building_id_from_metadata(md)
     if explicit_building_id:
@@ -4117,7 +4453,10 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     "clarification": {
                         "needed": True,
                         "reason": clarification_reason,
-                        "question_asked": build_clarification_question(clarification_reason),
+                        "question_asked": build_clarification_question(
+                            clarification_reason,
+                            language=response_language,
+                        ),
                         "resolved": False,
                         "resolved_after_turns": None,
                     },
@@ -4142,7 +4481,10 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     "clarification": {
                         "needed": True,
                         "reason": clarification_reason,
-                        "question_asked": build_clarification_question(clarification_reason),
+                        "question_asked": build_clarification_question(
+                            clarification_reason,
+                            language=response_language,
+                        ),
                         "resolved": False,
                         "resolved_after_turns": None,
                     },
@@ -4170,7 +4512,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                             "needed": True,
                             "reason": "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data",
                             "question_asked": build_clarification_question(
-                                "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data"
+                                "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data",
+                                language=response_language,
                             ),
                             "resolved": False,
                             "resolved_after_turns": None,
@@ -4562,6 +4905,11 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         or "No specific action was recorded."
     )
     user_input_for_response = ctx.get("answer_focus") or state.get("last_message") or ""
+    response_language = response_language_for_message(
+        user_input_for_response,
+        metadata=metadata,
+        messages=state.get("messages") or [],
+    )
     ecm_request = _looks_like_building_ecm_advice(user_input_for_response)
     fact_concept_hybrid_request = _looks_like_fact_concept_hybrid_request(user_input_for_response)
     prompt = build_building_response_prompt(
@@ -4582,6 +4930,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
                 current_address=str(current_address),
                 building_id=str(building_id),
                 facts=retrieved_facts,
+                language=response_language,
             )
             print("[llm_summarizer] model error; used deterministic building-fact fallback", flush=True)
         targeted_fact_answer = _targeted_building_fact_response(
@@ -4589,6 +4938,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
             current_address=str(current_address),
             building_id=str(building_id),
             facts=retrieved_facts,
+            language=response_language,
         )
         if targeted_fact_answer and not ecm_request:
             fallback_reason = (
@@ -4611,6 +4961,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
             current_address=str(current_address),
             building_id=str(building_id),
             facts=retrieved_facts,
+            language=response_language,
         )
         if concept_response and fact_concept_hybrid_request and _response_looks_like_full_profile(answer):
             metadata = _deep_merge(
@@ -4643,13 +4994,18 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
                 current_address=str(current_address),
                 building_id=str(building_id),
                 facts=retrieved_facts,
+                language=response_language,
             )
             print("[llm_summarizer] used deterministic ECM hierarchy fallback", flush=True)
         answer = ensure_building_identifier_in_response(answer, building_id)
         answer = apply_response_safety_notes(answer, metadata, user_message=user_input_for_response)
         print("[llm_summarizer] generate_response ✓", flush=True)
     except Exception as e:
-        answer = "Sorry, summarizer error."
+        answer = choose_language_text(
+            response_language if "response_language" in locals() else "en",
+            english="Sorry, summarizer error.",
+            swedish="Tyvärr uppstod ett fel i sammanfattningen.",
+        )
         print(f"[llm_summarizer] ERROR: {e}", flush=True)
 
     sess = _latest_session_state(state.get("session_state"))
@@ -4674,7 +5030,10 @@ def request_address_node(state: GraphState) -> GraphState:
     md = state.get("metadata", {}) or {}
     clarification = md.get("clarification") or {}
     reason = clarification.get("reason") or "missing_address"
-    question = clarification.get("question_asked") or build_clarification_question(reason)
+    question = clarification.get("question_asked") or build_clarification_question(
+        reason,
+        language=_response_language_from_state(state),
+    )
     return {
         "final_response": question,
         "metadata": _deep_merge(
@@ -4696,7 +5055,10 @@ def clarification_node(state: GraphState) -> GraphState:
     md = state.get("metadata", {}) or {}
     clarification = md.get("clarification") or {}
     reason = clarification.get("reason") or "incomplete_question"
-    question = clarification.get("question_asked") or build_clarification_question(reason)
+    question = clarification.get("question_asked") or build_clarification_question(
+        reason,
+        language=_response_language_from_state(state),
+    )
     return {
         "final_response": question,
         "metadata": _deep_merge(

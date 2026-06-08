@@ -5,6 +5,11 @@ from typing import List, Dict, Optional, Union
 from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
 from dotenv import load_dotenv
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.response_language import (
+    choose_language_text,
+    language_instruction_for_message,
+    response_language_for_message,
+)
 
 # Load environment variables
 load_dotenv()
@@ -108,6 +113,12 @@ class OpenAIResponseAgent:
 
     def _build_messages(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]):
         messages = [{"role": "system", "content": self.prompt_template}]
+        messages.append(
+            {
+                "role": "system",
+                "content": language_instruction_for_message(last_message, messages=message_list),
+            }
+        )
         for msg in (message_list or []):
             role = msg.get("role")
             content = msg.get("content")
@@ -130,6 +141,7 @@ class OpenAIResponseAgent:
         if not isinstance(message_list, list):
             message_list = []
 
+        response_language = response_language_for_message(last_message, messages=message_list)
         messages = self._build_messages(last_message, message_list)
         params = {"model": self.deployment, "messages": messages, "stream": False}
         if self._is_o4_family():
@@ -167,7 +179,11 @@ class OpenAIResponseAgent:
                         success=False,
                         error=retry_exc,
                     )
-                    return "Error: An unexpected issue occurred."
+                    return choose_language_text(
+                        response_language,
+                        english="Error: An unexpected issue occurred.",
+                        swedish="Fel: Ett oväntat problem uppstod.",
+                    )
             else:
                 logger.error(f"BadRequestError: {e}", exc_info=True)
                 record_model_call(
@@ -178,7 +194,11 @@ class OpenAIResponseAgent:
                     success=False,
                     error=e,
                 )
-                return f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}"
+                return choose_language_text(
+                    response_language,
+                    english=f"Error: {getattr(e, 'message', str(e)) or 'Bad request'}",
+                    swedish=f"Fel: {getattr(e, 'message', str(e)) or 'Felaktig begäran'}",
+                )
         except APIConnectionError as e:
             logger.error(f"Connection error: {e}", exc_info=True)
             record_model_call(
@@ -189,7 +209,11 @@ class OpenAIResponseAgent:
                 success=False,
                 error=e,
             )
-            return "Error: Cannot connect to AI service."
+            return choose_language_text(
+                response_language,
+                english="Error: Cannot connect to AI service.",
+                swedish="Fel: Det går inte att ansluta till AI-tjänsten.",
+            )
         except RateLimitError as e:
             logger.error(f"Rate limit exceeded: {e}", exc_info=True)
             record_model_call(
@@ -200,7 +224,11 @@ class OpenAIResponseAgent:
                 success=False,
                 error=e,
             )
-            return "Error: Rate limit exceeded. Please retry shortly."
+            return choose_language_text(
+                response_language,
+                english="Error: Rate limit exceeded. Please retry shortly.",
+                swedish="Fel: Hastighetsgränsen överskreds. Försök igen strax.",
+            )
         except APIStatusError as e:
             logger.error(f"API status error: {e.status_code} - {e.response}", exc_info=True)
             record_model_call(
@@ -211,7 +239,11 @@ class OpenAIResponseAgent:
                 success=False,
                 error=e,
             )
-            return f"Error: API returned status code {e.status_code}."
+            return choose_language_text(
+                response_language,
+                english=f"Error: API returned status code {e.status_code}.",
+                swedish=f"Fel: API:t returnerade statuskod {e.status_code}.",
+            )
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
             record_model_call(
@@ -222,7 +254,11 @@ class OpenAIResponseAgent:
                 success=False,
                 error=e,
             )
-            return "Error: An unexpected issue occurred."
+            return choose_language_text(
+                response_language,
+                english="Error: An unexpected issue occurred.",
+                swedish="Fel: Ett oväntat problem uppstod.",
+            )
 
         try:
             
@@ -241,4 +277,8 @@ class OpenAIResponseAgent:
             latency_seconds=time.perf_counter() - model_started_at,
             success=True,
         )
-        return response_content or "No content returned from the model."
+        return response_content or choose_language_text(
+            response_language,
+            english="No content returned from the model.",
+            swedish="Modellen returnerade inget innehåll.",
+        )

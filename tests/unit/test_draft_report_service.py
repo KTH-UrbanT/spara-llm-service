@@ -12,10 +12,13 @@ class StubRedisClient:
 
 
 class StubOpenAIResponseAgent:
+    last_prompt = None
+
     def __init__(self, prompt_path):
         self.prompt_path = prompt_path
 
     def generate_response(self, prompt, message_list):
+        type(self).last_prompt = prompt
         return "# Draft Energy Report\n\nGenerated content."
 
 
@@ -120,3 +123,30 @@ def test_generate_draft_report_uses_address_filename_when_building_id_missing():
     _, _, raw_payload = redis_client.calls[0]
     payload = json.loads(raw_payload)
     assert payload["file_name"] == "Artemisgatan_13.txt"
+
+
+def test_generate_draft_report_uses_swedish_for_swedish_request():
+    redis_client = StubRedisClient()
+    StubOpenAIResponseAgent.last_prompt = None
+
+    stub_module("redis", StrictRedis=lambda *args, **kwargs: redis_client)
+    stub_module("src.agents.openai_agent", OpenAIResponseAgent=StubOpenAIResponseAgent)
+    stub_module(
+        "src.redis.redis_session_store",
+        get_session_state=lambda thread_id: {
+            "metadata": {"address": "Ringvägen 10", "building_id": "BUILDING-1"}
+        },
+    )
+
+    module = fresh_import("src.services.draft_report_service")
+    module._redis_client = redis_client
+
+    response = module.generate_draft_report_response(
+        thread_id="thread-4",
+        messages=[{"role": "user", "content": "Kan du skapa en energirapport?"}],
+        metadata={"building_id": "BUILDING-1"},
+    )
+
+    prompt_payload = json.loads(StubOpenAIResponseAgent.last_prompt)
+    assert prompt_payload["response_language"] == "sv"
+    assert "Jag skapade ett textfilutkast" in response["content"]

@@ -11,6 +11,7 @@ import redis
 
 from src.agents.openai_agent import OpenAIResponseAgent
 from src.agents.building_response_prompt import select_preferred_identifier
+from src.pipeline.response_language import choose_language_text, response_language_for_message
 from src.redis.redis_session_store import get_session_state
 
 
@@ -196,10 +197,12 @@ def _build_report_prompt(
     metadata: Dict[str, Any],
     session_snapshot: Dict[str, Any],
     building_facts: Dict[str, Any],
+    response_language: str,
 ) -> str:
     payload = {
         "thread_id": thread_id,
         "building_id": building_id,
+        "response_language": response_language,
         "metadata": deepcopy(metadata or {}),
         "recent_messages": _trim_messages(messages),
         "building_facts": building_facts,
@@ -215,6 +218,7 @@ def _fallback_report(
     address: str,
     messages: List[Dict[str, Any]],
     building_facts: Dict[str, Any],
+    response_language: str,
 ) -> str:
     summary_lines = []
     for message in reversed(messages or []):
@@ -225,6 +229,38 @@ def _fallback_report(
 
     message_excerpt = "\n\n".join(summary_lines) if summary_lines else "No prior assistant summary was available."
     address_line = address or "No building address was stored in the session metadata."
+
+    if response_language == "sv":
+        message_excerpt = (
+            "\n\n".join(summary_lines)
+            if summary_lines
+            else "Ingen tidigare sammanfattning från assistenten fanns tillgänglig."
+        )
+        address_line = address or "Ingen byggnadsadress fanns sparad i sessionens metadata."
+        return (
+            "# Utkast till energirapport\n\n"
+            f"Byggnadsid: {building_id}\n\n"
+            f"Sessions-ID: {thread_id}\n\n"
+            "## Byggnads- och sessionskontext\n"
+            f"- Byggnadsid: {building_id}\n"
+            f"- Adress: {address_line}\n\n"
+            "## Viktiga observationer\n"
+            f"{message_excerpt}\n\n"
+            "## Möjliga energieffektiviseringsåtgärder\n"
+            "- Granska klimatskal, ventilation och värmestyrning utifrån den sparade datan.\n"
+            "- Kontrollera om mer mätning eller historisk trenddata behövs innan slutliga rekommendationer ges.\n\n"
+            "## Datagap och antaganden\n"
+            "- Detta utkast bygger endast på informationen som finns sparad i sessionen.\n"
+            "- Saknade värden bör valideras innan rapporten delas externt.\n\n"
+            "## Rekommenderade nästa steg\n"
+            "- Granska bilagan för full sparad byggnadskontext.\n"
+            "- Validera kritiska fält som byggnadsid, adress och senaste uppmätta värden.\n"
+            "- Låt en rådgivare granska utkastet innan det färdigställs.\n\n"
+            "## Appendix: Full Session Building Data\n"
+            "```json\n"
+            f"{json.dumps(building_facts, indent=2, ensure_ascii=False)}\n"
+            "```\n"
+        )
 
     return (
         "# Draft Energy Report\n\n"
@@ -311,6 +347,11 @@ def generate_draft_report_response(
         if building_id_from_messages:
             building_id = building_id_from_messages
     building_facts = _collect_building_facts(metadata or {}, session_snapshot)
+    response_language = response_language_for_message(
+        (messages or [{}])[-1].get("content") if messages else "",
+        metadata=metadata,
+        messages=messages,
+    )
 
     prompt = _build_report_prompt(
         thread_id=thread_id,
@@ -319,6 +360,7 @@ def generate_draft_report_response(
         metadata=metadata or {},
         session_snapshot=session_snapshot,
         building_facts=building_facts,
+        response_language=response_language,
     )
 
     report_markdown = None
@@ -335,6 +377,7 @@ def generate_draft_report_response(
             address=address,
             messages=messages or [],
             building_facts=building_facts,
+            response_language=response_language,
         )
 
     report_text = _ensure_appendix(report_markdown.strip(), building_facts)
@@ -347,9 +390,16 @@ def generate_draft_report_response(
 
     return {
         "role": "assistant",
-        "content": (
-            f"I created a draft energy report text file for building `{building_id}` from the "
-            "full stored session context. You can download it below for the next 30 minutes."
+        "content": choose_language_text(
+            response_language,
+            english=(
+                f"I created a draft energy report text file for building `{building_id}` from the "
+                "full stored session context. You can download it below for the next 30 minutes."
+            ),
+            swedish=(
+                f"Jag skapade ett textfilutkast till energirapport för byggnad `{building_id}` "
+                "utifrån hela den sparade sessionskontexten. Du kan ladda ner den nedan under de kommande 30 minuterna."
+            ),
         ),
         "classification": "draft_energy_report",
         "agent_answered": "draft_energy_report",

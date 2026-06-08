@@ -12,6 +12,7 @@ from src.agents.conversationalist_agent import ConversationalAgent
 from src.services.draft_report_service import generate_draft_report_response
 from src.services.expert_handoff_email import send_expert_handoff_email
 from src.pipeline.safety_analysis import build_out_of_scope_response, detect_out_of_scope
+from src.pipeline.response_language import choose_language_text, response_language_for_message
 
 
 CLASSIFICATION_ALIASES = {
@@ -46,9 +47,9 @@ STREET_ADDRESS_FRAGMENT_RE = re.compile(
 )
 
 MULTI_ADDRESS_POLICY_RE = re.compile(
-    r"\b(?:two|multiple|several|many|different|flera|två|många|olika)\s+addresses?\b|"
-    r"\baddresses?\b.*\b(?:which|use|choose|använd|vilken|välj)\b|"
-    r"\b(?:which|vilken)\s+one\s+do\s+you\s+use\b",
+    r"\b(?:two|multiple|several|many|different|flera|två|många|olika)\s+(?:addresses?|adresser?)\b|"
+    r"\b(?:addresses?|adresser?)\b.*\b(?:which|use|choose|använd|vilken|välj)\b|"
+    r"\b(?:which|vilken)\s+(?:one|address|adress)\s+(?:do\s+you\s+use|använder|anvander)\b",
     flags=re.IGNORECASE,
 )
 
@@ -72,21 +73,42 @@ def _fast_conversational_response(message: str) -> Optional[str]:
         return None
 
     if re.fullmatch(r"(hi|hello|hey|hej|good\s+morning|good\s+afternoon|good\s+evening)[.!?]*", lowered):
-        return (
-            "Hi! I can help with general energy advice. If you want building-specific "
-            "advice, share a BRF name, street address, or building ID."
+        language = response_language_for_message(message)
+        return choose_language_text(
+            language,
+            english=(
+                "Hi! I can help with general energy advice. If you want building-specific "
+                "advice, share a BRF name, street address, or building ID."
+            ),
+            swedish=(
+                "Hej! Jag kan hjälpa till med allmän energirådgivning. Om du vill ha "
+                "byggnadsspecifika råd, dela BRF-namn, gatuadress eller byggnadsid."
+            ),
         )
 
     if re.search(
         r"\b(what\s+is\s+this\s+(?:app|application|service)|what\s+can\s+you\s+do|"
-        r"how\s+does\s+this\s+(?:app|application|service)\s+work)\b",
+        r"how\s+does\s+this\s+(?:app|application|service)\s+work|"
+        r"vad\s+(?:är|ar)\s+(?:detta|den\s+här|den\s+har)\s+(?:app|applikation|tjänst|tjanst)|"
+        r"vad\s+kan\s+du\s+göra|vad\s+kan\s+du\s+gora|"
+        r"hur\s+fungerar\s+(?:den\s+här|den\s+har|detta)\s+(?:app|applikation|tjänst|tjanst))\b",
         lowered,
     ):
-        return (
-            "SPARA helps BRFs and energy advisors answer questions about energy use, EPC data, "
-            "heating, ventilation, and relevant energy-efficiency measures. You can ask general "
-            "questions without identifying a building; share a BRF name, street address, or "
-            "building ID when you want building-specific answers."
+        language = response_language_for_message(message)
+        return choose_language_text(
+            language,
+            english=(
+                "SPARA helps BRFs and energy advisors answer questions about energy use, EPC data, "
+                "heating, ventilation, and relevant energy-efficiency measures. You can ask general "
+                "questions without identifying a building; share a BRF name, street address, or "
+                "building ID when you want building-specific answers."
+            ),
+            swedish=(
+                "SPARA hjälper BRF:er och energirådgivare att svara på frågor om energianvändning, "
+                "EPC-/energideklarationsdata, värme, ventilation och relevanta energieffektiviseringsåtgärder. "
+                "Du kan ställa allmänna frågor utan att identifiera en byggnad; dela BRF-namn, "
+                "gatuadress eller byggnadsid när du vill ha byggnadsspecifika svar."
+            ),
         )
 
     return None
@@ -103,7 +125,7 @@ def _fast_multi_address_clarification(message: str) -> Optional[str]:
 
     if not re.search(
         r"\b(?:my|our|the|this)\s+(?:property|building|brf|association)|"
-        r"\b(?:property|building|brf)\b",
+        r"\b(?:property|building|brf|fastighet|byggnad|förening|forening)\b",
         lowered,
     ):
         return None
@@ -114,11 +136,21 @@ def _fast_multi_address_clarification(message: str) -> Optional[str]:
     if address_count >= 2 or BUILDING_ID_RE.search(text):
         return None
 
-    return (
-        "Please share the actual addresses, BRF name, organisation number, or building ID. "
-        "I use the building ID/byggnadsid as the source of truth: if multiple addresses map "
-        "to the same building ID, either address can be used as an alias; if they map to "
-        "different building IDs, I will ask you which building or entrance to use."
+    language = response_language_for_message(message)
+    return choose_language_text(
+        language,
+        english=(
+            "Please share the actual addresses, BRF name, organisation number, or building ID. "
+            "I use the building ID/byggnadsid as the source of truth: if multiple addresses map "
+            "to the same building ID, either address can be used as an alias; if they map to "
+            "different building IDs, I will ask you which building or entrance to use."
+        ),
+        swedish=(
+            "Dela de faktiska adresserna, BRF-namn, organisationsnummer eller byggnadsid. "
+            "Jag använder byggnadsid som källa till sanningen: om flera adresser mappar "
+            "till samma byggnadsid kan vilken adress som helst användas som alias; om de "
+            "mappar till olika byggnadsid ber jag dig välja vilken byggnad eller entré jag ska använda."
+        ),
     )
 
 
@@ -131,7 +163,7 @@ def _has_multi_address_values_question(message: str) -> bool:
         return False
     if not re.search(
         r"\b(?:my|our|the|this)\s+(?:property|building|brf|association)|"
-        r"\b(?:property|building|brf)\b",
+        r"\b(?:property|building|brf|fastighet|byggnad|förening|forening)\b",
         lowered,
     ):
         return False
@@ -347,7 +379,10 @@ def _last_assistant_asked_for_expert_handoff(messages: List[Dict[str, Any]]) -> 
         ):
             return False
 
-        return "do you want me to send it" in content and "expert" in content
+        return (
+            ("do you want me to send it" in content and "expert" in content)
+            or ("vill du att jag" in content and "skick" in content and "expert" in content)
+        )
 
     return False
 
@@ -835,6 +870,11 @@ class AgentRouter:
 
     def route_message(self, messages, last_message, metadata, thread_id) -> Dict[str, Any]:
         base_metadata = dict(metadata or {})
+        response_language = response_language_for_message(
+            last_message,
+            metadata=base_metadata,
+            messages=messages,
+        )
         cleared_failed_brf_lookup = False
         if (
             _metadata_has_failed_brf_lookup(base_metadata)
@@ -865,7 +905,11 @@ class AgentRouter:
                 }
                 return {
                     "role": "assistant",
-                    "content": "In this evaluation run, I would send this conversation to an EKR expert. No real email was sent.",
+                    "content": choose_language_text(
+                        response_language,
+                        english="In this evaluation run, I would send this conversation to an EKR expert. No real email was sent.",
+                        swedish="I den här utvärderingskörningen skulle jag skicka samtalet till en EKR-expert. Inget riktigt mejl skickades.",
+                    ),
                     "classification": "expert_handoff",
                     "agent_answered": "expert_handoff",
                     "route": "expert_handoff",
@@ -878,10 +922,18 @@ class AgentRouter:
                     "expert_handoff_sent": bool(was_sent),
                 }
                 if was_sent:
-                    cc_note = " and you were CCed" if updated_metadata.get("user_email") else ""
+                    cc_note = choose_language_text(
+                        response_language,
+                        english=" and you were CCed" if updated_metadata.get("user_email") else "",
+                        swedish=" och du lades till som kopia" if updated_metadata.get("user_email") else "",
+                    )
                     return {
                         "role": "assistant",
-                        "content": f"The email was sent successfully to the EKR expert{cc_note}.",
+                        "content": choose_language_text(
+                            response_language,
+                            english=f"The email was sent successfully to the EKR expert{cc_note}.",
+                            swedish=f"Mejlet skickades till EKR-experten{cc_note}.",
+                        ),
                         "classification": "expert_handoff",
                         "agent_answered": "expert_handoff",
                         "route": "expert_handoff",
@@ -896,7 +948,11 @@ class AgentRouter:
 
             return {
                 "role": "assistant",
-                "content": "I could not send the email to the EKR expert right now. Please try again later.",
+                "content": choose_language_text(
+                    response_language,
+                    english="I could not send the email to the EKR expert right now. Please try again later.",
+                    swedish="Jag kunde inte skicka mejlet till EKR-experten just nu. Försök igen senare.",
+                ),
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
                 "route": "expert_handoff",
@@ -910,7 +966,11 @@ class AgentRouter:
             }
             return {
                 "role": "assistant",
-                "content": "Okay, I will not send the conversation to an expert. We can continue here.",
+                "content": choose_language_text(
+                    response_language,
+                    english="Okay, I will not send the conversation to an expert. We can continue here.",
+                    swedish="Okej, jag skickar inte samtalet till en expert. Vi kan fortsätta här.",
+                ),
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
                 "route": "expert_handoff",
@@ -935,6 +995,7 @@ class AgentRouter:
                 "content": build_out_of_scope_response(
                     boundary_case["out_of_scope_type"],
                     boundary_case["redirect_to"],
+                    language=response_language,
                 ),
                 "classification": "out_of_scope",
                 "agent_answered": "boundary",
@@ -1064,7 +1125,11 @@ class AgentRouter:
             }
             return {
                 "role": "assistant",
-                "content": "I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
+                "content": choose_language_text(
+                    response_language,
+                    english="I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
+                    swedish="Jag kan mejla det här samtalet och tillgängliga sessionsuppgifter till en EKR-expert. Vill du att jag skickar det?",
+                ),
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
                 "route": "expert_handoff",
@@ -1155,7 +1220,11 @@ class AgentRouter:
         # )
         return {
                 'role' : 'assistant' , 
-                'content' :f"Unknown classification: {classified}" , 
+                'content' : choose_language_text(
+                    response_language,
+                    english=f"Unknown classification: {classified}",
+                    swedish=f"Okänd klassificering: {classified}",
+                ),
                 'classification' :  str(classified) , 
                 'agent_answered' : "unknown",
                 'route': "generic",

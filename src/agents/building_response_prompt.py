@@ -3,6 +3,12 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.pipeline.response_language import (
+    language_instruction_for_message,
+    language_name,
+    response_language_for_message,
+)
+
 
 PROMPT_TEMPLATE_PATH = (
     Path(__file__).resolve().parent.parent / "prompts" / "building_response_generation_prompt.txt"
@@ -106,10 +112,22 @@ def build_building_response_prompt(
     metadata: Dict[str, Any],
     building_id: str,
 ) -> str:
+    response_language = response_language_for_message(
+        user_input,
+        metadata=metadata,
+        messages=history,
+    )
+    response_language_instruction = language_instruction_for_message(
+        user_input,
+        metadata=metadata,
+        messages=history,
+    )
     return PROMPT_TEMPLATE.format(
         user_input=user_input or "",
         current_address=current_address or "not available",
         building_id=building_id or "building_id_not_available",
+        response_language=language_name(response_language),
+        response_language_instruction=response_language_instruction,
         history=build_history_excerpt(history),
         action_description=action_description or "No specific action was recorded.",
         results=_json_text(results),

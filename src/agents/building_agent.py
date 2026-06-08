@@ -8,6 +8,7 @@ from src.agents.building_flow_graph import (
 )
 from src.agents.building_response_prompt import merge_identifier_metadata
 from src.pipeline.telemetry import record_component_latency
+from src.pipeline.response_language import choose_language_text, response_language_for_message
 from src.redis.redis_session_store import get_session_state, update_session_state
 from src.services.source_link_registry import resolve_source_links
 
@@ -160,6 +161,11 @@ class BuildingAgent:
             }
         """
         started_at = time.perf_counter()
+        response_language = response_language_for_message(
+            last_message,
+            metadata=metadata,
+            messages=messages,
+        )
         session_state = _session_state if _session_state is not None else get_session_state(thread_id)
 
         initial_state = {
@@ -176,7 +182,11 @@ class BuildingAgent:
         )
         if direct_multi_address_state:
             update_session_state(thread_id, direct_multi_address_state)
-            response = direct_multi_address_state.get("final_response") or "No output was generated."
+            response = direct_multi_address_state.get("final_response") or choose_language_text(
+                response_language,
+                english="No output was generated.",
+                swedish="Inget svar genererades.",
+            )
             md = direct_multi_address_state.get("metadata") or {}
             route = "clarification" if (md.get("clarification") or {}).get("needed") else "building_specific"
             metadata_payload = (
@@ -202,7 +212,11 @@ class BuildingAgent:
         except Exception as e:
             record_component_latency("building_agent", time.perf_counter() - started_at)
             return {
-                "content": f"An error occurred while handling your building-related request: {e}",
+                "content": choose_language_text(
+                    response_language,
+                    english=f"An error occurred while handling your building-related request: {e}",
+                    swedish=f"Ett fel uppstod när din byggnadsrelaterade fråga hanterades: {e}",
+                ),
                 "agent_answered": "unknown",
                 "classification": "building_specific",
                 "parsed_intent": None,
@@ -219,7 +233,11 @@ class BuildingAgent:
             final_state.get("final_response")
             or final_state.get("response")
             or final_state.get("prompt")
-            or "No output was generated."
+            or choose_language_text(
+                response_language,
+                english="No output was generated.",
+                swedish="Inget svar genererades.",
+            )
         )
 
         # Extract diagnostics

@@ -5,6 +5,8 @@ import unicodedata
 from datetime import date
 from typing import Any, Dict, Iterable, List, Optional
 
+from src.pipeline.response_language import choose_language_text, response_language_for_message
+
 
 BUILDING_IDENTIFIER_KEYS = (
     "building_id",
@@ -55,6 +57,13 @@ OUT_OF_SCOPE_RULES = [
             "contract dispute",
             "force residents",
             "can our brf force",
+            "juridiskt",
+            "juridisk",
+            "lagligt",
+            "lag",
+            "tvinga boende",
+            "kan vår brf tvinga",
+            "kan var brf tvinga",
         ),
         "redirect_to": "relevant_authority_or_legal_expert",
     },
@@ -67,6 +76,16 @@ OUT_OF_SCOPE_RULES = [
             "investment portfolio",
             "exact return on investment",
             "guaranteed payback",
+            "vilket lån",
+            "vilket lan",
+            "bör vi låna",
+            "bor vi lana",
+            "ekonomisk rådgivning",
+            "ekonomisk radgivning",
+            "finansiell rådgivning",
+            "finansiell radgivning",
+            "garanterad återbetalning",
+            "garanterad aterbetalning",
         ),
         "redirect_to": "advisor_or_financial_specialist",
     },
@@ -78,6 +97,12 @@ OUT_OF_SCOPE_RULES = [
             "load calculation",
             "detailed engineering calculation",
             "structural calculation",
+            "dimensionera systemet",
+            "exakt kanal",
+            "lastberäkning",
+            "lastberakning",
+            "detaljerad teknisk beräkning",
+            "detaljerad teknisk berakning",
         ),
         "redirect_to": "qualified_engineer_or_installer",
     },
@@ -89,6 +114,14 @@ OUT_OF_SCOPE_RULES = [
             "recommend a contractor",
             "best installer",
             "best vendor",
+            "vilken installatör",
+            "vilken installator",
+            "vilken leverantör",
+            "vilken leverantor",
+            "rekommendera entreprenör",
+            "rekommendera entreprenor",
+            "bästa installatör",
+            "basta installator",
         ),
         "redirect_to": "advisor_or_procurement_process",
     },
@@ -99,6 +132,9 @@ OUT_OF_SCOPE_RULES = [
             "privacy law",
             "gdpr",
             "resident data",
+            "personuppgifter",
+            "integritetslag",
+            "boendedata",
         ),
         "redirect_to": "privacy_contact_or_relevant_authority",
     },
@@ -118,6 +154,15 @@ OUT_OF_SCOPE_RULES = [
             "update board member contact",
             "change our contact details",
             "change contact details",
+            "ändrat styrelseledamöter",
+            "andrat styrelseledamoter",
+            "ändra styrelseledamöter",
+            "andra styrelseledamoter",
+            "uppdatera våra kontaktuppgifter",
+            "uppdatera vara kontaktuppgifter",
+            "uppdatera kontaktuppgifter",
+            "ändra våra kontaktuppgifter",
+            "andra vara kontaktuppgifter",
         ),
         "redirect_to": "official_register_or_admin_system",
     },
@@ -138,6 +183,13 @@ BOUNDARY_REFUSAL_PHRASES = (
     "can't update",
     "do not update",
     "cannot make updates",
+    "bör inte ge",
+    "kan inte ge",
+    "ska inte ge",
+    "bör inte rekommendera",
+    "kan inte uppdatera",
+    "kan inte göra uppdateringen",
+    "kan inte utföra uppdateringen",
 )
 
 REDIRECT_TARGET_PHRASES = {
@@ -145,28 +197,48 @@ REDIRECT_TARGET_PHRASES = {
         "legal expert",
         "relevant authority",
         "authority",
+        "juridisk expert",
+        "relevant myndighet",
+        "myndighet",
     ),
     "advisor_or_financial_specialist": (
         "financial specialist",
         "advisor",
+        "finansiell specialist",
+        "rådgivare",
+        "radgivare",
     ),
     "qualified_engineer_or_installer": (
         "qualified engineer",
         "installer",
+        "kvalificerad ingenjör",
+        "kvalificerad ingenjor",
+        "installatör",
+        "installator",
     ),
     "advisor_or_procurement_process": (
         "advisor",
         "procurement",
+        "rådgivare",
+        "radgivare",
+        "upphandling",
     ),
     "privacy_contact_or_relevant_authority": (
         "privacy",
         "authority",
+        "integritet",
+        "myndighet",
     ),
     "official_register_or_admin_system": (
         "official",
         "register",
         "admin",
         "property manager",
+        "officiellt",
+        "register",
+        "admin",
+        "förvaltare",
+        "forvaltare",
     ),
     "ekr_advisor": (
         "ekr",
@@ -630,9 +702,10 @@ def assess_building_identity(
     }
 
 
-def build_clarification_question(reason: Optional[str]) -> str:
+def build_clarification_question(reason: Optional[str], language: Optional[str] = None) -> str:
     reason = reason or "incomplete_question"
-    prompts = {
+    language = response_language_for_message("", metadata={"response_language": language})
+    prompts_en = {
         "missing_brf_name": "Which building do you mean? Please share the full street address so I use the correct building.",
         "missing_address": "To give building-specific advice safely, I need the full building address.",
         "ambiguous_brf": "I found more than one possible building. Could you provide the full street address so I use the correct building?",
@@ -645,6 +718,20 @@ def build_clarification_question(reason: Optional[str]) -> str:
         "insufficient_data_for_personalized_advice": "I can give general guidance, but I need the full building address before I can personalize the advice.",
         "incomplete_question": "Could you clarify your request a bit more so I can answer safely?",
     }
+    prompts_sv = {
+        "missing_brf_name": "Vilken byggnad menar du? Dela den fullständiga gatuadressen så att jag använder rätt byggnad.",
+        "missing_address": "För att ge byggnadsspecifika råd säkert behöver jag byggnadens fullständiga adress.",
+        "ambiguous_brf": "Jag hittade fler än en möjlig byggnad. Kan du ange den fullständiga gatuadressen så att jag använder rätt byggnad?",
+        "brf_not_found": "Jag kunde inte hitta byggnadsadresser för den BRF:en. Dela den fullständiga gatuadressen så att jag använder rätt byggnad.",
+        "brf_lookup_failed": "Jag kunde inte slå upp den BRF:en just nu. Dela den fullständiga gatuadressen så att jag använder rätt byggnad.",
+        "building_not_found_by_id": "Jag kunde inte hitta tillräckligt med byggnadsdata för det byggnadsid:t. Dela en av byggnadens gatuadresser så kan jag prova adressuppslagningen.",
+        "ambiguous_address": "Jag hittade fler än en möjlig byggnadsträff för den adressen. Ange gatuadressen följt av stad eller kommun, till exempel 'Ringvägen 10, Huddinge', eller ange exakt byggnadsid.",
+        "building_not_found": "Jag kunde inte hitta tillräckligt med byggnadsdata för den adressen. Jag kan ändå ge allmän vägledning, eller så kan du dela en annan fullständig gatuadress om den första var felstavad.",
+        "missing_building_data": "Jag hittade byggnaden, men har inte tillräckligt med byggnadsdata för personlig rådgivning än. Kan du dela fler detaljer, till exempel full adress eller vilket system du vill fråga om?",
+        "insufficient_data_for_personalized_advice": "Jag kan ge allmän vägledning, men behöver byggnadens fullständiga adress innan jag kan anpassa råden.",
+        "incomplete_question": "Kan du förtydliga din fråga lite så att jag kan svara säkert?",
+    }
+    prompts = prompts_sv if language == "sv" else prompts_en
     return prompts.get(reason, prompts["incomplete_question"])
 
 
@@ -788,6 +875,7 @@ def apply_response_safety_notes(
 ) -> str:
     text = (response_text or "").strip()
     metadata = metadata or {}
+    language = response_language_for_message(user_message, metadata=metadata)
     additions: List[str] = []
 
     freshness = metadata.get("data_freshness") or {}
@@ -795,11 +883,19 @@ def apply_response_safety_notes(
         year = freshness.get("energy_declaration_year")
         if year:
             additions.append(
-                f"This answer is based on an energy declaration from {year}. If the building has changed since then, some details may be outdated."
+                choose_language_text(
+                    language,
+                    english=f"This answer is based on an energy declaration from {year}. If the building has changed since then, some details may be outdated.",
+                    swedish=f"Det här svaret bygger på en energideklaration från {year}. Om byggnaden har ändrats sedan dess kan vissa uppgifter vara inaktuella.",
+                )
             )
         else:
             additions.append(
-                "Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is."
+                choose_language_text(
+                    language,
+                    english="Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is.",
+                    swedish="Vissa byggnadsuppgifter kan vara inaktuella eftersom jag inte kunde bekräfta hur aktuell den underliggande energideklarationsdatan är.",
+                )
             )
 
     uncertainty = metadata.get("uncertainty") or {}
@@ -810,13 +906,21 @@ def apply_response_safety_notes(
     ]
     if missing:
         additions.append(
-            "I do not have confirmed data for: " + ", ".join(missing[:4]) + "."
+            choose_language_text(
+                language,
+                english="I do not have confirmed data for: " + ", ".join(missing[:4]) + ".",
+                swedish="Jag saknar bekräftade data för: " + ", ".join(missing[:4]) + ".",
+            )
         )
 
     if not additions:
         return text
 
-    note_block = "Note: " + " ".join(additions)
+    note_block = choose_language_text(
+        language,
+        english="Note: " + " ".join(additions),
+        swedish="Obs: " + " ".join(additions),
+    )
     if note_block.lower() in text.lower():
         return text
     return f"{text}\n\n{note_block}".strip()
@@ -836,8 +940,13 @@ def detect_out_of_scope(message: str) -> Optional[Dict[str, str]]:
     return None
 
 
-def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[str]) -> str:
-    explanations = {
+def build_out_of_scope_response(
+    out_of_scope_type: str,
+    redirect_to: Optional[str],
+    language: Optional[str] = None,
+) -> str:
+    language = response_language_for_message("", metadata={"response_language": language})
+    explanations_en = {
         "legal_advice": "I can give general energy-efficiency information, but I should not give legal advice or make legal judgments for a building association.",
         "financial_advice": "I can discuss general energy measures, but I should not give financial advice or make investment decisions for a building association.",
         "detailed_engineering_calculation": "I can explain general options, but detailed engineering calculations should be handled by a qualified engineer or installer.",
@@ -845,7 +954,15 @@ def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[st
         "personal_data_or_privacy_issue": "I can explain general principles, but privacy and personal-data questions should be handled through the appropriate authority or responsible contact.",
         "external_contact_or_register_update": "I cannot update external registers, contact lists, board-member records, or property-management systems automatically.",
     }
-    next_steps = {
+    explanations_sv = {
+        "legal_advice": "Jag kan ge allmän information om energieffektivisering, men jag bör inte ge juridisk rådgivning eller göra juridiska bedömningar för en bostadsrättsförening.",
+        "financial_advice": "Jag kan diskutera allmänna energiåtgärder, men jag bör inte ge finansiell rådgivning eller fatta investeringsbeslut åt en bostadsrättsförening.",
+        "detailed_engineering_calculation": "Jag kan förklara allmänna alternativ, men detaljerade tekniska beräkningar bör hanteras av en kvalificerad ingenjör eller installatör.",
+        "installer_or_vendor_recommendation": "Jag kan förklara vad ni bör titta efter, men jag bör inte rekommendera en specifik installatör eller leverantör.",
+        "personal_data_or_privacy_issue": "Jag kan förklara allmänna principer, men frågor om integritet och personuppgifter bör hanteras via rätt myndighet eller ansvarig kontakt.",
+        "external_contact_or_register_update": "Jag kan inte uppdatera externa register, kontaktlistor, styrelseuppgifter eller fastighetsförvaltningssystem automatiskt.",
+    }
+    next_steps_en = {
         "relevant_authority_or_legal_expert": "Please check with a legal expert, your building association's advisor, or the relevant authority.",
         "advisor_or_financial_specialist": "Please discuss this with an advisor or financial specialist before making a decision.",
         "qualified_engineer_or_installer": "A qualified engineer or installer should assess the building before any final decision is made.",
@@ -853,13 +970,31 @@ def build_out_of_scope_response(out_of_scope_type: str, redirect_to: Optional[st
         "privacy_contact_or_relevant_authority": "Please contact the relevant privacy lead or authority for guidance.",
         "official_register_or_admin_system": "Update those details in the BRF's official register or admin system, property-manager contact list, website/contact page, and any relevant authority/register where the BRF maintains board information. I can help draft a checklist or neutral update message, but I cannot perform the update.",
     }
+    next_steps_sv = {
+        "relevant_authority_or_legal_expert": "Kontrollera detta med en juridisk expert, föreningens rådgivare eller relevant myndighet.",
+        "advisor_or_financial_specialist": "Diskutera detta med en rådgivare eller finansiell specialist innan ni fattar beslut.",
+        "qualified_engineer_or_installer": "En kvalificerad ingenjör eller installatör bör bedöma byggnaden innan ett slutligt beslut fattas.",
+        "advisor_or_procurement_process": "En rådgivare eller en formell upphandlingsprocess är ett säkrare sätt att jämföra leverantörer.",
+        "privacy_contact_or_relevant_authority": "Kontakta relevant integritetsansvarig eller myndighet för vägledning.",
+        "official_register_or_admin_system": "Uppdatera uppgifterna i BRF:ens officiella register eller administrationssystem, förvaltarens kontaktlista, webbplats/kontaktsida och relevanta myndighetsregister där BRF:en håller styrelseinformation. Jag kan hjälpa till att skriva en checklista eller ett neutralt uppdateringsmeddelande, men jag kan inte utföra uppdateringen.",
+    }
+    explanations = explanations_sv if language == "sv" else explanations_en
+    next_steps = next_steps_sv if language == "sv" else next_steps_en
     base = explanations.get(
         out_of_scope_type,
-        "I can help with general energy-advice questions, but this request goes beyond the safe scope of the system.",
+        choose_language_text(
+            language,
+            english="I can help with general energy-advice questions, but this request goes beyond the safe scope of the system.",
+            swedish="Jag kan hjälpa till med allmänna energirådgivningsfrågor, men den här begäran ligger utanför systemets säkra område.",
+        ),
     )
     follow_up = next_steps.get(
         redirect_to or "",
-        "Please consult a relevant advisor or authority for a reliable answer.",
+        choose_language_text(
+            language,
+            english="Please consult a relevant advisor or authority for a reliable answer.",
+            swedish="Kontakta en relevant rådgivare eller myndighet för ett tillförlitligt svar.",
+        ),
     )
     return f"{base} {follow_up}"
 

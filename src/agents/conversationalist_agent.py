@@ -5,6 +5,11 @@ from typing import List, Dict, Optional, Union
 from dotenv import load_dotenv
 import time
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.response_language import (
+    choose_language_text,
+    language_instruction_for_message,
+    response_language_for_message,
+)
 # Ensure BaseAgent is correctly imported.
 # Assuming src/agents/base_agent.py exists and defines BaseAgent.
 # If BaseAgent is not critical for this specific example's functionality
@@ -141,6 +146,7 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
 
     def handle_conversational_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
+        response_language = response_language_for_message(last_message, messages=message_list)
         """
         Generates a conversational response using the Azure OpenAI model.
 
@@ -182,6 +188,12 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
         # 1. System message from prompt_template
         # 2. Historical messages from message_list (extracting only role and content)
         messages_for_api: List[Dict[str, str]] = [{"role": "system", "content": self.prompt_template}]
+        messages_for_api.append(
+            {
+                "role": "system",
+                "content": language_instruction_for_message(last_message, messages=message_list),
+            }
+        )
 
         for i, msg in enumerate(message_list):
             if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
@@ -242,7 +254,11 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
                 success=False,
                 error=e,
             )
-            return "Error: Unable to connect to the AI service. Please check your network connection."
+            return choose_language_text(
+                response_language,
+                english="Error: Unable to connect to the AI service. Please check your network connection.",
+                swedish="Fel: Det går inte att ansluta till AI-tjänsten. Kontrollera nätverksanslutningen.",
+            )
         except RateLimitError as e:
             logger.error(f"Azure OpenAI API rate limit exceeded: {e}", exc_info=True)
             record_model_call(
@@ -253,7 +269,11 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
                 success=False,
                 error=e,
             )
-            return "Error: The AI service is currently busy. Please try again shortly."
+            return choose_language_text(
+                response_language,
+                english="Error: The AI service is currently busy. Please try again shortly.",
+                swedish="Fel: AI-tjänsten är upptagen just nu. Försök igen strax.",
+            )
         except APIStatusError as e:
             logger.error(f"Azure OpenAI API returned an error status {e.status_code}: {e.response}", exc_info=True)
             record_model_call(
@@ -264,7 +284,11 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
                 success=False,
                 error=e,
             )
-            return f"Error: An issue occurred with the AI service. Status code: {e.status_code}"
+            return choose_language_text(
+                response_language,
+                english=f"Error: An issue occurred with the AI service. Status code: {e.status_code}",
+                swedish=f"Fel: Ett problem uppstod med AI-tjänsten. Statuskod: {e.status_code}",
+            )
         except Exception as e:
             logger.error(f"An unexpected error occurred during API call: {e}", exc_info=True)
             record_model_call(
@@ -275,4 +299,8 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
                 success=False,
                 error=e,
             )
-            return "Error: An unexpected error occurred while processing your request."
+            return choose_language_text(
+                response_language,
+                english="Error: An unexpected error occurred while processing your request.",
+                swedish="Fel: Ett oväntat fel uppstod när din fråga behandlades.",
+            )

@@ -8,6 +8,11 @@ from src.services.source_link_registry import resolve_source_links
 from dotenv import load_dotenv
 import time
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.response_language import (
+    choose_language_text,
+    language_instruction_for_message,
+    response_language_for_message,
+)
 # Ensure BaseAgent is correctly imported.
 # Assuming src/agents/base_agent.py exists and defines BaseAgent.
 # If BaseAgent is not critical for this specific example's functionality
@@ -202,6 +207,7 @@ class GenericAgent(BaseAgent):
         
     def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[Dict[str, Any]]:
         start_time = time.time()  
+        response_language = response_language_for_message(last_message, messages=message_list)
         raw_results = self.vector_client.query(last_message)
         results = _filter_generic_results(last_message, raw_results)
         raw_sources = []
@@ -240,6 +246,12 @@ class GenericAgent(BaseAgent):
         # 1. System message from prompt_template
         # 2. Historical messages from message_list (extracting only role and content)
         messages_for_api: List[Dict[str, str]] = [{"role": "system", "content": self.prompt_template}]
+        messages_for_api.append(
+            {
+                "role": "system",
+                "content": language_instruction_for_message(last_message, messages=message_list),
+            }
+        )
         messages_for_api.append(
             {
                 "role": "system",
@@ -320,7 +332,14 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": "Error: Unable to connect to the AI service. Please check your network connection.", "sources": []}
+            return {
+                "content": choose_language_text(
+                    response_language,
+                    english="Error: Unable to connect to the AI service. Please check your network connection.",
+                    swedish="Fel: Det går inte att ansluta till AI-tjänsten. Kontrollera nätverksanslutningen.",
+                ),
+                "sources": [],
+            }
         except RateLimitError as e:
             logger.error(f"Azure OpenAI API rate limit exceeded: {e}", exc_info=True)
             record_model_call(
@@ -331,7 +350,14 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": "Error: The AI service is currently busy. Please try again shortly.", "sources": []}
+            return {
+                "content": choose_language_text(
+                    response_language,
+                    english="Error: The AI service is currently busy. Please try again shortly.",
+                    swedish="Fel: AI-tjänsten är upptagen just nu. Försök igen strax.",
+                ),
+                "sources": [],
+            }
         except APIStatusError as e:
             logger.error(f"Azure OpenAI API returned an error status {e.status_code}: {e.response}", exc_info=True)
             record_model_call(
@@ -342,7 +368,14 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": f"Error: An issue occurred with the AI service. Status code: {e.status_code}", "sources": []}
+            return {
+                "content": choose_language_text(
+                    response_language,
+                    english=f"Error: An issue occurred with the AI service. Status code: {e.status_code}",
+                    swedish=f"Fel: Ett problem uppstod med AI-tjänsten. Statuskod: {e.status_code}",
+                ),
+                "sources": [],
+            }
         except Exception as e:
             logger.error(f"An unexpected error occurred during API call: {e}", exc_info=True)
             record_model_call(
@@ -353,4 +386,11 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": "Error: An unexpected error occurred while processing your request.", "sources": []}
+            return {
+                "content": choose_language_text(
+                    response_language,
+                    english="Error: An unexpected error occurred while processing your request.",
+                    swedish="Fel: Ett oväntat fel uppstod när din fråga behandlades.",
+                ),
+                "sources": [],
+            }

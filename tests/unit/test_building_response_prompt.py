@@ -41,6 +41,21 @@ def test_build_building_response_prompt_includes_building_id():
     assert '"byggnadsid": "01-80-FILOSOFEN2-3"' in prompt
 
 
+def test_building_response_prompt_sets_swedish_response_language():
+    prompt = build_building_response_prompt(
+        user_input="Vad är energiklassen för min byggnad?",
+        current_address="Ringvägen 10",
+        history=[{"role": "user", "content": "Vad är energiklassen för min byggnad?"}],
+        action_description="SQL database",
+        results={"energy_class": "C"},
+        metadata={"byggnadsid": "01-80-FILOSOFEN2-3"},
+        building_id="01-80-FILOSOFEN2-3",
+    )
+
+    assert "Response language: Swedish" in prompt
+    assert "answer in Swedish" in prompt
+
+
 def test_building_response_prompt_requires_ecm_style_for_heating_cost_advice():
     prompt = build_building_response_prompt(
         user_input="How can we reduce our heating costs?",

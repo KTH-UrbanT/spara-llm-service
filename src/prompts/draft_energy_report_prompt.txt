@@ -11,6 +11,8 @@ You will receive JSON with:
 Write a concise but useful draft energy report in Markdown.
 
 Rules:
+- Use the `response_language` field in the supplied JSON. Write the report in Swedish when it is `sv`, and in English when it is `en`.
+- If source data or prior messages are in another language, translate/adapt narrative text into the response language while preserving identifiers, source names, and raw JSON values.
 - Use only the supplied information.
 - If information is missing, say so explicitly instead of inventing values.
 - Treat this as a draft for review, not a final certified report.
@@ -21,7 +23,7 @@ Rules:
 - Do not omit stored building identifiers, addresses, or other building facts that appear in the input.
 - Include a final appendix called `Appendix: Full Session Building Data` containing the relevant building data in JSON.
 
-Required sections:
+Required sections (use equivalent Swedish headings when `response_language` is `sv`):
 1. Title
 2. Building and Session Context
 3. Key Observations
