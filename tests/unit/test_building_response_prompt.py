@@ -102,6 +102,46 @@ def test_building_response_prompt_keeps_simple_fact_answers_focused_and_explains
     assert "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery" in prompt
 
 
+def test_building_response_prompt_prefers_normalized_facts_over_legacy_epc_fields():
+    prompt = build_building_response_prompt(
+        user_input="Vad betyder energiklassen?",
+        current_address="Öregrundsgatan 9",
+        history=[{"role": "user", "content": "Vad betyder energiklassen?"}],
+        action_description="SQL database",
+        results=[
+            {
+                "byggnadsid": "01-80-LISSABON2-2",
+                "epc_egienergiklass": "E",
+                "epc_egienergiklass2016_calc": "E",
+                "epc_egienergiklass2020_calc": "F",
+                "epc_egienergiprestanda": 165,
+                "epc_egispecifikenergianvandning_calc": 140,
+                "epc_egiprimarenergital2020_calc": 144,
+            }
+        ],
+        metadata={
+            "byggnadsid": "01-80-LISSABON2-2",
+            "retrieved_facts": {
+                "byggnadsid": "01-80-LISSABON2-2",
+                "address": "Öregrundsgatan 9",
+                "energy_class": "F",
+                "energy_performance": 165,
+                "specific_energy_use": 140,
+                "primary_energy_number": 144,
+            },
+        },
+        building_id="01-80-LISSABON2-2",
+    )
+
+    assert "Normalized building facts (preferred source for final-answer values)" in prompt
+    assert '"energy_class": "F"' in prompt
+    assert '"epc_egienergiklass": "E"' in prompt
+    assert "Never contradict the compact context card or normalized building facts" in prompt
+    assert 'If normalized facts or the compact card say energy class is "F"' in prompt
+    assert "If raw EPC fields conflict with normalized facts, use the normalized facts" in prompt
+    assert "Do not let epc_egienergiklass or epc_egienergiklass2016_calc override" in prompt
+
+
 def test_ensure_building_identifier_in_response_prefixes_missing_id():
     text = ensure_building_identifier_in_response(
         "The building has energy class B.",

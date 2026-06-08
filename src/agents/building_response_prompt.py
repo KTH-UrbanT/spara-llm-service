@@ -122,6 +122,7 @@ def build_building_response_prompt(
         metadata=metadata,
         messages=history,
     )
+    normalized_facts = (metadata or {}).get("retrieved_facts") or {}
     return PROMPT_TEMPLATE.format(
         user_input=user_input or "",
         current_address=current_address or "not available",
@@ -130,6 +131,7 @@ def build_building_response_prompt(
         response_language_instruction=response_language_instruction,
         history=build_history_excerpt(history),
         action_description=action_description or "No specific action was recorded.",
+        normalized_facts=_json_text(normalized_facts),
         results=_json_text(results),
         metadata=_json_text(metadata or {}),
     )
