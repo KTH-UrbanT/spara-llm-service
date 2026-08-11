@@ -1,0 +1,16 @@
+case_id,expected_route,question,final_answer,retrieved_evidence_summary,judge_verdict,judge_composite,judge_faithfulness,judge_answer_relevance,judge_question_coverage,judge_calibration,judge_semantic_judge_pass
+EKR_GEN_006,,,,,,,10,10,10,10,True
+EKR_GEN_019,,,,,,,1,0,0,7,False
+DEMO_EXTRA_GEN_001,,,,,,,9,10,10,10,True
+EKR_GEN_005,,,,,,,10,10,10,10,True
+BRF_ODEN_06_TEKNIKRINGEN_78B_001_HEATING,,,,,,,10,6,8,6,True
+BRF_ODEN_10_RADMANSGATAN_31_003_HEATING,,,,,,,10,10,9,10,True
+DEMO_EXTRA_BRF_002,,,,,,,10,9,9,10,True
+BRF_ODEN_10_RADMANSGATAN_31_004_HEATING,,,,,,,9,9,9,9,True
+BRF_ODEN_04_DROTTNING_KRISTINAS_VAG_43A_001_ADVICE,,,,,,,10,10,10,10,True
+COMB_001,,,,,,,9,10,10,10,True
+BRF_ODEN_02_PROFESSORSSLINGAN_51_001_ADVICE,,,,,,,9,10,10,9,True
+BRF_ODEN_09_PROFESSORSSLINGAN_53_001_ADVICE,,,,,,,10,10,10,10,True
+BRF_ODEN_10_RADMANSGATAN_31_001_AMBIGUOUS,,,,,,,10,9,8,7,True
+CLAR_001,,,,,,,10,10,10,10,True
+BRF_ODEN_01_TULEGATAN_5A_001_AMBIGUOUS,,,,,,,9,7,5,5,True

@@ -1,0 +1,89 @@
+case_id,case_type,expected_route,expected_agent,expected_building_id,expected_fields,source
+GEN_001,general_energy_advice,generic,GenericAgent,,,
+GEN_002,energy_declaration_explanation,generic,GenericAgent,,,
+BRF_FACT_001,building_specific_factual,building_specific,BuildingAgent,abc-123,"['energy_performance', 'energy_class']",
+BRF_FACT_002,building_specific_factual,building_specific,BuildingAgent,abc-123,['heating_system'],
+COMB_001,combined,combined,BuildingAgent,abc-123,"['heating_system', 'energy_performance', 'energy_class']",
+CLAR_001,clarification,clarification,BuildingAgent,,,
+EKR_GEN_001,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_002,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_003,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_004,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_005,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_006,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_007,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_008,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_009,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_010,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_011,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_012,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_013,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_014,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_015,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_016,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_017,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_018,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_019,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_020,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_021,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_022,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_023,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_024,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_025,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_026,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_027,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_028,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_029,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+EKR_GEN_030,ekr_general_question_bank,generic,GenericAgent,,,qa-ekr.csv
+BRF_ODEN_01_TULEGATAN_5A_001_AMBIGUOUS,ambiguous_building_address,clarification,BuildingAgent,,,ODEN API
+BRF_ODEN_01_TULEGATAN_5A_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-HAELSAN10-2,['heating_system'],ODEN API
+BRF_ODEN_01_TULEGATAN_5A_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-HAELSAN10-2,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_01_TULEGATAN_5A_002_HEATING,building_specific_factual,building_specific,BuildingAgent,19-84-LEOPARDEN5-1,['heating_system'],ODEN API
+BRF_ODEN_01_TULEGATAN_5A_002_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,19-84-LEOPARDEN5-1,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_02_PROFESSORSSLINGAN_51_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-3,['heating_system'],ODEN API
+BRF_ODEN_02_PROFESSORSSLINGAN_51_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-3,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_02_PROFESSORSSLINGAN_51_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-FILOSOFEN2-3,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-40,['heating_system'],ODEN API
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-40,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-NORRADJURGAARDEN1:49-40,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_04_DROTTNING_KRISTINAS_VAG_43A_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-FORSKNINGEN1-44,['heating_system'],ODEN API
+BRF_ODEN_04_DROTTNING_KRISTINAS_VAG_43A_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-FORSKNINGEN1-44,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_04_DROTTNING_KRISTINAS_VAG_43A_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-FORSKNINGEN1-44,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_05_ARTEMISGATAN_17_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-SKYTTEN2-2,['heating_system'],ODEN API
+BRF_ODEN_05_ARTEMISGATAN_17_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-SKYTTEN2-2,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_05_ARTEMISGATAN_17_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-SKYTTEN2-2,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_06_TEKNIKRINGEN_78B_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-25,['heating_system'],ODEN API
+BRF_ODEN_06_TEKNIKRINGEN_78B_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-25,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_06_TEKNIKRINGEN_78B_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-NORRADJURGAARDEN1:49-25,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_07_TEKNIKRINGEN_37A_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-34,['heating_system'],ODEN API
+BRF_ODEN_07_TEKNIKRINGEN_37A_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-34,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_07_TEKNIKRINGEN_37A_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-NORRADJURGAARDEN1:49-34,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_08_PROFESSORSSLINGAN_49_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-2,['heating_system'],ODEN API
+BRF_ODEN_08_PROFESSORSSLINGAN_49_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-2,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_08_PROFESSORSSLINGAN_49_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-FILOSOFEN2-2,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_09_PROFESSORSSLINGAN_53_001_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-4,['heating_system'],ODEN API
+BRF_ODEN_09_PROFESSORSSLINGAN_53_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-4,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_09_PROFESSORSSLINGAN_53_001_ADVICE,combined_building_specific_advice,combined,BuildingAgent,01-80-FILOSOFEN2-4,"['heating_system', 'energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_001_AMBIGUOUS,ambiguous_building_address,clarification,BuildingAgent,,,ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_001_HEATING,building_specific_factual,building_specific,BuildingAgent,05-83-RAEFSAN5-1,['heating_system'],ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,05-83-RAEFSAN5-1,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_002_HEATING,building_specific_factual,building_specific,BuildingAgent,17-81-BONDEN9-1,['heating_system'],ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_002_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,17-81-BONDEN9-1,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_003_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-HAELSAN10-1,['heating_system'],ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_003_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-HAELSAN10-1,"['energy_performance', 'energy_class']",ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_004_HEATING,building_specific_factual,building_specific,BuildingAgent,01-80-HAELSAN10-2,['heating_system'],ODEN API
+BRF_ODEN_10_RADMANSGATAN_31_004_PERFORMANCE,building_specific_factual,building_specific,BuildingAgent,01-80-HAELSAN10-2,"['energy_performance', 'energy_class']",ODEN API
+DEMO_EXTRA_GEN_001,general_energy_advice,generic,GenericAgent,,,
+DEMO_EXTRA_GEN_002,general_energy_advice,generic,GenericAgent,,,
+DEMO_EXTRA_GEN_003,general_energy_advice,generic,GenericAgent,,,
+DEMO_EXTRA_GEN_004,general_energy_advice,generic,GenericAgent,,,
+DEMO_EXTRA_GEN_005,general_energy_advice,generic,GenericAgent,,,
+DEMO_EXTRA_GEN_006,general_energy_advice,generic,GenericAgent,,,
+DEMO_EXTRA_CLAR_001,clarification,clarification,BuildingAgent,,,
+DEMO_EXTRA_CLAR_002,clarification,clarification,BuildingAgent,,,
+DEMO_EXTRA_BRF_001,building_specific_factual,building_specific,BuildingAgent,01-80-SKYTTEN2-2,"['energy_performance', 'energy_class']",
+DEMO_EXTRA_BRF_002,building_specific_factual,building_specific,BuildingAgent,01-80-NORRADJURGAARDEN1:49-34,['heating_system'],
+DEMO_EXTRA_BRF_003,building_specific_factual,building_specific,BuildingAgent,01-80-FILOSOFEN2-4,"['energy_performance', 'energy_class']",
+DEMO_EXTRA_BRF_004,building_specific_factual,building_specific,BuildingAgent,05-83-RAEFSAN5-1,['heating_system'],
+DEMO_EXTRA_COMB_001,combined_building_specific_advice,combined,BuildingAgent,01-80-NORRADJURGAARDEN1:49-25,"['heating_system', 'energy_performance', 'energy_class']",
+DEMO_EXTRA_COMB_002,combined_building_specific_advice,combined,BuildingAgent,01-80-FILOSOFEN2-2,"['heating_system', 'energy_performance', 'energy_class']",

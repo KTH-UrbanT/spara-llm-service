@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import json
 import sys
@@ -12,6 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.knowledge_base.vector_database_pinecone import VectorDataBase
 from src.pipeline.telemetry import record_retrieval_call
+from src.context_retrieval.main_content_retrieval_pinecone import RetrievalText
 
 TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "5"))
 # Optionally pass a Pinecone metadata filter as JSON (e.g., {"source_type":"policy"})

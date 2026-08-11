@@ -13,6 +13,7 @@ from langgraph.graph import StateGraph, START, END
 # --- Project deps
 from src.agents.parse_intent_agent import ParseIntentAgent
 from src.agents.generic_sql_layer import SQL_Mapper_Layer
+from src.agents.building_response_prompt import merge_identifier_metadata
 from src.database.vector_client import VectorClient, VectorClientConfig
 from src.agents.openai_agent import OpenAIResponseAgent
 from src.agents.evaluator_agent import EvaluatorAgent
@@ -790,6 +791,16 @@ def _is_retry_candidate(eval_scores: Dict[str, Any]) -> bool:
 # Context understanding (UPDATED)
 # ================================
 
+def _latest_session_state(session_state: Any) -> Dict[str, Any]:
+    if isinstance(session_state, dict):
+        return dict(session_state)
+    if isinstance(session_state, list):
+        for item in reversed(session_state):
+            if isinstance(item, dict):
+                return dict(item)
+    return {}
+
+
 def understand_context_node(state: GraphState) -> GraphState:
     """
     Updated behavior:
@@ -892,6 +903,13 @@ def understand_context_node(state: GraphState) -> GraphState:
 
     # Write context back to state (in place) and return state
     state["context"] = ctx
+    # The top-level route, derived from the parsed intent, for the early checkpoint.
+    _intents = [str(i).lower() for i in (ctx.get("intent_list") or [])]
+    _parsed = str(ctx.get("parsed_intent") or "").lower()
+    _wants_sql = any(i in {"sql database", "specialized sql database",
+                           "query generic database", "query specific database"} for i in _intents) \
+                 or (not _intents and "sql" in _parsed)
+    state["top_route"] = "building" if _wants_sql else "generic"
     print(f"[understand_context] parsed_intent={ctx.get('parsed_intent')!r} intent_list={ctx.get('intent_list')}", flush=True)
     print("[understand_context] EXIT", flush=True)
     return state
@@ -1301,6 +1319,17 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
         print("[generic_sql_agent] NO DATA", flush=True)
     updates["metadata"] = metadata_updates
     updates["agent_outputs_generic"] = outs
+    # Closed-loop instrumentation: per-agent keys (parallel fan-out merges with
+    # operator.or_, which overwrites — so the harness unions these afterwards).
+    _g_data = (result or {}).get("data") if result else None
+    if isinstance(_g_data, list) and _g_data and isinstance(_g_data[0], dict):
+        _g_fields = list(_g_data[0].keys())
+    elif isinstance(_g_data, dict):
+        _g_fields = list(_g_data.keys())
+    else:
+        _g_fields = []
+    updates["invoked_generic_sql"] = True
+    updates["sql_fields_generic"] = _g_fields
     print("[generic_sql_agent] EXIT", flush=True)
     return updates
 
@@ -1347,6 +1376,8 @@ def specialized_sql_agent_node(state: GraphState) -> GraphState:
 
         result = specialized_layer.execute(op, kwargs)
         trace = result.get("sql_trace") or {}
+        updates["invoked_specialized_sql"] = True
+        updates["sql_fields_specialized"] = list(trace.get("fields_used") or [])
         updates["metadata"] = _deep_merge(
             md,
             {
@@ -1407,6 +1438,13 @@ def vector_db_agent_node(state: GraphState) -> GraphState:
     try:
         hits = vector_database.query(q)
         count = len(hits or [])
+        updates["invoked_vector"] = True
+        updates["vector_chunks_retrieved"] = [
+            {"score": h.get("score"),
+             "source": (h.get("metadata") or {}).get("source"),
+             "page_content_preview": str(h.get("page_content", ""))[:200]}
+            for h in (hits or []) if isinstance(h, dict)
+        ]
         print(f"[vector_db_agent] hits={count}", flush=True)
         if hits:
             content_from_doc = ' '.join(i['page_content'] for i in hits)
@@ -1695,6 +1733,12 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         "summarizer_temperature_unsupported": summarizer_temperature_unsupported,
         "metadata": _deep_merge(metadata, {"debug": debug}),
     }
+    # Closed-loop cost accounting: the open arm fires no checkpoint, so its token
+    # total must come from the summarizer. Accumulate across retry re-runs.
+    _su = summarizer_token_usage if isinstance(summarizer_token_usage, dict) else {}
+    _su_total = int(_su.get("total_tokens") or _su.get("total") or 0)
+    updates["eval_total_tokens"] = int(state.get("eval_total_tokens") or 0) + _su_total
+    updates["eval_total_completions"] = int(state.get("eval_total_completions") or 0) + 1
     updates.update(_ensure_evaluator_state_defaults(state))
     return updates
 
@@ -2024,6 +2068,7 @@ def request_address_node(state: GraphState) -> GraphState:
     question = build_clarification_question(reason)
     return {
         "final_response": question,
+        "request_address_fired": True,
         "metadata": _deep_merge(
             md,
             {
@@ -2046,6 +2091,7 @@ def clarification_node(state: GraphState) -> GraphState:
     question = build_clarification_question(reason)
     return {
         "final_response": question,
+        "clarification_fired": True,
         "metadata": _deep_merge(
             md,
             {
@@ -2059,6 +2105,168 @@ def clarification_node(state: GraphState) -> GraphState:
             },
         ),
     }
+
+# =========================================================
+# Closed-loop checkpoint nodes (no-ops unless RUN_ARM set)
+# =========================================================
+
+def _make_checkpoint_evaluator():
+    from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
+    return InLoopEvaluator()
+
+
+def early_route_checkpoint_node(state: GraphState) -> GraphState:
+    """Judge the chosen route; in the full arm, rewind the router if implausible."""
+    arm = state.get("eval_arm") or os.environ.get("RUN_ARM", "")
+    if arm != "A_full" or not _env_bool("EARLY_CHECKPOINT_ENABLED", False):
+        return {}
+    print(f"[early_route_checkpoint] arm={arm}", flush=True)
+    try:
+        from src.evaluation.closed_loop.controller import EvaluationController, ControllerState
+        ev = _make_checkpoint_evaluator()
+        ctrl = ControllerState(
+            retry_budget_remaining=int(state.get("retry_budget") or 2),
+            attempt_history=list(state.get("checkpoint_history") or []),
+            arm=arm)
+        verdict = ev.route_plausible(
+            question=str(state.get("last_message") or ""),
+            chosen_route=str(state.get("top_route") or "building"),
+            has_address_flag=bool((state.get("metadata") or {}).get("address")),
+            dialogue_summary=None)
+        decision = EvaluationController().handle_early_checkpoint(verdict, ctrl)
+        rec = {"checkpoint_fired": "early",
+               "route_picked_this_attempt": state.get("top_route"),
+               "evaluator_verdict_json": {"verdict": verdict.verdict, "axes": verdict.axes},
+               "controller_action": decision.action,
+               "corrective_hint_passed": decision.corrective_hint}
+        u = getattr(ev, "last_usage", {}) or {}
+        updates: dict = {
+            "retry_budget": ctrl.retry_budget_remaining,
+            "checkpoint_history": ctrl.attempt_history,
+            "controller_flags": {**(state.get("controller_flags") or {}), **decision.flags},
+            "attempt_records": list(state.get("attempt_records") or []) + [rec],
+            "hint_target": decision.target_stage,
+            "eval_total_tokens": int(state.get("eval_total_tokens") or 0) + int(u.get("total_tokens", 0)),
+            "eval_total_completions": int(state.get("eval_total_completions") or 0) + 1,
+        }
+        if decision.corrective_hint:
+            updates["corrective_hint"] = decision.corrective_hint
+        print(f"[early_route_checkpoint] verdict={verdict.verdict} action={decision.action}", flush=True)
+        return updates
+    except Exception as e:
+        print(f"[early_route_checkpoint] ERROR (fail-open): {e}", flush=True)
+        return {"hint_target": None}  # never leave a stale rewind target on error
+
+
+def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
+    """Judge the final answer; rewind to the attributed stage on failure."""
+    arm = state.get("eval_arm") or os.environ.get("RUN_ARM", "")
+    if arm not in ("A_late_only", "A_full") or not _env_bool("LATE_CHECKPOINT_ENABLED", False):
+        return {}
+    print(f"[answer_quality_checkpoint] arm={arm}", flush=True)
+    try:
+        from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
+        from src.evaluation.closed_loop.controller import EvaluationController, ControllerState
+        ev = InLoopEvaluator()
+        ctrl = ControllerState(
+            retry_budget_remaining=int(state.get("retry_budget") or 2),
+            attempt_history=list(state.get("checkpoint_history") or []),
+            arm=arm)
+        verdict = ev.answer_quality(
+            question=str(state.get("last_message") or ""),
+            retrieved_evidence=state.get("aggregated_data") or {},
+            final_answer=str(state.get("final_response") or ""))
+        decision = EvaluationController().handle_late_checkpoint(verdict, ctrl)
+        specs = [a for a, f in [("generic_sql_agent", "invoked_generic_sql"),
+                                ("specialized_sql_agent", "invoked_specialized_sql"),
+                                ("vector_db_agent", "invoked_vector")] if state.get(f)]
+        rec = {"checkpoint_fired": "late",
+               "answer_drafted_this_attempt": str(state.get("final_response") or "")[:500],
+               "specialists_picked_this_attempt": sorted(specs),
+               "evaluator_verdict_json": {"verdict": verdict.verdict, "axes": verdict.axes, "composite": verdict.composite},
+               "evaluator_axes_json": verdict.axes,
+               "evaluator_composite": verdict.composite,
+               "evaluator_stage_attribution_judge": verdict.stage_attribution_judge,
+               "evaluator_stage_attribution_rule": verdict.stage_attribution_rule,
+               "controller_action": decision.action,
+               "corrective_hint_passed": decision.corrective_hint}
+        u = getattr(ev, "last_usage", {}) or {}
+        updates: dict = {
+            "retry_budget": ctrl.retry_budget_remaining,
+            "checkpoint_history": ctrl.attempt_history,
+            "controller_flags": {**(state.get("controller_flags") or {}), **decision.flags},
+            "attempt_records": list(state.get("attempt_records") or []) + [rec],
+            "hint_target": decision.target_stage,
+            "answer_quality_verdict": {"verdict": verdict.verdict, "axes": verdict.axes, "composite": verdict.composite},
+            "eval_total_tokens": int(state.get("eval_total_tokens") or 0) + int(u.get("total_tokens", 0)),
+            "eval_total_completions": int(state.get("eval_total_completions") or 0) + 1,
+        }
+        if decision.corrective_hint:
+            updates["corrective_hint"] = decision.corrective_hint
+        print(f"[answer_quality_checkpoint] verdict={verdict.verdict} action={decision.action}", flush=True)
+        return updates
+    except Exception as e:
+        print(f"[answer_quality_checkpoint] ERROR (fail-open): {e}", flush=True)
+        return {"hint_target": None}  # never leave a stale rewind target on error
+
+
+def rewind_to_router_node(state: GraphState) -> GraphState:
+    """Append the hint to the question and clear specialist state so the route is re-decided."""
+    print("[rewind_to_router] re-deciding route with corrective hint", flush=True)
+    hint = state.get("corrective_hint") or ""
+    msg = str(state.get("last_message") or "")
+    return {
+        "last_message": f"{msg}\n\n{hint}" if hint else msg,
+        "hint_target": None,
+        "done_generic_sql": None, "done_specialized_sql": None, "done_vector": None,
+        "invoked_generic_sql": False, "invoked_specialized_sql": False, "invoked_vector": False,
+        "sql_fields_generic": [], "sql_fields_specialized": [], "vector_chunks_retrieved": [],
+        "clarification_fired": False, "request_address_fired": False,
+        "aggregated_data": {}, "aggregated_data_cached": False,
+    }
+
+
+def rewind_to_specialists_node(state: GraphState) -> GraphState:
+    """Clear specialist state and pass the hint to the summarizer for the re-run."""
+    print("[rewind_to_specialists] re-selecting specialists", flush=True)
+    return {
+        "hint_target": None, "eval_feedback": state.get("corrective_hint") or "",
+        "done_generic_sql": None, "done_specialized_sql": None, "done_vector": None,
+        "invoked_generic_sql": False, "invoked_specialized_sql": False, "invoked_vector": False,
+        "sql_fields_generic": [], "sql_fields_specialized": [], "vector_chunks_retrieved": [],
+        "aggregated_data": {}, "aggregated_data_cached": False,
+    }
+
+
+def rewind_to_summarizer_node(state: GraphState) -> GraphState:
+    """Pass the corrective hint as eval_feedback; llm_summarizer_node reads it."""
+    print("[rewind_to_summarizer] re-summarising with corrective hint", flush=True)
+    return {"hint_target": None, "eval_feedback": state.get("corrective_hint") or ""}
+
+
+def _route_after_early_checkpoint(state: GraphState) -> str:
+    if state.get("hint_target") == "understand_context":
+        return "rewind_to_router"
+    return route_after_ambiguity(state)
+
+
+def _route_after_summarizer_with_checkpoint(state: GraphState) -> str:
+    arm = state.get("eval_arm") or os.environ.get("RUN_ARM", "")
+    if arm in ("A_late_only", "A_full") and _env_bool("LATE_CHECKPOINT_ENABLED", False):
+        return "answer_quality_checkpoint"
+    return route_after_summarizer(state)
+
+
+def _route_after_answer_quality_checkpoint(state: GraphState) -> str:
+    target = state.get("hint_target")
+    if target == "understand_context":
+        return "rewind_to_router"
+    if target == "maintain_history":
+        return "rewind_to_specialists"
+    if target == "llm_summarizer":
+        return "rewind_to_summarizer"
+    return "end"
+
 
 # ====================
 # Graph wiring (NEW)
@@ -2103,17 +2311,26 @@ def build_building_flow_graph() -> StateGraph:
     # Address request
     builder.add_node("request_address", request_address_node)
 
+    # Closed-loop checkpoint + rewind nodes (no-ops unless RUN_ARM selects an arm)
+    builder.add_node("early_route_checkpoint", early_route_checkpoint_node)
+    builder.add_node("answer_quality_checkpoint", answer_quality_checkpoint_node)
+    builder.add_node("rewind_to_router", rewind_to_router_node)
+    builder.add_node("rewind_to_specialists", rewind_to_specialists_node)
+    builder.add_node("rewind_to_summarizer", rewind_to_summarizer_node)
+
     # Entry
     builder.set_entry_point("understand_context")
 
-    # After parsing: ambiguity + address gate
+    # After parsing: early route checkpoint, then ambiguity + address gate
+    builder.add_edge("understand_context", "early_route_checkpoint")
     builder.add_conditional_edges(
-        "understand_context",
-        route_after_ambiguity,
+        "early_route_checkpoint",
+        _route_after_early_checkpoint,
         {
             "clarification": "clarification",
             "maintain_history": "maintain_history",
             "request_address": "request_address",
+            "rewind_to_router": "rewind_to_router",
         },
     )
 
@@ -2143,9 +2360,20 @@ def build_building_flow_graph() -> StateGraph:
     builder.add_edge("aggregator", "llm_summarizer")
     builder.add_conditional_edges(
         "llm_summarizer",
-        route_after_summarizer,
+        _route_after_summarizer_with_checkpoint,
         {
+            "answer_quality_checkpoint": "answer_quality_checkpoint",
             "evaluate_response": "evaluate_response",
+            "end": END,
+        },
+    )
+    builder.add_conditional_edges(
+        "answer_quality_checkpoint",
+        _route_after_answer_quality_checkpoint,
+        {
+            "rewind_to_router": "rewind_to_router",
+            "rewind_to_specialists": "rewind_to_specialists",
+            "rewind_to_summarizer": "rewind_to_summarizer",
             "end": END,
         },
     )
@@ -2157,6 +2385,11 @@ def build_building_flow_graph() -> StateGraph:
             "retry_summarizer": "llm_summarizer",
         },
     )
+
+    # Closed-loop rewind edges (cycles bounded by the retry budget)
+    builder.add_edge("rewind_to_router", "understand_context")
+    builder.add_edge("rewind_to_specialists", "maintain_history")
+    builder.add_edge("rewind_to_summarizer", "llm_summarizer")
 
     # Early exits
     builder.add_edge("clarification", END)
