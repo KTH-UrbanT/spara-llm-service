@@ -40,6 +40,27 @@ def test_must_include_fail(): assert check_must_include("Unknown.", {"must_inclu
 def test_must_not_include_pass(): assert check_must_not_include("114 m2.", {"must_not_include": ["guaranteed"]}) is True
 def test_must_not_include_fail(): assert check_must_not_include("Guaranteed!", {"must_not_include": ["guaranteed"]}) is False
 
+def test_judge_pass_true():
+    assert check_semantic_judge_pass({"verdict": "pass", "axes": {"calibration": 9}}) is True
+def test_judge_pass_false():
+    assert check_semantic_judge_pass({"verdict": "fail", "axes": {"calibration": 2}}) is False
+
+def test_judge_pass_without_axes_is_not_measured():
+    """A bare {"verdict": "pass"} means nothing was judged — it must not count as a pass."""
+    assert check_semantic_judge_pass({"verdict": "pass"}) is None
+    assert check_semantic_judge_pass({"verdict": "pass", "axes": {}}) is None
+    assert check_semantic_judge_pass(None) is None
+
+def test_judge_pass_fail_open_is_not_measured():
+    """The judge crashed and the safety path returned "pass"; that is not a measurement."""
+    v = {"verdict": "pass", "composite": 0.0, "axes": {"_fail_open": True, "_error": "boom"}}
+    assert check_semantic_judge_pass(v) is None
+
+def test_case_pass_treats_not_measured_as_not_passing():
+    checks = {k: True for k in ["route_match","agent_match","building_id_match",
+        "field_coverage_pass","must_include_pass","must_not_include_pass"]}
+    assert case_pass({**checks, "semantic_judge_pass": None}) is False
+
 def test_case_pass_all_true():
     assert case_pass({k: True for k in ["route_match","agent_match","building_id_match",
         "field_coverage_pass","must_include_pass","must_not_include_pass","semantic_judge_pass"]}) is True

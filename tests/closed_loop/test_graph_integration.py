@@ -73,6 +73,107 @@ def test_late_only_runs(base_env, monkeypatch):
 def test_full_runs(base_env, monkeypatch):
     assert _graph(monkeypatch, "A_full").invoke(_st("A_full")).get("final_response")
 
+def _wire_generic_question_without_address(monkeypatch):
+    """A general-advice question the parser mis-reads as needing SQL, and no address.
+
+    This is the EKR_GEN_017 / 019 / 030 shape: route_after_ambiguity sends it to
+    request_address, so the user gets "what is your address?" instead of an answer.
+    """
+    import src.agents.building_flow_graph as m
+    parser = MagicMock()
+    parser.return_value = {"context": {
+        "parsed_intent": "SQL database", "intent_list": ["SQL database"],
+        "ambiguous": False, "ambigious": False}}
+    monkeypatch.setattr(m, "parse_intent_agent", parser)
+
+
+def test_early_checkpoint_sees_the_pending_address_request(base_env, monkeypatch):
+    """Fix 5: the judge must be told the graph is about to demand an address.
+
+    Without this input it judged "is 'building' plausible?" in the abstract and said yes
+    on exactly the cases it was best placed to catch.
+    """
+    _wire_externals(monkeypatch)
+    _wire_generic_question_without_address(monkeypatch)
+    ev = MagicMock()
+    ev.route_plausible.return_value = MagicMock(
+        verdict="plausible", axes={"intent_consistency": 9, "precondition_satisfied": 9},
+        corrective_hint=None)
+    ev.last_usage = {"total_tokens": 12, "completion_tokens": 6}
+    monkeypatch.setattr("src.evaluation.closed_loop.in_loop_evaluator.InLoopEvaluator", lambda: ev)
+
+    with patch.dict(os.environ, {"RUN_ARM": "A_full", "EVALUATOR_MODE": "off",
+                                 "EARLY_CHECKPOINT_ENABLED": "true",
+                                 "LATE_CHECKPOINT_ENABLED": "true"}):
+        from src.agents.building_flow_graph import build_building_flow_graph
+        g = build_building_flow_graph()
+        st = _st("A_full")
+        st["metadata"] = {}          # no address anywhere -> the graph will ask for one
+        st["last_message"] = "How can I reduce heating costs in an apartment building?"
+        g.invoke(st)
+
+    assert ev.route_plausible.call_args.kwargs["about_to_request_address"] is True
+
+
+def test_early_checkpoint_flag_is_false_when_the_graph_can_answer(base_env, monkeypatch):
+    """The flag must not fire on building questions that do have an address."""
+    _wire_externals(monkeypatch)
+    ev = MagicMock()
+    ev.route_plausible.return_value = MagicMock(
+        verdict="plausible", axes={"intent_consistency": 9, "precondition_satisfied": 9},
+        corrective_hint=None)
+    ev.answer_quality.return_value = MagicMock(
+        verdict="pass", axes={"faithfulness": 9, "answer_relevance": 9,
+                              "question_coverage": 9, "calibration": 9},
+        composite=9.0, evidence_present=True, stage_attribution_judge="summarizer",
+        stage_attribution_rule="summarizer", corrective_hint=None)
+    ev.last_usage = {"total_tokens": 12, "completion_tokens": 6}
+    monkeypatch.setattr("src.evaluation.closed_loop.in_loop_evaluator.InLoopEvaluator", lambda: ev)
+
+    with patch.dict(os.environ, {"RUN_ARM": "A_full", "EVALUATOR_MODE": "off",
+                                 "EARLY_CHECKPOINT_ENABLED": "true",
+                                 "LATE_CHECKPOINT_ENABLED": "true"}):
+        from src.agents.building_flow_graph import build_building_flow_graph
+        build_building_flow_graph().invoke(_st("A_full"))
+
+    assert ev.route_plausible.call_args.kwargs["about_to_request_address"] is False
+
+
+def test_router_rewind_keeps_retrieval_instrumentation_in_a_cached_arm(base_env, monkeypatch):
+    """A cached arm's specialists skip their queries and never re-set invoked_* / sql_fields_*.
+    Clearing them on rewind would delete them for good, and the harness would then score the
+    case as route 'clarification' with zero field coverage while evidence_present stayed true."""
+    import src.agents.building_flow_graph as m
+    cached = {"aggregated_data_cached": True, "corrective_hint": "Route to generic.",
+              "invoked_generic_sql": True, "sql_fields_generic": ["energy_class"],
+              "aggregated_data": {"generic_sql": [{"byggnadsid": "B1"}]}}
+    out = m.rewind_to_router_node(cached)
+    for k in ("invoked_generic_sql", "sql_fields_generic", "aggregated_data"):
+        assert k not in out, f"{k} must not be cleared when the evidence is cached"
+    assert out["done_generic_sql"] is None          # barrier still reset
+    assert out["identity_gate_blocked"] is False    # stale gate must not re-fire
+
+    live = dict(cached, aggregated_data_cached=False)
+    out2 = m.rewind_to_router_node(live)
+    assert out2["invoked_generic_sql"] is False and out2["aggregated_data"] == {}
+
+
+def test_router_hint_reaches_the_parser_but_not_the_question(base_env, monkeypatch):
+    """Fix 6: the hint must steer the intent parser, or the rewind is a silent no-op —
+    and it must NOT end up in last_message, which the judge reads as the user's question."""
+    import src.agents.building_flow_graph as m
+    _wire_externals(monkeypatch)
+    st = {"last_message": "Atemp of T 1?", "router_hint": "Route to generic instead.",
+          "messages": [], "metadata": {"address": "T 1"}}
+
+    out = m.understand_context_node(st)
+
+    parsed_msg = m.parse_intent_agent.call_args.args[0]["last_message"]
+    assert "Route to generic instead." in parsed_msg
+    assert out["last_message"] == "Atemp of T 1?"      # question left untouched
+    assert out.get("router_hint") is None              # consumed, never re-applied
+
+
 def test_backward_compatible(base_env, monkeypatch):
     """With RUN_ARM unset, the graph behaves exactly as the production pipeline."""
     _wire_externals(monkeypatch)

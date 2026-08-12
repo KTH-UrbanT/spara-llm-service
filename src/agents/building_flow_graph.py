@@ -824,9 +824,20 @@ def understand_context_node(state: GraphState) -> GraphState:
     if merged_metadata:
         state["metadata"] = merge_identifier_metadata(merged_metadata, prior_state)
 
-    # Parse on a SAFE subset to avoid in-place mutation of the live state
+    # Parse on a SAFE subset to avoid in-place mutation of the live state.
+    # A router rewind (closed loop) puts its correction in `router_hint`. The hint has to
+    # reach the intent parser — re-parsing the identical question would re-pick the
+    # identical route and the rewind would be a silent no-op — but it must NOT reach
+    # `state["last_message"]`, which the judges and the summariser read as the user's
+    # question. So it is appended to the parser's input only.
+    _msg = state.get("last_message")
+    _router_hint = state.get("router_hint")
+    if _router_hint:
+        _msg = f"{_msg}\n\n{_router_hint}"
+        state["router_hint"] = None  # consumed; never re-apply on a later pass
+        print("[understand_context] re-parsing with router hint", flush=True)
     parse_input = {
-        "last_message": state.get("last_message"),
+        "last_message": _msg,
         "messages": state.get("messages", []),
     }
     parsed = parse_intent_agent(copy.deepcopy(parse_input))  # defensive copy
@@ -2125,13 +2136,23 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
         from src.evaluation.closed_loop.controller import EvaluationController, ControllerState
         ev = _make_checkpoint_evaluator()
         ctrl = ControllerState(
-            retry_budget_remaining=int(state.get("retry_budget") or 2),
+            # `or 2` would silently resurrect an exhausted budget, since `0 or 2` is 2.
+            # `.get`'s default only fires when the key is absent, so an exhausted 0 survives.
+            retry_budget_remaining=int(state.get("retry_budget", 2)),
             attempt_history=list(state.get("checkpoint_history") or []),
             arm=arm)
+        # This checkpoint already sits on the edge that leads to request_address, but it was
+        # never told which way that edge is about to go — so it judged "is 'building' a
+        # plausible route?" in the abstract and answered "plausible" on generic questions the
+        # graph was about to bounce back to the user for an address. route_after_ambiguity is
+        # a pure read of the state, so we can ask it here and hand the judge the actual
+        # pending decision. Not a threshold change: an added input (plan-eil-v20-fixes Fix 5).
+        pending_hop = route_after_ambiguity(state)
         verdict = ev.route_plausible(
             question=str(state.get("last_message") or ""),
             chosen_route=str(state.get("top_route") or "building"),
             has_address_flag=bool((state.get("metadata") or {}).get("address")),
+            about_to_request_address=(pending_hop == "request_address"),
             dialogue_summary=None)
         decision = EvaluationController().handle_early_checkpoint(verdict, ctrl)
         rec = {"checkpoint_fired": "early",
@@ -2169,7 +2190,8 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
         from src.evaluation.closed_loop.controller import EvaluationController, ControllerState
         ev = InLoopEvaluator()
         ctrl = ControllerState(
-            retry_budget_remaining=int(state.get("retry_budget") or 2),
+            # See the early checkpoint: `or 2` would resurrect an exhausted budget.
+            retry_budget_remaining=int(state.get("retry_budget", 2)),
             attempt_history=list(state.get("checkpoint_history") or []),
             arm=arm)
         verdict = ev.answer_quality(
@@ -2186,6 +2208,7 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
                "evaluator_verdict_json": {"verdict": verdict.verdict, "axes": verdict.axes, "composite": verdict.composite},
                "evaluator_axes_json": verdict.axes,
                "evaluator_composite": verdict.composite,
+               "evidence_present": verdict.evidence_present,
                "evaluator_stage_attribution_judge": verdict.stage_attribution_judge,
                "evaluator_stage_attribution_rule": verdict.stage_attribution_rule,
                "controller_action": decision.action,
@@ -2197,7 +2220,9 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
             "controller_flags": {**(state.get("controller_flags") or {}), **decision.flags},
             "attempt_records": list(state.get("attempt_records") or []) + [rec],
             "hint_target": decision.target_stage,
-            "answer_quality_verdict": {"verdict": verdict.verdict, "axes": verdict.axes, "composite": verdict.composite},
+            "answer_quality_verdict": {"verdict": verdict.verdict, "axes": verdict.axes,
+                                       "composite": verdict.composite,
+                                       "evidence_present": verdict.evidence_present},
             "eval_total_tokens": int(state.get("eval_total_tokens") or 0) + int(u.get("total_tokens", 0)),
             "eval_total_completions": int(state.get("eval_total_completions") or 0) + 1,
         }
@@ -2211,19 +2236,42 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
 
 
 def rewind_to_router_node(state: GraphState) -> GraphState:
-    """Append the hint to the question and clear specialist state so the route is re-decided."""
+    """Clear the routing decision so understand_context can re-decide it with a hint.
+
+    The hint goes to `router_hint`, NOT onto `last_message`: understand_context_node
+    feeds it to the intent parser (which is the only thing that must see it), while
+    `last_message` stays the user's original question so the judges and the summariser
+    are never shown the correction as if the user had written it.
+
+    Evidence and its instrumentation are cleared only when this arm owns them. In a
+    cached arm the specialists skip their queries, so they never re-set `invoked_*` /
+    `sql_fields_*` and never re-merge `aggregated_data`. Clearing any of it here would
+    delete it permanently — the harness would then read `sql_fields_used: []` and score
+    the case as route `clarification` with zero field coverage, while `evidence_present`
+    still reported true from the preserved `aggregated_data`. That also breaks the
+    byte-identical-evidence guarantee the paired comparison rests on.
+    """
     print("[rewind_to_router] re-deciding route with corrective hint", flush=True)
-    hint = state.get("corrective_hint") or ""
-    msg = str(state.get("last_message") or "")
-    return {
-        "last_message": f"{msg}\n\n{hint}" if hint else msg,
+    cached = bool(state.get("aggregated_data_cached"))
+    # Always cleared: the barrier flags, so wait_for_replies waits for the new attempt.
+    # The specialists re-run and re-set these in both arms (a cached one returns early
+    # but still reports done).
+    updates: GraphState = {
+        "router_hint": state.get("corrective_hint") or "",
         "hint_target": None,
         "done_generic_sql": None, "done_specialized_sql": None, "done_vector": None,
-        "invoked_generic_sql": False, "invoked_specialized_sql": False, "invoked_vector": False,
-        "sql_fields_generic": [], "sql_fields_specialized": [], "vector_chunks_retrieved": [],
+        # Decision flags from the attempt being rewound, including the identity gate —
+        # a surviving gate flag would re-force clarification and make the rewind a no-op.
         "clarification_fired": False, "request_address_fired": False,
-        "aggregated_data": {}, "aggregated_data_cached": False,
+        "identity_gate_blocked": False,
     }
+    if not cached:
+        updates.update({
+            "invoked_generic_sql": False, "invoked_specialized_sql": False, "invoked_vector": False,
+            "sql_fields_generic": [], "sql_fields_specialized": [], "vector_chunks_retrieved": [],
+            "aggregated_data": {},
+        })
+    return updates
 
 
 def rewind_to_specialists_node(state: GraphState) -> GraphState:

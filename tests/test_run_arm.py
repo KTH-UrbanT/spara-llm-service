@@ -107,6 +107,24 @@ def _configure_passing_evaluator(flow_module):
 
     Same pattern used by tests in test_building_flow_with_evaluator.py.
     """
+    # The intent parser and SQL layer must return REAL values, not bare MagicMocks.
+    # `assess_building_identity` needs exactly one candidate building id to return
+    # status "passed"; a MagicMock yields none, so the identity gate blocks and the
+    # graph exits via clarification -> END, never reaching the summarizer or the
+    # evaluator. (That is what these tests assert on.)
+    flow_module.parse_intent_agent = MagicMock(return_value={"context": {
+        "parsed_intent": "SQL database", "intent_list": ["SQL database"],
+        "address": "Testgatan 1", "ambiguous": False, "ambigious": False}})
+    flow_module.sql_mapper_layer = MagicMock()
+    flow_module.sql_mapper_layer.execute.return_value = {
+        "ok": True,
+        "data": [{"byggnadsid": "B1", "address": "Testgatan 1", "energy_class": "A"}],
+        "message": "ok",
+        "trace": {"query_type": "generic_sql", "execution_status": "success",
+                  "rows_returned": 1, "match_strategy": "eq",
+                  "returned_values_used": {"byggnadsid": "B1"}},
+    }
+
     flow_module.llm_summarizer = MagicMock()
     flow_module.llm_summarizer.generate_response.return_value = "Mocked answer."
     flow_module.llm_summarizer._last_call_meta = {

@@ -1,0 +1,33 @@
+ Container spara-dev-llm-service-run-48365029cbe6 Creating 
+ Container spara-dev-llm-service-run-48365029cbe6 Created 
+
+=== stored (as the run recorded it) ===
+  A_open       case_pass 19/88 = 0.216  (n=77: 19/77 = 0.247)   judge 51/88 = 0.580   judge-only 30/67 = 0.448
+  A_late_only  case_pass 13/88 = 0.148  (n=77: 13/77 = 0.169)   judge 50/88 = 0.568   judge-only 29/67 = 0.433
+  A_full       case_pass 14/88 = 0.159  (n=77: 14/77 = 0.182)   judge 51/88 = 0.580   judge-only 32/69 = 0.464
+
+=== + Fix 2: cost/wall vetoes out of case_pass ===
+  A_open       case_pass 19/88 = 0.216  (n=77: 19/77 = 0.247)   judge 51/88 = 0.580   judge-only 30/67 = 0.448
+  A_late_only  case_pass 19/88 = 0.216  (n=77: 19/77 = 0.247)   judge 50/88 = 0.568   judge-only 29/67 = 0.433
+  A_full       case_pass 19/88 = 0.216  (n=77: 19/77 = 0.247)   judge 51/88 = 0.580   judge-only 32/69 = 0.464
+
+=== + Fix 3: tri-state judge, gold-conditional short-circuit ===
+  A_open       case_pass 17/88 = 0.193  (n=77: 17/77 = 0.221)   judge 29/85 = 0.341   judge-only 27/64 = 0.422
+  A_late_only  case_pass 18/88 = 0.205  (n=77: 18/77 = 0.234)   judge 30/87 = 0.345   judge-only 28/66 = 0.424
+  A_full       case_pass 19/88 = 0.216  (n=77: 19/77 = 0.247)   judge 33/87 = 0.379   judge-only 31/68 = 0.456
+
+=== + Fix 4: faithfulness N/A without evidence ===
+  A_open       case_pass 34/88 = 0.386  (n=77: 34/77 = 0.442)   judge 54/85 = 0.635   judge-only 52/64 = 0.812
+  A_late_only  case_pass 40/88 = 0.455  (n=77: 40/77 = 0.519)   judge 59/87 = 0.678   judge-only 57/66 = 0.864
+  A_full       case_pass 44/88 = 0.500  (n=77: 44/77 = 0.571)   judge 65/87 = 0.747   judge-only 63/68 = 0.926
+
+--- A_open by expected_route, all fixes applied ---
+      building_specific    13/34
+      clarification        2/5
+      combined             0/11
+      generic              19/38
+
+--- A_open: evidence inferred absent on 39/88 scored cases ---
+    (proxy only — the stored rows predate the evidence_present column, so this
+     counts judged cases with no SQL fields and no vector chunks. Prediction 1
+     is checked against the live column, not this.)

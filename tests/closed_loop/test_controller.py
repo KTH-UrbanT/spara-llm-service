@@ -16,6 +16,28 @@ def _av(v="fail", a="summarizer", h="Fix numbers."):
 
 c = EvaluationController()
 
+def test_late_rewinds_when_faithfulness_is_not_applicable():
+    """Fix 4 puts None in axes when there was no evidence. The controller ranks axes with
+    min(); a None there raises TypeError inside the checkpoint node's try, which fails open
+    and silently cancels the rewind on exactly the empty-evidence cases Fix 4 is about."""
+    v = AnswerVerdict(verdict="fail",
+                      axes={"faithfulness": None, "answer_relevance": 8,
+                            "question_coverage": 8, "calibration": 2},
+                      composite=6.0, evidence_present=False,
+                      stage_attribution_judge="summarizer", stage_attribution_rule="summarizer",
+                      corrective_hint="Hedge where evidence is missing.")
+    s = _ctrl(arm="A_full", budget=2)
+    d = c.handle_late_checkpoint(v, s)
+    assert d.action == "rewind" and d.target_stage == "llm_summarizer"
+    assert "calibration" in d.corrective_hint      # the worst APPLICABLE axis
+    assert "faithfulness=None" not in d.corrective_hint
+
+def test_early_rewinds_with_a_none_axis():
+    v = RouteVerdict(verdict="implausible",
+                     axes={"intent_consistency": 3, "precondition_satisfied": None},
+                     corrective_hint="Route to generic instead of building.")
+    assert c.handle_early_checkpoint(v, _ctrl(arm="A_full")).action == "rewind"
+
 def test_early_plausible_continues(): assert c.handle_early_checkpoint(_rv("plausible"), _ctrl()).action == "continue"
 def test_early_ambiguous_continues(): assert c.handle_early_checkpoint(_rv("ambiguous"), _ctrl()).action == "continue"
 def test_early_implausible_full_rewinds():

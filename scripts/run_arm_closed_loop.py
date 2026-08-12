@@ -21,19 +21,32 @@ _ARM_ENV = {
     "A_late_only": {"RUN_ARM":"A_late_only", "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off"},
     "A_full":      {"RUN_ARM":"A_full",      "EARLY_CHECKPOINT_ENABLED":"true", "LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off"},
 }
-WALL_BUDGET_S = 60     # per-case hard cap; overruns count as fails
+# Reported as covariates, NOT vetoes: a budget that can only fire in the treatment
+# arms (load_cost_cap returns None without --cache-from) is a confound, not a budget.
+# See plan-eil-v20-fixes.md Fix 2.
+WALL_BUDGET_S = 300    # per-case wall clock; recorded, never vetoes case_pass
 MAX_RETRIES = 2        # per case, across both checkpoints
 COST_CAP_MULT = 5.0    # per-case token cap = this x the open-arm per-case mean
 
 _AGENT_FOR_ROUTE = {"generic": "GenericAgent", "building": "BuildingAgent",
                     "conversational": "ConversationalistAgent"}
+
+# The rule: cache verdicts DERIVED FROM the cached evidence; never cache flags produced
+# by this arm's own traversal.
+#   - identity_gate_blocked is computed inside generic_sql_agent_node, which the cached
+#     arms skip precisely because the evidence is cached — so without it they run 14 cases
+#     on to the summariser that A_open short-circuited, and the arms are not comparable.
+#   - clarification_fired / request_address_fired record where THIS run's control flow
+#     went. Caching them made the treatment arms inherit a decision they never made, and
+#     let the stale flag overwrite a real judge verdict with a fake pass (§1.5b).
 _CACHE_KEYS = ["aggregated_data", "invoked_generic_sql", "invoked_specialized_sql",
                "invoked_vector", "sql_fields_generic", "sql_fields_specialized",
-               "vector_chunks_retrieved", "clarification_fired", "request_address_fired",
-               # Include the identity-check verdict so cached arms resolve building_id
-               # the same way A_open did (otherwise A_open uses matched_building_id and
-               # the cached arms silently fall back to byggnadsid[0] → asymmetric metric).
-               "_cached_building_identity_check"]
+               "vector_chunks_retrieved", "identity_gate_blocked"]
+
+# Snapshotted alongside the evidence (it lives under state.metadata, not at top level) so
+# cached arms resolve building_id the same way A_open did — otherwise A_open uses
+# matched_building_id and the cached arms fall back to byggnadsid[0] → asymmetric metric.
+_CACHED_IDENTITY_KEY = "building_identity_check"
 
 
 def setup_environment(arm: str, run_id: str) -> None:
@@ -122,12 +135,8 @@ def extract_snapshot(final_state: dict) -> dict:
         "total_tokens": int(final_state.get("eval_total_tokens") or 0),
         "total_completions": int(final_state.get("eval_total_completions") or 0),
         "cache_bundle": {
-            **{k: final_state.get(k) for k in _CACHE_KEYS if not k.startswith("_cached_")},
-            # The identity-check verdict lives under state.metadata; we snapshot it
-            # explicitly so cached arms can rehydrate it and resolve building_id
-            # consistently with A_open.
-            "_cached_building_identity_check":
-                (final_state.get("metadata") or {}).get("building_identity_check"),
+            **{k: final_state.get(k) for k in _CACHE_KEYS},
+            _CACHED_IDENTITY_KEY: bic or None,
         },
     }
 
@@ -160,14 +169,14 @@ def build_initial_state(case: dict, arm: str, cached: dict | None) -> dict:
         state["aggregated_data"] = cached.get("aggregated_data") or {}
         state["aggregated_data_cached"] = True
         for k in _CACHE_KEYS:
-            if k in cached and k != "aggregated_data" and not k.startswith("_cached_"):
+            if k in cached and k != "aggregated_data":
                 state[k] = cached[k]
         # Rehydrate the identity-check verdict under state.metadata so extract_snapshot
         # in the cached arm uses the same matched_building_id as A_open did.
-        bic = cached.get("_cached_building_identity_check")
+        bic = cached.get(_CACHED_IDENTITY_KEY)
         if bic:
             metadata = dict(state.get("metadata") or {})
-            metadata["building_identity_check"] = bic
+            metadata[_CACHED_IDENTITY_KEY] = bic
             state["metadata"] = metadata
     return state
 
@@ -175,24 +184,35 @@ def build_initial_state(case: dict, arm: str, cached: dict | None) -> dict:
 def resolve_scoring_verdict(snap: dict, case: dict, get_scorer) -> dict:
     """The answer-quality verdict that feeds semantic_judge_pass, defined for every arm.
 
-    - A clarification / address-request outcome has no substantive answer to judge -> pass.
-    - The closed-loop arms already produced an in-loop verdict (the final attempt's) -> reuse it.
+    - A clarification / address-request outcome produced no substantive answer to judge.
+      Whether that was the right move is a GOLD question, so it is answered here in the
+      offline harness and never by the judge: asking for an address is a pass only when
+      the gold label says clarification was expected, and a fail otherwise. Passing it
+      unconditionally is what awarded a pass every time the system dodged the question
+      (§1.6a) — 21 of 88 cases in the 05-30 run.
+    - The closed-loop arms already produced an in-loop verdict (the final attempt's) -> reuse
+      it. Note this is checked AFTER the flags, so a rewind that lands in request_address is
+      scored on that outcome rather than on a stale attempt-1 verdict.
     - The open arm runs no checkpoint, so the harness scores its single answer once. This call
       is measurement only and is not counted toward the arm's reported pipeline cost.
     """
     if snap.get("clarification_fired") or snap.get("request_address_fired"):
-        return {"verdict": "pass"}
+        expected_clarification = case.get("expected_route") == "clarification"
+        return {"verdict": "pass" if expected_clarification else "fail",
+                "axes": {"_short_circuit": True},
+                "composite": 0.0}
     v = snap.get("answer_quality_verdict")
     if v is not None:
         return v
     answer = snap.get("final_answer") or ""
     if not answer:
-        return {"verdict": "fail"}
+        return {"verdict": "fail", "axes": {"_no_answer": True}, "composite": 0.0}
     av = get_scorer().answer_quality(
         question=case["question"],
         retrieved_evidence=snap.get("aggregated_data") or {},
         final_answer=answer)
-    return {"verdict": av.verdict, "axes": av.axes, "composite": av.composite}
+    return {"verdict": av.verdict, "axes": av.axes, "composite": av.composite,
+            "evidence_present": av.evidence_present}
 
 
 def run_case(graph, case: dict, arm: str, cached: dict | None) -> dict:
@@ -271,9 +291,13 @@ def run(args) -> int:
 
         score_verdict = resolve_scoring_verdict(snap, case, _get_scorer)
         checks = run_all_checks(snap, snap["final_answer"], case, score_verdict)
+        # Recorded as covariates only. Both can fire ONLY in the treatment arms
+        # (load_cost_cap returns None without --cache-from), so vetoing case_pass with
+        # them manufactured the entire reported negative result (§1.5a). The capped rate
+        # is a pre-declared sensitivity analysis, computed from these columns downstream.
         cost_exceeded = bool(cost_cap is not None and snap.get("total_tokens", 0) > cost_cap)
         wall_exceeded = bool(snap.get("wall_budget_exceeded", False))
-        cp = passed(checks) and not wall_exceeded and not cost_exceeded
+        cp = passed(checks)
         n_pass += int(cp); n_total += 1
         flags = snap.get("controller_flags") or {}
         row = {
@@ -290,6 +314,12 @@ def run(args) -> int:
             "final_vector_chunks_retrieved": snap.get("vector_chunks_retrieved"),
             "final_answer": snap["final_answer"][:1000],
             "answer_quality_verdict": score_verdict,
+            # Control-flow and evidence visibility. evidence_present in particular makes a
+            # dead upstream channel a flag on the row instead of a mysteriously low
+            # faithfulness score — the evaluator would have caught the outage (§1.3).
+            "clarification_fired": bool(snap.get("clarification_fired")),
+            "request_address_fired": bool(snap.get("request_address_fired")),
+            "evidence_present": any(bool(v) for v in (snap.get("aggregated_data") or {}).values()),
             "total_attempts": 1 + (MAX_RETRIES - snap["retry_budget"]),  # 1 = no retry
             "early_block_exhausted": flags.get("early_block_exhausted", False),
             "closed_loop_terminated_without_pass": flags.get("closed_loop_terminated_without_pass", False),

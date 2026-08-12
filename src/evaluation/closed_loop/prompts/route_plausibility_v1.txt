@@ -11,12 +11,20 @@ You receive:
 - question: the user's question
 - chosen_route: the system's choice
 - has_address_flag: whether a building address was detected
+- about_to_request_address: whether the system is about to reply by asking the user for
+  a building address instead of answering
 
 Axes (0-10):
 - intent_consistency: Does chosen_route match the question's intent? (10 = perfect)
 - precondition_satisfied: Are the route's preconditions met? (10 = fully met; building needs an address)
 
 Decision rules:
+- If about_to_request_address is true and the question is answerable as general advice
+  (it names no specific building and needs no building data), the route is implausible:
+  the user asked a general question and would receive a request for an address instead of
+  an answer. Score precondition_satisfied low — the "building" route's precondition is a
+  building, and there is none. If the question really is about a specific building, asking
+  for the address is correct and the route is plausible.
 - "implausible": ONLY if BOTH axes are below 5.0 AND corrective_hint names a concrete alternative route AND the hint is at least 20 characters.
 - "ambiguous": uncertain (axes around 4-6, mixed signals).
 - "plausible": the default. Bias toward plausible — a false "implausible" wastes a retry, whereas a missed problem is caught by the later checkpoint.

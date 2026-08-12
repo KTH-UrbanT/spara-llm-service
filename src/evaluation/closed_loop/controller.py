@@ -26,6 +26,19 @@ class ControllerDecision:
     flags: dict = field(default_factory=dict)
 
 
+def _rankable(axes: dict | None) -> dict:
+    """Axes that can be ordered to pick the worst one.
+
+    Drops the `_`-prefixed bookkeeping keys (`_fail_open`, `_short_circuit`, ...) and
+    any axis scored None. None means "not applicable" — the judge had no input for it
+    (today: faithfulness with no evidence). Leaving it in makes `min()` compare None
+    against an int, which raises TypeError inside the checkpoint node's try/except and
+    silently turns the rewind into a no-op on exactly the cases it is meant to correct.
+    """
+    return {k: v for k, v in (axes or {}).items()
+            if not str(k).startswith("_") and v is not None}
+
+
 def _fmt(n: int, stage: str, prior: str, axis: str, hint: str) -> str:
     """The note injected verbatim into the upstream stage's prompt on rewind."""
     return (f"[previous_attempt_note]\nattempt: {n}\nstage: {stage}\n"
@@ -41,7 +54,7 @@ class EvaluationController:
             return ControllerDecision(action="continue")
         if ctrl.retry_budget_remaining <= 0 or ("understand_context", "rewind") in ctrl.attempt_history:
             return ControllerDecision(action="continue", flags={"early_block_exhausted": True})
-        axes = {k: v for k, v in (verdict.axes or {}).items() if not str(k).startswith("_")}
+        axes = _rankable(verdict.axes)
         lowest = min(axes, key=axes.get, default="intent_consistency")
         n = 2 - ctrl.retry_budget_remaining + 1
         hint = _fmt(n, "router", "axes: " + ", ".join(f"{k}={v}" for k, v in axes.items()),
@@ -73,7 +86,7 @@ class EvaluationController:
         if (target, "rewind") in ctrl.attempt_history:  # anti-thrash
             return ControllerDecision(action="terminate",
                                       flags={"closed_loop_terminated_without_pass": True})
-        axes = {k: v for k, v in (verdict.axes or {}).items() if not str(k).startswith("_")}
+        axes = _rankable(verdict.axes)
         lowest = min(axes, key=axes.get, default=attr)
         n = 2 - ctrl.retry_budget_remaining + 1
         hint = _fmt(n, attr, f"composite={verdict.composite:.1f}", lowest,

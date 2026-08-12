@@ -19,6 +19,11 @@ TAU_HINT_MIN_CHARS = 20  # minimum hint length for "implausible" to fire
 TAU_SEMANTIC = 7.0       # late checkpoint: composite pass threshold
 TAU_AXIS_FLOOR = 4.0     # late checkpoint: any axis below this forces a fail
 
+# On o3/o4 deployments reasoning tokens count against this budget, so a value sized
+# for the JSON alone returns an empty completion — which the fail-open then converts
+# into a silent pass. Sized for reasoning + the verdict.
+_MAX_COMPLETION_TOKENS = 6000
+
 _AXIS_ORDER = ["faithfulness", "answer_relevance", "question_coverage", "calibration"]
 _AXIS_TO_STAGE = {"faithfulness": "summarizer", "answer_relevance": "router",
                   "question_coverage": "specialists", "calibration": "summarizer"}
@@ -40,6 +45,10 @@ class AnswerVerdict:
     stage_attribution_judge: str   # the judge's own guess (recorded for analysis)
     stage_attribution_rule: str    # deterministic rule (drives the controller)
     corrective_hint: str | None
+    # False when the judge was handed no evidence. Recorded on every verdict so a
+    # dead upstream retrieval channel shows up as a flag instead of disappearing
+    # into a low quality score (§1.3).
+    evidence_present: bool = True
     raw_json: dict = field(default_factory=dict)
 
 
@@ -52,16 +61,55 @@ def _parse(content: str) -> dict | None:
         return None
 
 
+def _applicable(axes: dict) -> dict:
+    """The axes the pass rule and the attribution rule apply over.
+
+    An axis explicitly set to None is *not applicable* — today only
+    `faithfulness`, when there was no evidence to check the answer against
+    (see `_score`) — and is dropped rather than read as a zero. An axis the
+    judge simply *omitted* still counts as 0, so a missing score is attributed
+    to its stage rather than masked.
+    """
+    return {a: (axes[a] if a in axes else 0)
+            for a in _AXIS_ORDER if not (a in axes and axes[a] is None)}
+
+
+def _score(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str]:
+    """Parse the judge's axes and apply the pre-registered pass rule.
+
+    `faithfulness` asks whether the answer's claims are supported by the
+    retrieved evidence. With no evidence there is nothing to support them
+    against, so the axis has no input: it is recorded as None ("not measured")
+    rather than scored 0. A 0 would both drag the composite down and trip the
+    floor, failing correct answers because of an upstream retrieval outage
+    (§1.2). TAU_SEMANTIC and TAU_AXIS_FLOOR are unchanged — only the set of
+    axes they are applied over changes.
+
+    Returns (axes, composite, verdict).
+    """
+    # None is the judge saying "not applicable" — keep it, never int() it.
+    axes = {k: (None if v is None else int(v)) for k, v in (raw_axes or {}).items()}
+    if not evidence_present:
+        axes["faithfulness"] = None
+
+    vals = _applicable(axes)
+    composite = sum(vals.values()) / len(vals) if vals else 0.0
+    floor_fail = any(v < TAU_AXIS_FLOOR for v in vals.values())
+    verdict = "fail" if (floor_fail or composite < TAU_SEMANTIC) else "pass"
+    return axes, composite, verdict
+
+
 def _stage_rule(verdict: str, axes: dict) -> str:
-    """Attribution rule. Missing axes are treated as 0 — consistent with the
-    floor check in answer_quality — so an omitted axis is attributed to its
-    stage rather than masked. When a fail is due purely to the composite (every
-    axis at or above the floor), the failing stage is indeterminate -> 'unknown'."""
-    vals = {a: axes.get(a, 0) for a in _AXIS_ORDER}
+    """Attribution rule, over the applicable axes only (see `_applicable`).
+
+    When a fail is due purely to the composite (every applicable axis at or
+    above the floor), the failing stage is indeterminate -> 'unknown'."""
+    vals = _applicable(axes)
+    if not vals:
+        return "unknown"
     if verdict == "fail" and all(v >= TAU_AXIS_FLOOR for v in vals.values()):
         return "unknown"
-    lowest = min(_AXIS_ORDER, key=lambda a: vals[a])
-    return _AXIS_TO_STAGE.get(lowest, "unknown")
+    return _AXIS_TO_STAGE.get(min(vals, key=lambda a: vals[a]), "unknown")
 
 
 class InLoopEvaluator:
@@ -92,11 +140,17 @@ class InLoopEvaluator:
         chosen_route: str,
         has_address_flag: bool,
         dialogue_summary: str | None,  # reserved for future multi-turn work; always None today
+        about_to_request_address: bool = False,
     ) -> RouteVerdict:
+        """`about_to_request_address` is the graph's pending next hop, not gold: it says the
+        router is about to bounce this question back to the user for an address. Without it
+        the judge cannot see the failure mode it is best placed to catch — a general-advice
+        question routed to `building` and answered with "what is your address?"."""
         try:
             raw = self._call(self._rp, json.dumps(
                 {"question": question, "chosen_route": chosen_route,
-                 "has_address_flag": has_address_flag}, ensure_ascii=False))
+                 "has_address_flag": has_address_flag,
+                 "about_to_request_address": about_to_request_address}, ensure_ascii=False))
             p = _parse(raw)
             if p is None:
                 raise ValueError(f"JSON failure: {raw[:200]!r}")
@@ -124,6 +178,9 @@ class InLoopEvaluator:
         retrieved_evidence: dict,
         final_answer: str,
     ) -> AnswerVerdict:
+        # A dict of empty containers holds no evidence: {"generic_sql": []} is
+        # truthy but there is nothing in it for faithfulness to check against.
+        evidence_present = any(bool(v) for v in (retrieved_evidence or {}).values())
         try:
             raw = self._call(self._ap, json.dumps(
                 {"question": question, "retrieved_evidence": retrieved_evidence,
@@ -131,13 +188,10 @@ class InLoopEvaluator:
             p = _parse(raw)
             if p is None:
                 raise ValueError(f"JSON failure: {raw[:200]!r}")
-            axes = {k: int(val) for k, val in (p.get("axes") or {}).items()}
-            vals = [axes.get(a, 0) for a in _AXIS_ORDER]
-            composite = sum(vals) / len(vals) if vals else 0.0
-            floor_fail = any(axes.get(a, 0) < TAU_AXIS_FLOOR for a in _AXIS_ORDER)
-            verdict = "fail" if (floor_fail or composite < TAU_SEMANTIC) else "pass"
+            axes, composite, verdict = _score(p.get("axes") or {}, evidence_present)
             return AnswerVerdict(
                 verdict=verdict, axes=axes, composite=composite,  # type: ignore
+                evidence_present=evidence_present,
                 stage_attribution_judge=str(p.get("stage_attribution") or "unknown"),
                 stage_attribution_rule=_stage_rule(verdict, axes),
                 corrective_hint=p.get("corrective_hint") or None, raw_json=p,
@@ -146,7 +200,8 @@ class InLoopEvaluator:
             logger.warning("answer_quality fail-open: %s", str(e)[:200])
             return AnswerVerdict(verdict="pass",
                                  axes={"_fail_open": True, "_error": str(e)[:200]},
-                                 composite=0.0, stage_attribution_judge="unknown",
+                                 composite=0.0, evidence_present=evidence_present,
+                                 stage_attribution_judge="unknown",
                                  stage_attribution_rule="unknown", corrective_hint=None)
 
     def _is_o4_family(self) -> bool:
@@ -161,10 +216,10 @@ class InLoopEvaluator:
         params: dict = {"model": self._dep, "messages": messages}
         if self._is_o4_family():
             # o4/o3: no temperature, max_completion_tokens (not max_tokens), no top_p.
-            params["max_completion_tokens"] = 2000
+            params["max_completion_tokens"] = _MAX_COMPLETION_TOKENS
         else:
             params["temperature"] = 0
-            params["max_tokens"] = 2000
+            params["max_tokens"] = _MAX_COMPLETION_TOKENS
         try:
             r = self._client.chat.completions.create(**params)
         except BadRequestError as e:

@@ -44,8 +44,23 @@ def check_must_not_include(final_answer: str, case: dict) -> bool:
     return not any(str(p).lower() in lo for p in (case.get("must_not_include") or []))
 
 
-def check_semantic_judge_pass(answer_verdict: dict | None) -> bool:
-    return (answer_verdict or {}).get("verdict") == "pass"
+def check_semantic_judge_pass(answer_verdict: dict | None) -> bool | None:
+    """Tri-state: True / False / None ("not measured").
+
+    None is returned when nothing was actually judged — a verdict with no axes
+    (a short-circuit that never called the judge) or one carrying `_fail_open`
+    (the judge crashed and the safety path returned a bare "pass"). Counting
+    either as a pass is what let every dodged question score a pass (§1.6a).
+
+    `analyze_results_closed_loop.py` drops None per check, so the per-check rate
+    is over cases that were genuinely measured, while `case_pass` treats None as
+    not passing (None is falsy) — an unmeasured case is not a passing case.
+    """
+    v = answer_verdict or {}
+    axes = v.get("axes") or {}
+    if not axes or axes.get("_fail_open"):
+        return None
+    return v.get("verdict") == "pass"
 
 
 def run_all_checks(snapshot: dict, final_answer: str, case: dict,
@@ -63,6 +78,8 @@ def run_all_checks(snapshot: dict, final_answer: str, case: dict,
 
 
 def case_pass(checks: dict) -> bool:
+    # semantic_judge_pass is tri-state; None ("not measured") is falsy and so
+    # already fails the case. Do not "fix" this into `is not False`.
     return all([
         checks.get("route_match", False),
         checks.get("agent_match", True),

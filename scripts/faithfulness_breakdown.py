@@ -10,18 +10,24 @@ from pathlib import Path
 AXES = ["faithfulness", "answer_relevance", "question_coverage", "calibration"]
 
 
+# Bookkeeping markers that mean "the judge never scored this case": a crashed judge, a
+# clarification/address short-circuit, or an empty answer. Rows carrying any of them must
+# be excluded from axis means rather than contributing four zeros.
+_NOT_JUDGED = ("_fail_open", "_short_circuit", "_no_answer")
+
+
 def _axes_of(row: dict) -> dict | None:
-    """Return the judge's axis scores, or None if the verdict was a fail-open default."""
+    """Return the judge's axis scores, or None if this case was never actually judged."""
     v = row.get("answer_quality_verdict") or {}
     axes = v.get("axes") or {}
-    if not axes or axes.get("_fail_open"):
+    if not axes or any(axes.get(m) for m in _NOT_JUDGED):
         return None
     return axes
 
 
 def _composite_of(row: dict) -> float | None:
     v = row.get("answer_quality_verdict") or {}
-    if (v.get("axes") or {}).get("_fail_open"):
+    if any((v.get("axes") or {}).get(m) for m in _NOT_JUDGED):
         return None
     c = v.get("composite")
     return float(c) if c is not None else None
@@ -36,10 +42,13 @@ def _source_prefix(case_id: str) -> str:
 
 
 def _row_mean(rows: list[dict], axis: str) -> float | None:
+    """Mean of one axis. A None score means "not applicable" — faithfulness on a case with
+    no evidence — and is excluded, not read as 0; averaging in a not-applicable as a zero
+    is the exact error the axis rule exists to prevent. An axis the judge omitted is 0."""
     vals = []
     for r in rows:
         ax = _axes_of(r)
-        if ax is not None:
+        if ax is not None and ax.get(axis, 0) is not None:
             vals.append(ax.get(axis, 0))
     return round(statistics.mean(vals), 2) if vals else None
 
@@ -94,10 +103,12 @@ def main(argv=None):
                 f"{round(statistics.mean(comps), 2) if comps else 'n/a'} |")
 
     # --- Worst K faithfulness cases (verbatim) ---
+    # Cases where faithfulness was not applicable (no evidence) have nothing to rank and
+    # are skipped; ranking them as 0 would fill this section with correct answers.
     scored = []
     for r in rows:
         ax = _axes_of(r)
-        if ax is not None:
+        if ax is not None and ax.get("faithfulness", 10) is not None:
             scored.append((ax.get("faithfulness", 10), r))
     scored.sort(key=lambda x: x[0])
     md += ["", f"## Worst {args.worst_k} faithfulness cases (verbatim)"]

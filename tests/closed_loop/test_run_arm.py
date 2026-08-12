@@ -41,16 +41,56 @@ def test_cache_miss(tmp_path):
     from scripts.run_arm_closed_loop import load_case_cache
     assert load_case_cache(tmp_path, "A_open", "Q999") is None
 
-def test_resolve_clarification_passes():
+def test_resolve_clarification_passes_only_when_gold_expects_it():
+    """Asking for an address is correct behaviour only when the gold route is clarification."""
     from scripts.run_arm_closed_loop import resolve_scoring_verdict
     snap = {"clarification_fired": True, "answer_quality_verdict": None, "final_answer": "Which address?"}
-    assert resolve_scoring_verdict(snap, {"question": "q"}, None)["verdict"] == "pass"
+    case = {"question": "q", "expected_route": "clarification"}
+    assert resolve_scoring_verdict(snap, case, None)["verdict"] == "pass"
+
+def test_resolve_clarification_fails_when_gold_expects_an_answer():
+    """The pathology: every dodged question used to be awarded a pass (21/88 in the 05-30 run)."""
+    from scripts.run_arm_closed_loop import resolve_scoring_verdict
+    snap = {"clarification_fired": True, "answer_quality_verdict": None, "final_answer": "Which address?"}
+    case = {"question": "q", "expected_route": "generic"}
+    assert resolve_scoring_verdict(snap, case, None)["verdict"] == "fail"
+
+def test_resolve_request_address_fails_when_gold_expects_an_answer():
+    from scripts.run_arm_closed_loop import resolve_scoring_verdict
+    snap = {"request_address_fired": True, "answer_quality_verdict": None, "final_answer": "Address?"}
+    case = {"question": "q", "expected_route": "building_specific"}
+    assert resolve_scoring_verdict(snap, case, None)["verdict"] == "fail"
+
+def test_resolve_short_circuit_beats_a_stale_in_loop_verdict():
+    """After a rewind that lands in request_address, score the outcome, not attempt 1."""
+    from scripts.run_arm_closed_loop import resolve_scoring_verdict
+    snap = {"request_address_fired": True, "final_answer": "Address?",
+            "answer_quality_verdict": {"verdict": "pass", "axes": {"calibration": 9}}}
+    case = {"question": "q", "expected_route": "generic"}
+    assert resolve_scoring_verdict(snap, case, None)["verdict"] == "fail"
 
 def test_resolve_reuses_in_loop_verdict():
     from scripts.run_arm_closed_loop import resolve_scoring_verdict
     snap = {"clarification_fired": False, "request_address_fired": False,
             "answer_quality_verdict": {"verdict": "fail"}, "final_answer": "x"}
     assert resolve_scoring_verdict(snap, {"question": "q"}, None)["verdict"] == "fail"
+
+def test_cache_keys_exclude_this_arms_decision_flags():
+    """Caching control-flow flags made the treatment arms inherit decisions they never made,
+    and let a stale flag overwrite a real judge verdict with a fake pass (§1.5b)."""
+    from scripts.run_arm_closed_loop import _CACHE_KEYS
+    assert "clarification_fired" not in _CACHE_KEYS
+    assert "request_address_fired" not in _CACHE_KEYS
+    # ...but the identity gate IS derived from the cached evidence, so it must carry over:
+    # the node that computes it is skipped precisely because the evidence is cached.
+    assert "identity_gate_blocked" in _CACHE_KEYS
+
+def test_identity_gate_flag_round_trips_into_the_cached_arm():
+    from scripts.run_arm_closed_loop import extract_snapshot, build_initial_state
+    snap = extract_snapshot({"top_route": "building", "identity_gate_blocked": True,
+                             "final_response": "Could not find that building."})
+    state = build_initial_state({"case_id": "X", "question": "q"}, "A_full", snap["cache_bundle"])
+    assert state["identity_gate_blocked"] is True
 
 def test_resolve_open_arm_scores_once():
     from unittest.mock import MagicMock

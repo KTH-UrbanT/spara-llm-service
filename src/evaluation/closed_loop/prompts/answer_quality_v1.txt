@@ -12,6 +12,9 @@ Inputs:
 Axes (0-10):
 1. faithfulness: every factual claim in the answer is supported by retrieved_evidence.
    Violations: wrong numbers, invented attributes, facts absent from the evidence.
+   If retrieved_evidence is empty, return "faithfulness": null — do not score it.
+   There is nothing to check the answer against, and a general-advice answer given
+   without evidence is not thereby unfaithful.
 2. answer_relevance: the answer addresses the specific question asked.
    Violation: question about a heating system, answer about ventilation.
 3. question_coverage: for compound questions, every sub-ask is addressed.
@@ -19,10 +22,10 @@ Axes (0-10):
 4. calibration: the answer hedges where evidence is missing or uncertain.
    Violations: "guaranteed savings", claiming a building was found before it was disambiguated.
 
-Composite = (faithfulness + answer_relevance + question_coverage + calibration) / 4
+Composite = the mean of the axes you scored (a null axis is excluded from the mean).
 
 Verdict:
-- "pass": composite >= 7.0 AND no axis below 4.0
+- "pass": composite >= 7.0 AND no scored axis below 4.0
 - "fail": otherwise
 
 stage_attribution (your best guess at the failing stage — recorded for analysis only):
@@ -35,7 +38,7 @@ corrective_hint: a single actionable sentence for the failing stage; null if pas
 
 Respond with ONLY valid JSON:
 {"verdict": "pass"|"fail",
- "axes": {"faithfulness": <0-10>, "answer_relevance": <0-10>,
+ "axes": {"faithfulness": <0-10>|null, "answer_relevance": <0-10>,
           "question_coverage": <0-10>, "calibration": <0-10>},
  "composite": <float>,
  "stage_attribution": "summarizer"|"specialists"|"router"|"unknown",
