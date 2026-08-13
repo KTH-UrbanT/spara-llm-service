@@ -1,0 +1,425 @@
+=== SMOKE START Wed Aug 12 23:53:33 UTC 2026 ===
+--- A_open ---
+INFO:src.agents.parse_intent_agent:AzureOpenAI client initialized for ParseIntentAgent.
+[run_arm] arm=A_open run_id=run_1786578813
+dbo.buildingaddress(building_id integer PK, building_name text, address text PK)
+dbo.buildings(building_id integer PK, numberOfApartments integer, numberOfTenullts integer, netAreaResidential integer, buildingName text, netAreaNonResidential integer, netAreaHeated integer, declaredEnergyClass text, EnergyClassKwhM2 integer)
+dbo.electricity_enduses(id integer PK, electricity_used_for_property boolean, electricity_used_for_property_heating boolean, electricity_used_for_taphotwater boolean, electricity_used_for_apartments boolean, electricity_used_for_tenullts boolean, building_id integer, electricity_used_for_charging_station boolean)
+dbo.hvac_systems(id integer PK, building_id integer, district_heating boolean, ground_source_heatpump_with_exhaust_air_recovery boolean, ground_source_heatpump_without_exahaust_air_recovery boolean, exhaust_air_recovery boolean, solar_thermal_panels boolean, district_cooling_production boolean, boiler_reserve boolean, cooling_production boolean, hvac_systems_installed_in_tenullts boolean)
+dbo.meterings(uuid uuid PK, building_id integer, year integer, month text, electricity_use_property double precision, electricity_use_charging_station integer, electricity_use_lanudry_room double precision, electricity_use_water_heating_and_tap_hot_water double precision, electricity_use_apartments double precision, electricity_produced_pv double precision, electricity_excess_pv double precision, hot_water_produced_solar_thermal integer, electricity_purchased double precision, district_heating_purchased integer, district_cooling_purchased integer, electricity_sold integer)
+dbo.normalization_values(id integer PK, building_id integer, indoor_temperature_sep_may double precision, hotwater_consumption_m3 integer, cold_water_consumption_m3 integer, scop_seasonal_coefficient_of_performance double precision, hotwater_source_for_towel_heater boolean, floor_heating_in_number_of_apartments integer)
+dbo.results(building_id integer PK, year integer PK, deduction_household_heat_electricity double precision, deduction_household_heat_district_heating double precision, normal_household_eui double precision, tap_hotwater_m3 double precision, heating_constant_kwh_m3 double precision, energy_for_thw double precision, deduction_thw_district_heating double precision, total_property_energy_electricity double precision, deduction_pv double precision, deduction_electricity_indoor_temp double precision, energy_performance double precision, created_at timestamp, updated_at timestamp, deduction_thw_electricity double precision, primary_energy_district_cooling double precision, primary_energy_district_heating double precision, primary_energy_electricity double precision, total_deduction double precision, household_electricity_for_building_heat double precision, difference_household_heat_eui double precision, deduction_district_heating_indoor_temp double precision, deducted_property_district_heating_use double precision)
+dbo.users(user_id integer PK, email text, password text, building_id integer)
+[init] SpecializedSQLLayer initialized ✓
+✅ VectorClient initialized and connected.
+[init] VectorClient initialized ✓
+INFO:src.agents.openai_agent:Initializing OpenAIResponseAgent.
+INFO:src.agents.openai_agent:Prompt loaded successfully from: /llm-service/src/agents/../prompts/openai_response_prompt.txt
+INFO:src.agents.openai_agent:Azure OpenAI client initialized successfully for response agent.
+[init] OpenAIResponseAgent initialized ✓
+[init] EvaluatorAgent initialized ✓
+Error: connection to server at "localhost" (::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+[init] Address list loaded: 0 entries
+[build_graph] wiring graph ...
+  running BRF_FACT_001 (building_specific)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=True single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (ready)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['sql database']
+[decision_router] EXIT → ['generic_sql_agent']
+[generic_sql_agent] ENTER addr='Examplegatan 1'
+[generic_sql_agent] building_by_address ok=False
+[generic_sql_agent] NO DATA
+[generic_sql_agent] EXIT
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] identity gate blocked → clarification
+[clarification] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running BRF_FACT_002 (building_specific)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=True single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (ready)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['sql database']
+[decision_router] EXIT → ['generic_sql_agent']
+[generic_sql_agent] ENTER addr='Examplegatan 1'
+[generic_sql_agent] building_by_address ok=False
+[generic_sql_agent] NO DATA
+[generic_sql_agent] EXIT
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] identity gate blocked → clarification
+[clarification] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running EKR_GEN_017 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running EKR_GEN_018 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'Specialized SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='Specialized SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running EKR_GEN_019 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+[understand_context] promoted personal energy advice to SQL + vector intent
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': ['SQL database', 'vector database'], 'ambiguous': False}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=['SQL database', 'vector database']
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=['sql database', 'vector database'] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running EKR_GEN_030 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running DEMO_EXTRA_GEN_001 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'Specialized SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='Specialized SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=1 tokens=0
+  running DEMO_EXTRA_CLAR_001 (clarification)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=True attempts=1 tokens=0
+  running DEMO_EXTRA_CLAR_002 (clarification)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'Specialized SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='Specialized SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=True attempts=1 tokens=0
+
+[run_arm] A_open: 2/9 = 0.222
+--- A_full ---
+INFO:src.agents.parse_intent_agent:AzureOpenAI client initialized for ParseIntentAgent.
+[run_arm] arm=A_full run_id=run_1786578853
+dbo.buildingaddress(building_id integer PK, building_name text, address text PK)
+dbo.buildings(building_id integer PK, numberOfApartments integer, numberOfTenullts integer, netAreaResidential integer, buildingName text, netAreaNonResidential integer, netAreaHeated integer, declaredEnergyClass text, EnergyClassKwhM2 integer)
+dbo.electricity_enduses(id integer PK, electricity_used_for_property boolean, electricity_used_for_property_heating boolean, electricity_used_for_taphotwater boolean, electricity_used_for_apartments boolean, electricity_used_for_tenullts boolean, building_id integer, electricity_used_for_charging_station boolean)
+dbo.hvac_systems(id integer PK, building_id integer, district_heating boolean, ground_source_heatpump_with_exhaust_air_recovery boolean, ground_source_heatpump_without_exahaust_air_recovery boolean, exhaust_air_recovery boolean, solar_thermal_panels boolean, district_cooling_production boolean, boiler_reserve boolean, cooling_production boolean, hvac_systems_installed_in_tenullts boolean)
+dbo.meterings(uuid uuid PK, building_id integer, year integer, month text, electricity_use_property double precision, electricity_use_charging_station integer, electricity_use_lanudry_room double precision, electricity_use_water_heating_and_tap_hot_water double precision, electricity_use_apartments double precision, electricity_produced_pv double precision, electricity_excess_pv double precision, hot_water_produced_solar_thermal integer, electricity_purchased double precision, district_heating_purchased integer, district_cooling_purchased integer, electricity_sold integer)
+dbo.normalization_values(id integer PK, building_id integer, indoor_temperature_sep_may double precision, hotwater_consumption_m3 integer, cold_water_consumption_m3 integer, scop_seasonal_coefficient_of_performance double precision, hotwater_source_for_towel_heater boolean, floor_heating_in_number_of_apartments integer)
+dbo.results(building_id integer PK, year integer PK, deduction_household_heat_electricity double precision, deduction_household_heat_district_heating double precision, normal_household_eui double precision, tap_hotwater_m3 double precision, heating_constant_kwh_m3 double precision, energy_for_thw double precision, deduction_thw_district_heating double precision, total_property_energy_electricity double precision, deduction_pv double precision, deduction_electricity_indoor_temp double precision, energy_performance double precision, created_at timestamp, updated_at timestamp, deduction_thw_electricity double precision, primary_energy_district_cooling double precision, primary_energy_district_heating double precision, primary_energy_electricity double precision, total_deduction double precision, household_electricity_for_building_heat double precision, difference_household_heat_eui double precision, deduction_district_heating_indoor_temp double precision, deducted_property_district_heating_use double precision)
+dbo.users(user_id integer PK, email text, password text, building_id integer)
+[init] SpecializedSQLLayer initialized ✓
+✅ VectorClient initialized and connected.
+[init] VectorClient initialized ✓
+INFO:src.agents.openai_agent:Initializing OpenAIResponseAgent.
+INFO:src.agents.openai_agent:Prompt loaded successfully from: /llm-service/src/agents/../prompts/openai_response_prompt.txt
+INFO:src.agents.openai_agent:Azure OpenAI client initialized successfully for response agent.
+[init] OpenAIResponseAgent initialized ✓
+[init] EvaluatorAgent initialized ✓
+Error: connection to server at "localhost" (::1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+[init] Address list loaded: 0 entries
+[build_graph] wiring graph ...
+  running BRF_FACT_001 (building_specific)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=True single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (ready)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=True single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (ready)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['sql database']
+[decision_router] EXIT → ['generic_sql_agent']
+[generic_sql_agent] skipped: aggregated_data is cached
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] identity gate blocked → clarification
+[clarification] ENTER → END
+    case_pass=False attempts=1 tokens=715
+  running BRF_FACT_002 (building_specific)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=True single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (ready)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=True single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (ready)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['sql database']
+[decision_router] EXIT → ['generic_sql_agent']
+[generic_sql_agent] skipped: aggregated_data is cached
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] identity gate blocked → clarification
+[clarification] ENTER → END
+    case_pass=False attempts=1 tokens=716
+  running EKR_GEN_017 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=implausible action=rewind
+[rewind_to_router] re-deciding route with corrective hint
+[understand_context] ENTER
+[understand_context] re-parsing with router hint
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'vector database', 'intent_list': []}
+[understand_context] parsed_intent='vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (parsed says vector-only)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (parsed says vector-only)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['vector database']
+[decision_router] EXIT → ['vector_db_agent']
+[vector_db_agent] skipped: aggregated_data is cached
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] required=[] all_done=True → aggregator
+[aggregator] ENTER
+[aggregator] outputs=0 agent_answered=vector
+[aggregator] EXIT
+[llm_summarizer] ENTER
+WARNING:src.agents.openai_agent:Summarizer model rejected temperature=0.2; retrying without. This run is NOT fully deterministic (model default applies).
+INFO:src.agents.openai_agent:Response generated in 4802 ms (tokens: {'prompt_tokens': 601, 'completion_tokens': 694, 'total_tokens': 1295}, temperature_requested=0.2, temperature_unsupported=True).
+[llm_summarizer] generate_response ✓
+[llm_summarizer] EXIT
+[answer_quality_checkpoint] arm=A_full
+[answer_quality_checkpoint] verdict=pass action=terminate
+    case_pass=True attempts=2 tokens=4515
+  running EKR_GEN_018 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'Specialized SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='Specialized SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=implausible action=rewind
+[rewind_to_router] re-deciding route with corrective hint
+[understand_context] ENTER
+[understand_context] re-parsing with router hint
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'vector database', 'intent_list': []}
+[understand_context] parsed_intent='vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (parsed says vector-only)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (parsed says vector-only)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['vector database']
+[decision_router] EXIT → ['vector_db_agent']
+[vector_db_agent] skipped: aggregated_data is cached
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] required=[] all_done=True → aggregator
+[aggregator] ENTER
+[aggregator] outputs=0 agent_answered=vector
+[aggregator] EXIT
+[llm_summarizer] ENTER
+WARNING:src.agents.openai_agent:Summarizer model rejected temperature=0.2; retrying without. This run is NOT fully deterministic (model default applies).
+INFO:src.agents.openai_agent:Response generated in 9042 ms (tokens: {'prompt_tokens': 600, 'completion_tokens': 1388, 'total_tokens': 1988}, temperature_requested=0.2, temperature_unsupported=True).
+[llm_summarizer] generate_response ✓
+[llm_summarizer] EXIT
+[answer_quality_checkpoint] arm=A_full
+[answer_quality_checkpoint] verdict=pass action=terminate
+    case_pass=True attempts=2 tokens=5313
+  running EKR_GEN_019 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+[understand_context] promoted personal energy advice to SQL + vector intent
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': ['SQL database', 'vector database'], 'ambiguous': False}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=['SQL database', 'vector database']
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=['sql database', 'vector database'] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=implausible action=rewind
+[rewind_to_router] re-deciding route with corrective hint
+[understand_context] ENTER
+[understand_context] re-parsing with router hint
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+[understand_context] promoted personal energy advice to SQL + vector intent
+{'intents': ['vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': ['SQL database', 'vector database'], 'ambiguous': False}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=['SQL database', 'vector database']
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=['sql database', 'vector database'] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=implausible action=continue
+[route_after_ambiguity] ENTER intents=['sql database', 'vector database'] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=2 tokens=1599
+  running EKR_GEN_030 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=False attempts=1 tokens=843
+  running DEMO_EXTRA_GEN_001 (generic)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'Specialized SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='Specialized SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=implausible action=rewind
+[rewind_to_router] re-deciding route with corrective hint
+[understand_context] ENTER
+[understand_context] re-parsing with router hint
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'vector database', 'intent_list': []}
+[understand_context] parsed_intent='vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (parsed says vector-only)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → maintain_history (parsed says vector-only)
+[maintain_history] ENTER last_matches=False
+[maintain_history] EXIT
+[decision_router] ENTER intents_norm=['vector database']
+[decision_router] EXIT → ['vector_db_agent']
+[vector_db_agent] skipped: aggregated_data is cached
+[wait_for_replies] required=[] missing=[]
+[route_after_wait] required=[] all_done=True → aggregator
+[aggregator] ENTER
+[aggregator] outputs=0 agent_answered=vector
+[aggregator] EXIT
+[llm_summarizer] ENTER
+WARNING:src.agents.openai_agent:Summarizer model rejected temperature=0.2; retrying without. This run is NOT fully deterministic (model default applies).
+INFO:src.agents.openai_agent:Response generated in 5565 ms (tokens: {'prompt_tokens': 599, 'completion_tokens': 830, 'total_tokens': 1429}, temperature_requested=0.2, temperature_unsupported=True).
+[llm_summarizer] generate_response ✓
+[llm_summarizer] EXIT
+[answer_quality_checkpoint] arm=A_full
+[answer_quality_checkpoint] verdict=pass action=terminate
+    case_pass=True attempts=2 tokens=4796
+  running DEMO_EXTRA_CLAR_001 (clarification)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=True attempts=1 tokens=1038
+  running DEMO_EXTRA_CLAR_002 (clarification)
+[understand_context] ENTER
+[understand_context] parsed keys=['last_message', 'messages', 'context']
+[understand_context] ctx keys before ensure=['intents', 'address', 'ambigious', 'parsed_intent']
+{'intents': ['Specialized SQL database', 'vector database'], 'address': None, 'ambigious': False, 'parsed_intent': 'Specialized SQL database ; vector database', 'intent_list': []}
+[understand_context] parsed_intent='Specialized SQL database ; vector database' intent_list=[]
+[understand_context] EXIT
+[early_route_checkpoint] arm=A_full
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[early_route_checkpoint] verdict=plausible action=continue
+[route_after_ambiguity] ENTER intents=[] addr=False single_filter=False ambiguous=False
+[route_after_ambiguity] → request_address (sql but no address/filter)
+[request_address] ENTER → END
+    case_pass=True attempts=1 tokens=844
+
+[run_arm] A_full: 5/9 = 0.556
+=== SMOKE DONE rc_open=0 rc_full=0 Wed Aug 12 23:55:48 UTC 2026 ===
