@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.evaluation.closed_loop.deterministic_checks import case_pass, check_semantic_judge_pass
-from src.evaluation.closed_loop.in_loop_evaluator import _score
+from src.evaluation.closed_loop.in_loop_evaluator import score_axes
 
 ARMS = ("A_open", "A_late_only", "A_full")
 _DETERMINISTIC = ["route_match", "agent_match", "building_id_match",
@@ -65,7 +65,7 @@ def rescore(row: dict, fix3: bool, fix4: bool) -> dict:
         # vector-chunk columns are exactly what fed it.
         evidence_present = bool(row.get("final_sql_fields_used")
                                 or row.get("final_vector_chunks_retrieved"))
-        axes, composite, v = _score(axes, evidence_present)
+        axes, composite, v = score_axes(axes, evidence_present)
         verdict = {"verdict": v, "axes": axes, "composite": composite}
 
     if not fix3:

@@ -1,0 +1,19 @@
+{
+  "timestamp_utc": "2026-08-13T11:15:05.356023+00:00",
+  "trace_schema_version": 3,
+  "run_id": "smoke_v21_open",
+  "arm": "A_open",
+  "n_cases": 0,
+  "n_pass": 0,
+  "case_pass_rate": 0.0,
+  "per_stratum_pass_rate": {},
+  "mean_attempts": 0.0,
+  "median_attempts": 0,
+  "early_block_exhausted_count": 0,
+  "terminated_without_pass_count": 0,
+  "terminated_router_disallowed_count": 0,
+  "cost_exceeded_count": 0,
+  "total_tokens": 0,
+  "total_completions": 0,
+  "total_wall_time_s": 0
+}

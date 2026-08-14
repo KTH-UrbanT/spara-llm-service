@@ -36,7 +36,17 @@ WORKLIST_FIELDS = [
     "judge_faithfulness", "judge_answer_relevance",
     "judge_question_coverage", "judge_calibration",
     "judge_semantic_judge_pass",
+    # The fail-open marker, recorded explicitly. A blank `judge_faithfulness` used to stand
+    # in for it, but after Fix 4 that cell is legitimately blank on every evidence-absent
+    # case (61 of 88), so the old filter silently discarded most of the agreement pool.
+    "judge_fail_open", "judge_evidence_present",
 ]
+AUDIT_FIELDS = [
+    "case_id", "question", "final_answer",
+    # Filled in by the annotator; both blank means "not yet labelled".
+    "contains_building_specific_claim", "fabricated_fact_suspected", "notes",
+]
+FABRICATION_GATE = 2   # pre-registered: >2 of 20 invalidates Fix 4's faithfulness-null policy
 LABEL_FIELDS = [
     "case_id", "annotator_id", "timestamp_utc",
     "faithfulness", "answer_relevance", "question_coverage", "calibration",
@@ -73,26 +83,54 @@ def _csv_safe(v):
     return "" if v is None else v
 
 
+NOT_JUDGED = ("_fail_open", "_short_circuit", "_no_answer")
+
+
+def _axes(row: dict) -> dict:
+    return ((row.get("answer_quality_verdict") or {}).get("axes") or {})
+
+
+def _was_judged(row: dict) -> bool:
+    """True when the judge actually scored this answer.
+
+    Short-circuits (clarification / address request) have their `semantic_judge_pass`
+    derived from gold rather than judged, and a fail-open produced no scores at all —
+    neither belongs in an agreement pool that is supposed to measure the judge.
+    """
+    ax = _axes(row)
+    return bool(ax) and not any(ax.get(m) for m in NOT_JUDGED)
+
+
+def _load_rows(args) -> list[dict]:
+    trace = Path(args.run_dir) / args.arm / "traces" / "per_case.jsonl"
+    return [json.loads(l) for l in trace.read_text(encoding="utf-8").split("\n") if l.strip()]
+
+
 def cmd_sample(args):
     """Build the worklist CSV: one row per sampled case, with judge verdicts pre-filled."""
-    trace = Path(args.run_dir) / args.arm / "traces" / "per_case.jsonl"
-    rows = [json.loads(l) for l in trace.read_text(encoding="utf-8").split("\n") if l.strip()]
+    rows = _load_rows(args)
     dataset = {c["case_id"]: c for c in
                (json.loads(l) for l in args.dataset.read_text(encoding="utf-8").split("\n") if l.strip())}
 
-    # Stratified sample.
     rng = random.Random(args.seed)
-    by_stratum: dict[str, list] = {}
-    for r in rows:
-        by_stratum.setdefault(r.get("expected_route", "?"), []).append(r)
-    chosen = []
-    for stratum, n in STRATA.items():
-        pool = by_stratum.get(stratum, [])
-        if len(pool) < n:
-            print(f"WARN: stratum {stratum!r} has only {len(pool)} rows (asked {n})")
-            chosen.extend(pool)
-        else:
-            chosen.extend(rng.sample(pool, n))
+    if args.all_judged:
+        # The whole genuinely-judged pool, not a stratified sample of 15. At n≈67 the
+        # agreement estimate stops being dominated by sampling noise, and the gates in
+        # plan-eil-v21 §2.4 are stated against this denominator.
+        chosen = [r for r in rows if _was_judged(r)]
+        print(f"--all-judged: {len(chosen)} of {len(rows)} rows were genuinely judged")
+    else:
+        by_stratum: dict[str, list] = {}
+        for r in rows:
+            by_stratum.setdefault(r.get("expected_route", "?"), []).append(r)
+        chosen = []
+        for stratum, n in STRATA.items():
+            pool = by_stratum.get(stratum, [])
+            if len(pool) < n:
+                print(f"WARN: stratum {stratum!r} has only {len(pool)} rows (asked {n})")
+                chosen.extend(pool)
+            else:
+                chosen.extend(rng.sample(pool, n))
 
     # Assemble worklist rows. All None-valued fields are coerced to '' so the
     # downstream cmd_kappa skip-filter correctly identifies fail-open rows by
@@ -116,6 +154,8 @@ def cmd_sample(args):
             "judge_question_coverage": _csv_safe(axes.get("question_coverage")),
             "judge_calibration": _csv_safe(axes.get("calibration")),
             "judge_semantic_judge_pass": _csv_safe(r.get("semantic_judge_pass")),
+            "judge_fail_open": bool(axes.get("_fail_open")),
+            "judge_evidence_present": _csv_safe(r.get("evidence_present")),
         })
 
     args.worklist.parent.mkdir(parents=True, exist_ok=True)
@@ -191,6 +231,29 @@ def _kappa_binary(pairs: list[tuple[int, int]]) -> float:
     return 0.0 if (1 - p_e) == 0 else (p_o - p_e) / (1 - p_e)
 
 
+def _raw_agreement(pairs: list[tuple[int, int]]) -> float:
+    return (sum(1 for a, b in pairs if a == b) / len(pairs)) if pairs else 0.0
+
+
+def _ac1(pairs: list[tuple[int, int]]) -> float:
+    """Gwet's AC1 for binary labels.
+
+    Cohen's κ is unstable at extreme prevalence: the judge passes ~95% of what it scores,
+    where 95% raw agreement can still yield κ ≈ 0 (the prevalence paradox). AC1 replaces
+    κ's chance-agreement term with one that does not blow up as prevalence goes to 1, so
+    it is the statistic v21 gates on; κ is reported beside it, with the caveat.
+
+        p_e = (1/(Q-1)) * Σ_k π_k (1 - π_k),  Q = 2 categories,
+        π_k = the mean of the two raters' marginals for category k.
+    """
+    if not pairs: return 0.0
+    n = len(pairs)
+    pi1 = sum(a + b for a, b in pairs) / (2 * n)     # mean marginal for class 1
+    p_e = 2 * pi1 * (1 - pi1)                        # Q=2 collapses the sum to this
+    p_o = _raw_agreement(pairs)
+    return 0.0 if (1 - p_e) == 0 else (p_o - p_e) / (1 - p_e)
+
+
 def _kappa_weighted(pairs: list[tuple[int, int]], k: int = 11) -> float:
     """Quadratic-weighted κ for ordinal scores in [0, k-1]. (Closed-loop scale: k=11.)"""
     if not pairs: return 0.0
@@ -213,6 +276,10 @@ def _bootstrap_ci(values_fn, pairs: list, n_resamples: int, seed: int) -> tuple[
     """Percentile 95% CI for any κ statistic given (pairs) -> float."""
     rng = random.Random(seed)
     n = len(pairs)
+    if n == 0:
+        # Reachable now that faithfulness pairs are skipped when the axis is null: an
+        # all-evidence-absent sample leaves that axis with nothing to resample.
+        return (0.0, 0.0)
     samples = []
     for _ in range(n_resamples):
         sample = [pairs[rng.randrange(n)] for _ in range(n)]
@@ -230,30 +297,54 @@ def cmd_kappa(args):
 
     binary_pairs: list[tuple[int, int]] = []
     axis_pairs: dict[str, list[tuple[int, int]]] = {a: [] for a in CLOSED_LOOP_AXES}
+    n_dropped = 0
     for L in labels:
         cid = L["case_id"]
         w = wl.get(cid)
         if w is None:
             continue
-        # Skip rows where the judge was a fail-open (axes will be empty).
-        if not w.get("judge_faithfulness"):
+        # Drop fail-opens — and ONLY fail-opens. This used to test `judge_faithfulness`,
+        # which after Fix 4 is legitimately blank on every evidence-absent case, so most of
+        # the judged pool was being thrown away (v21 §1.8). Older worklists have no
+        # `judge_fail_open` column; fall back to the blank-faithfulness test for those.
+        if "judge_fail_open" in w:
+            fail_open = str(w.get("judge_fail_open", "")).strip().lower() in ("true", "1")
+        else:
+            fail_open = not w.get("judge_faithfulness")
+        if fail_open:
+            n_dropped += 1
             continue
         binary_pairs.append((int(L["overall_pass"]),
                              1 if str(w["judge_semantic_judge_pass"]).lower() == "true" else 0))
         for ax in CLOSED_LOOP_AXES:
+            # faithfulness is null when there was no evidence to check against — there is
+            # no judge score to pair with. The other three axes are always scored.
+            if str(w.get(f"judge_{ax}", "")).strip() == "":
+                continue
             axis_pairs[ax].append((int(L[ax]), int(w[f"judge_{ax}"])))
 
+    agreement = _raw_agreement(binary_pairs)
+    ac1 = _ac1(binary_pairs)
     out = {
         "n_paired": len(binary_pairs),
+        "n_dropped_fail_open": n_dropped,
         "n_resamples": args.n_resamples,
         "seed": args.seed,
+        "raw_agreement": agreement,
+        "ac1": ac1,
+        "ac1_ci95": _bootstrap_ci(_ac1, binary_pairs, args.n_resamples, args.seed),
+        # Reported, NOT gated: at the judge's ~95% pass prevalence κ is unstable even under
+        # near-perfect agreement, so gating on it would be a statistical error (v21 §2.4).
         "kappa_binary": _kappa_binary(binary_pairs),
         "kappa_binary_ci95": _bootstrap_ci(_kappa_binary, binary_pairs,
                                            args.n_resamples, args.seed),
+        "kappa_caveat": "prevalence paradox — reported for comparability, not a gate",
+        "gates": {"raw_agreement_ge_0.90": agreement >= 0.90, "ac1_ge_0.6": ac1 >= 0.6},
         "per_axis_kappa_weighted": {},
     }
     for ax, pairs in axis_pairs.items():
         out["per_axis_kappa_weighted"][ax] = {
+            "n": len(pairs),
             "k": _kappa_weighted(pairs),
             "ci95": _bootstrap_ci(_kappa_weighted, pairs, args.n_resamples, args.seed),
         }
@@ -262,6 +353,65 @@ def cmd_kappa(args):
     args.out.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
     print(json.dumps(out, indent=2, default=str))
     print(f"\nWrote {args.out}")
+
+
+# ---------------------------------------------------------------------------
+# audit-ungrounded — the only instrument that can see the failure mode Fix 4 created.
+# ---------------------------------------------------------------------------
+# With `faithfulness` marked not-applicable on the evidence-absent cases, nothing grounds
+# those answers: a fabricated Swedish regulation scores answer_relevance 10 and passes.
+# This samples them, hides every judge field, and asks a human two questions.
+
+def cmd_audit_ungrounded(args):
+    """Sample evidence-absent answers for a fabrication audit; tally once filled.
+
+    Idempotent by design: the first run writes the sheet, later runs read it back and
+    report the counts, preserving whatever the annotator has filled in so far.
+    """
+    if args.sheet.exists():
+        with args.sheet.open(encoding="utf-8") as f:
+            sheet = list(csv.DictReader(f))
+        _t = lambda k: sum(1 for r in sheet
+                           if str(r.get(k, "")).strip().lower() in ("1", "true", "yes", "y"))
+        labelled = [r for r in sheet
+                    if str(r.get("contains_building_specific_claim", "")).strip()
+                    or str(r.get("fabricated_fact_suspected", "")).strip()]
+        fab = _t("fabricated_fact_suspected")
+        result = {"sheet": str(args.sheet), "n_rows": len(sheet), "n_labelled": len(labelled),
+                  "contains_building_specific_claim": _t("contains_building_specific_claim"),
+                  "fabricated_fact_suspected": fab,
+                  "gate": f"fabrication <= {FABRICATION_GATE}",
+                  "gate_pass": fab <= FABRICATION_GATE,
+                  "complete": len(labelled) == len(sheet)}
+        print(json.dumps(result, indent=2))
+        if not result["complete"]:
+            print(f"\n{len(sheet) - len(labelled)} row(s) still blank — "
+                  f"the gate verdict is provisional until every row is labelled.")
+        return
+
+    rows = _load_rows(args)
+    ungrounded = [r for r in rows if r.get("evidence_present") is False and r.get("final_answer")]
+    if not ungrounded:
+        print("No evidence-absent answers found — nothing to audit.")
+        return
+    dataset = {c["case_id"]: c for c in
+               (json.loads(l) for l in args.dataset.read_text(encoding="utf-8").split("\n") if l.strip())}
+    rng = random.Random(args.seed)
+    chosen = ungrounded if len(ungrounded) <= args.n else rng.sample(ungrounded, args.n)
+
+    args.sheet.parent.mkdir(parents=True, exist_ok=True)
+    with args.sheet.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=AUDIT_FIELDS)
+        w.writeheader()
+        for r in sorted(chosen, key=lambda x: x["case_id"]):
+            w.writerow({"case_id": r["case_id"],
+                        "question": (dataset.get(r["case_id"]) or {}).get("question")
+                                    or "(question not in dataset)",
+                        "final_answer": (r.get("final_answer") or "")[:2000],
+                        "contains_building_specific_claim": "",
+                        "fabricated_fact_suspected": "", "notes": ""})
+    print(f"Wrote {len(chosen)} of {len(ungrounded)} evidence-absent rows to {args.sheet} "
+          f"(seed={args.seed}).\nMark each row 0/1, then re-run this command to tally.")
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +548,9 @@ def main(argv=None):
                    help="Path to artifacts/datasets/filtered_cases.jsonl.")
     s.add_argument("--worklist", required=True, type=Path)
     s.add_argument("--seed", type=int, default=2026)
+    s.add_argument("--all-judged", action="store_true",
+                   help="Take every genuinely-judged row instead of the 15-case stratified "
+                        "sample. This is the denominator v21's agreement gates are stated on.")
 
     l = sub.add_parser("label", help="Interactive blinded annotation.")
     l.add_argument("--worklist", required=True, type=Path)
@@ -417,9 +570,19 @@ def main(argv=None):
     im.add_argument("--labels", required=True, type=Path)
     im.add_argument("--annotator-id", required=True)
 
+    au = sub.add_parser("audit-ungrounded",
+                        help="Sample evidence-absent answers for a fabrication audit; "
+                             "re-run once filled to tally against the gate.")
+    au.add_argument("--run-dir", required=True, type=Path)
+    au.add_argument("--arm", default="A_open")
+    au.add_argument("--dataset", required=True, type=Path)
+    au.add_argument("--sheet", required=True, type=Path)
+    au.add_argument("-n", type=int, default=20)
+    au.add_argument("--seed", type=int, default=2026)
+
     args = p.parse_args(argv)
     {"sample": cmd_sample, "label": cmd_label, "kappa": cmd_kappa,
-     "ingest-md": cmd_ingest_md}[args.cmd](args)
+     "ingest-md": cmd_ingest_md, "audit-ungrounded": cmd_audit_ungrounded}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+{
+  "run_id": "v21_r1_late",
+  "arm": "A_late_only",
+  "code_sha256": "5d8052991d3a0923ff5e8c1845e46921bf8f1247e24329ac1b14a601644c4130",
+  "code_n_files": 89,
+  "git_sha": "",
+  "git_dirty": null,
+  "dataset": "artifacts/datasets/filtered_cases.jsonl",
+  "dataset_sha256": "3046feac8d8038b482d0e9f5f9024bcdab5597903b83b127f0768fdc7d7e8397",
+  "env": {
+    "RUN_ARM": "A_late_only",
+    "EARLY_CHECKPOINT_ENABLED": "false",
+    "LATE_CHECKPOINT_ENABLED": "true",
+    "EVALUATOR_MODE": "off",
+    "CLOSED_LOOP_EARLY_VOTE_K": "1",
+    "ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
+    "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v1.txt",
+    "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": "o4-mini"
+  },
+  "constants": {
+    "WALL_BUDGET_S": 300,
+    "MAX_RETRIES": 2,
+    "COST_CAP_MULT": 5.0
+  }
+}

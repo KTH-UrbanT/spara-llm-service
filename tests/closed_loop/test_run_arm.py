@@ -117,3 +117,59 @@ def test_load_cost_cap_uses_mult_override(tmp_path):
     assert load_cost_cap(tmp_path, "A_open", mult=1e9) == 1e9 * 1000.0
     # Constant unchanged (pre-registration discipline).
     assert COST_CAP_MULT == 5.0
+
+
+# --- v21 §2.5: the run record ----------------------------------------------------------
+
+def test_run_record_pins_the_code_and_config_that_produced_the_traces(tmp_path):
+    """v20's analysis script was edited between r1 and r2 and the only evidence was a file
+    mtime. A record written next to the numbers makes a between-replicate change visible
+    in the artifact itself."""
+    import os
+    from unittest.mock import patch
+    from scripts.run_arm_closed_loop import setup_environment, write_run_record
+    ds = tmp_path / "cases.jsonl"
+    ds.write_text('{"case_id": "X", "question": "q"}\n', encoding="utf-8")
+    # setup_environment writes to os.environ for the rest of the process. Unscoped, it
+    # would leave EARLY/LATE_CHECKPOINT_ENABLED=true behind and later test modules would
+    # start invoking the real judge.
+    with patch.dict(os.environ, {}):
+        setup_environment("A_full", "run_1")
+        write_run_record(tmp_path, "A_full", "run_1", str(ds))
+
+    rec = json.loads((tmp_path / "A_full" / "run_record.json").read_text())
+    assert rec["arm"] == "A_full" and rec["run_id"] == "run_1"
+    assert rec["env"]["CLOSED_LOOP_EARLY_VOTE_K"] == "3"          # the vote is on the record
+    assert rec["env"]["ROUTE_PLAUSIBILITY_PROMPT_VERSION"] == "route_plausibility_v2.txt"
+    assert len(rec["dataset_sha256"]) == 64
+    assert rec["constants"]["MAX_RETRIES"] == 2
+    # The load-bearing field: git is unavailable in the container (submodule .git is a file
+    # pointing outside the mount), and v20's mid-run edit was uncommitted anyway.
+    assert len(rec["code_sha256"]) == 64 and rec["code_n_files"] > 20
+
+
+def test_code_fingerprint_changes_when_a_source_byte_changes(tmp_path, monkeypatch):
+    """The property the whole record rests on. A git SHA would have been identical across
+    v20's r1/r2/r3 despite the edit; this must not be."""
+    from scripts import run_arm_closed_loop as m
+    before, n_before = m.code_fingerprint()
+    assert m.code_fingerprint() == (before, n_before)      # stable across calls
+
+    prompt = Path(m.__file__).resolve().parents[1] / "src/evaluation/closed_loop/prompts/route_plausibility_v2.txt"
+    original = prompt.read_bytes()
+    try:
+        prompt.write_bytes(original + b"\n# edited mid-run\n")
+        after, n_after = m.code_fingerprint()
+    finally:
+        prompt.write_bytes(original)
+    assert after != before and n_after == n_before
+    assert m.code_fingerprint()[0] == before               # restored
+
+
+def test_vote_k_is_pinned_per_arm_not_inherited_from_the_shell():
+    """The early checkpoint exists only in A_full; an unset variable would let a stray
+    shell value change the treatment and go unrecorded."""
+    from scripts.run_arm_closed_loop import _ARM_ENV
+    assert _ARM_ENV["A_full"]["CLOSED_LOOP_EARLY_VOTE_K"] == "3"
+    assert _ARM_ENV["A_open"]["CLOSED_LOOP_EARLY_VOTE_K"] == "1"
+    assert _ARM_ENV["A_late_only"]["CLOSED_LOOP_EARLY_VOTE_K"] == "1"

@@ -143,6 +143,96 @@ def test_evidence_present_ignores_empty_containers():
     v = r.answer_quality("q?", {"generic_sql": []}, "advice")
     assert v.evidence_present is False and v.axes["faithfulness"] is None
 
+# --- v21 §2.1: k=3 self-consistency vote on the early checkpoint ----------------------
+
+_IMPL = json.dumps({"verdict": "implausible",
+                    "axes": {"intent_consistency": 3, "precondition_satisfied": 2},
+                    "corrective_hint": "Route to generic instead of building."})
+_PLAUS = json.dumps({"verdict": "plausible",
+                     "axes": {"intent_consistency": 9, "precondition_satisfied": 9},
+                     "corrective_hint": None})
+_SHORT_HINT = json.dumps({"verdict": "implausible",
+                          "axes": {"intent_consistency": 3, "precondition_satisfied": 2},
+                          "corrective_hint": "short"})
+
+
+def _ev_seq(*responses):
+    """An evaluator whose successive `_call`s return `responses` in order."""
+    from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
+    c = MagicMock()
+    c.chat.completions.create.side_effect = [
+        MagicMock(choices=[MagicMock(message=MagicMock(content=s))],
+                  usage=MagicMock(total_tokens=10, completion_tokens=4)) for s in responses]
+    with patch("src.evaluation.closed_loop.in_loop_evaluator.AzureOpenAI", return_value=c):
+        return InLoopEvaluator()
+
+
+def test_vote_fires_on_a_majority():
+    r = _ev_seq(_IMPL, _PLAUS, _IMPL)
+    v = r.route_plausible_voted("q?", "building", False, None, True, k=3)
+    assert v.verdict == "implausible"
+    assert v.corrective_hint == "Route to generic instead of building."
+
+
+def test_vote_does_not_fire_on_a_minority():
+    """The whole point: one stochastic 'implausible' in three destroyed a case (§1.4)."""
+    r = _ev_seq(_IMPL, _PLAUS, _PLAUS)
+    assert r.route_plausible_voted("q?", "building", False, None, True, k=3).verdict == "plausible"
+
+
+def test_vote_counts_post_guard_verdicts_only():
+    """A vote downgraded to 'ambiguous' by the short-hint guard is not an implausible vote,
+    so two such votes plus one real one must not reach a majority."""
+    r = _ev_seq(_IMPL, _SHORT_HINT, _SHORT_HINT)
+    assert r.route_plausible_voted("q?", "building", False, None, True, k=3).verdict != "implausible"
+
+
+def test_vote_sums_usage_across_calls():
+    r = _ev_seq(_PLAUS, _PLAUS, _PLAUS)
+    r.route_plausible_voted("q?", "building", False, None, True, k=3)
+    assert r.last_usage["total_tokens"] == 30 and r.last_usage["completion_tokens"] == 12
+
+
+def test_vote_k1_is_the_single_call_path():
+    """k=1 must be byte-identical to v20, so A_full's k=3 is the only behaviour change."""
+    for payload in (_IMPL, _PLAUS):
+        voted = _ev_seq(payload).route_plausible_voted("q?", "building", False, None, True, k=1)
+        single = _ev(payload).route_plausible("q?", "building", False, None, True)
+        assert voted.verdict == single.verdict and voted.axes == single.axes
+        assert voted.corrective_hint == single.corrective_hint
+
+
+def test_vote_makes_exactly_k_calls():
+    r = _ev_seq(_PLAUS, _PLAUS, _PLAUS)
+    r.route_plausible_voted("q?", "building", False, None, True, k=3)
+    assert r._client.chat.completions.create.call_count == 3
+
+
+# --- v21 §2.3: the diagnostic attribution column ---------------------------------------
+
+def test_diagnostic_names_the_retrieval_outage():
+    """`stage_attribution_rule` blames the summariser for every evidence-absent failure
+    because faithfulness and calibration share a stage. The diagnostic separates them."""
+    r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":0,"answer_relevance":9,"question_coverage":9,"calibration":3},"composite":5.25,"stage_attribution":"summarizer","corrective_hint":"Hedge."}))
+    v = r.answer_quality("q?", {}, "overclaiming advice")
+    assert v.stage_attribution_rule == "summarizer"      # unchanged — nothing branches on the new column
+    assert v.attribution_diagnostic == "retrieval_starved"
+
+
+def test_diagnostic_keeps_the_stage_name_when_evidence_was_present():
+    r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":8,"answer_relevance":9,"question_coverage":9,"calibration":3},"composite":7.25,"stage_attribution":"summarizer","corrective_hint":"Hedge."}))
+    v = r.answer_quality("q?", _EV, "overclaiming")
+    assert v.attribution_diagnostic == "summarizer"
+
+
+def test_diagnostic_does_not_relabel_a_coverage_failure():
+    """Only calibration / answer_relevance mean 'nothing to write from'. A coverage failure
+    is still a specialists problem even with no evidence — that is the point of the axis."""
+    r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":0,"answer_relevance":9,"question_coverage":2,"calibration":9},"composite":6.67,"stage_attribution":"specialists","corrective_hint":"Missing."}))
+    v = r.answer_quality("q?", {}, "a")
+    assert v.attribution_diagnostic == "specialists"
+
+
 def test_faithfulness_still_scored_when_evidence_present():
     """The axis must keep its teeth on the cases it can actually be computed for."""
     r = _ev(json.dumps({"verdict":"pass","axes":{"faithfulness":2,"answer_relevance":9,"question_coverage":9,"calibration":9},"composite":7.25,"stage_attribution":"summarizer","corrective_hint":"Wrong number."}))

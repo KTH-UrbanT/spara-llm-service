@@ -16,10 +16,15 @@ from __future__ import annotations
 import argparse, json, os, sys, time
 from pathlib import Path
 
+_PROMPT_ENV = {"ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
+               "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v1.txt"}
+# CLOSED_LOOP_EARLY_VOTE_K is pinned per arm rather than left to the ambient environment:
+# the early checkpoint exists only in A_full, and an unset variable would let a value leak
+# in from the shell and go unrecorded. k=3 there, k=1 (a no-op) everywhere else.
 _ARM_ENV = {
-    "A_open":      {"RUN_ARM":"A_open",      "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"false","EVALUATOR_MODE":"off"},
-    "A_late_only": {"RUN_ARM":"A_late_only", "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off"},
-    "A_full":      {"RUN_ARM":"A_full",      "EARLY_CHECKPOINT_ENABLED":"true", "LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off"},
+    "A_open":      {"RUN_ARM":"A_open",      "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"false","EVALUATOR_MODE":"off","CLOSED_LOOP_EARLY_VOTE_K":"1", **_PROMPT_ENV},
+    "A_late_only": {"RUN_ARM":"A_late_only", "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off","CLOSED_LOOP_EARLY_VOTE_K":"1", **_PROMPT_ENV},
+    "A_full":      {"RUN_ARM":"A_full",      "EARLY_CHECKPOINT_ENABLED":"true", "LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off","CLOSED_LOOP_EARLY_VOTE_K":"3", **_PROMPT_ENV},
 }
 # Reported as covariates, NOT vetoes: a budget that can only fire in the treatment
 # arms (load_cost_cap returns None without --cache-from) is a confound, not a budget.
@@ -95,6 +100,70 @@ def load_cost_cap(run_dir: Path, cache_arm: str | None,
     return mult * mean if mean else None
 
 
+_CODE_GLOBS = ("src/**/*.py", "scripts/**/*.py",
+               "src/evaluation/closed_loop/prompts/*.txt")
+
+
+def code_fingerprint() -> tuple[str, int]:
+    """SHA-256 over the source that decides behaviour, plus the file count.
+
+    Deliberately NOT a git SHA. v20's mid-run edit to `check_predictions.py` was
+    *uncommitted* — the whole file history is one commit made after all three replicates
+    finished (§1.10) — so a git SHA would have been identical across r1, r2 and r3 and
+    would have recorded nothing. A content hash changes the moment a byte does, which is
+    the failure mode actually observed.
+    """
+    root = Path(__file__).resolve().parents[1]
+    files = sorted({p for g in _CODE_GLOBS for p in root.glob(g)
+                    if "__pycache__" not in p.parts})
+    import hashlib
+    h = hashlib.sha256()
+    for p in files:
+        h.update(str(p.relative_to(root)).encode())
+        h.update(p.read_bytes())
+    return h.hexdigest(), len(files)
+
+
+def write_run_record(run_dir: Path, arm: str, run_id: str, dataset: str) -> None:
+    """Pin what actually produced this arm's traces, in the artifact itself.
+
+    v20's `check_predictions.py` was edited between r1 and r2 and the only evidence was a
+    file mtime (v21 §1.10). A code fingerprint recorded next to the numbers makes a
+    between-replicate change visible to anyone reading the run directory.
+    """
+    import hashlib, subprocess
+    code_sha, n_files = code_fingerprint()
+    try:
+        # Best-effort only, and empty inside the container: llm-service is a git submodule,
+        # so its `.git` is a file pointing at the parent repo's module dir, which is not
+        # mounted. `code_sha256` is the load-bearing field.
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                             cwd=Path(__file__).resolve().parents[1], timeout=10).stdout.strip()
+        dirty = bool(subprocess.run(["git", "status", "--porcelain"], capture_output=True,
+                                    text=True, cwd=Path(__file__).resolve().parents[1],
+                                    timeout=10).stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        sha, dirty = "", None
+    ds = Path(dataset)
+    rec = {
+        "run_id": run_id, "arm": arm,
+        "code_sha256": code_sha, "code_n_files": n_files,
+        "git_sha": sha, "git_dirty": dirty,
+        "dataset": str(dataset),
+        "dataset_sha256": hashlib.sha256(ds.read_bytes()).hexdigest() if ds.exists() else None,
+        "env": {k: os.environ.get(k) for k in
+                ("RUN_ARM", "EARLY_CHECKPOINT_ENABLED", "LATE_CHECKPOINT_ENABLED",
+                 "EVALUATOR_MODE", "CLOSED_LOOP_EARLY_VOTE_K",
+                 "ROUTE_PLAUSIBILITY_PROMPT_VERSION", "ANSWER_QUALITY_PROMPT_VERSION",
+                 "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")},
+        "constants": {"WALL_BUDGET_S": WALL_BUDGET_S, "MAX_RETRIES": MAX_RETRIES,
+                      "COST_CAP_MULT": COST_CAP_MULT},
+    }
+    p = run_dir / arm / "run_record.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(rec, indent=2), encoding="utf-8")
+
+
 def extract_snapshot(final_state: dict) -> dict:
     """Assemble the harness view of a finished case from the raw graph state."""
     by_agent: dict[str, list] = {}
@@ -121,6 +190,8 @@ def extract_snapshot(final_state: dict) -> dict:
         "top_route": final_state.get("top_route"),
         "clarification_fired": final_state.get("clarification_fired", False),
         "request_address_fired": final_state.get("request_address_fired", False),
+        # False while EKR_GEN_019 converts = the promoter was the sole cause (v21 §2.2).
+        "forced_route_applied": bool(final_state.get("forced_route_applied")),
         "specialists_invoked": specialists,
         "resolved_building_id": resolved_id,
         "sql_fields_used": union,
@@ -227,6 +298,7 @@ def run_case(graph, case: dict, arm: str, cached: dict | None) -> dict:
     except Exception as exc:
         print(f"  ERROR case {case.get('case_id')}: {exc}", file=sys.stderr)
         return {"top_route": None, "clarification_fired": False, "request_address_fired": False,
+                "forced_route_applied": False,
                 "specialists_invoked": [], "resolved_building_id": None, "sql_fields_used": [],
                 "sql_fields_used_by_agent": {}, "vector_chunks_retrieved": [], "final_answer": "",
                 "aggregated_data": {}, "retry_budget": MAX_RETRIES, "controller_flags": {},
@@ -262,6 +334,10 @@ def run(args) -> int:
     from src.evaluation.closed_loop.deterministic_checks import run_all_checks, case_pass as passed
     from src.evaluation.closed_loop.trace_schema import (
         append_per_case_trace, append_per_attempt_trace, write_arm_summary)
+
+    # After the imports above: they load the .env, so the model deployment is in os.environ
+    # by now and lands in the record instead of being written as null.
+    write_run_record(run_dir, args.arm, run_id, args.dataset)
 
     graph = build_building_flow_graph()
     cases = load_dataset(args.dataset)
@@ -319,6 +395,7 @@ def run(args) -> int:
             # faithfulness score — the evaluator would have caught the outage (§1.3).
             "clarification_fired": bool(snap.get("clarification_fired")),
             "request_address_fired": bool(snap.get("request_address_fired")),
+            "forced_route_applied": bool(snap.get("forced_route_applied")),
             "evidence_present": any(bool(v) for v in (snap.get("aggregated_data") or {}).values()),
             "total_attempts": 1 + (MAX_RETRIES - snap["retry_budget"]),  # 1 = no retry
             "early_block_exhausted": flags.get("early_block_exhausted", False),

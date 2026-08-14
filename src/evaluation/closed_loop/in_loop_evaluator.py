@@ -45,6 +45,11 @@ class AnswerVerdict:
     stage_attribution_judge: str   # the judge's own guess (recorded for analysis)
     stage_attribution_rule: str    # deterministic rule (drives the controller)
     corrective_hint: str | None
+    # Diagnostic only — nothing branches on it. `stage_attribution_rule` says "summarizer"
+    # for every evidence-absent failure because faithfulness and calibration share a stage
+    # (v21 §1.6); this column separates "the summariser wrote a bad answer" from "there was
+    # nothing for it to write from".
+    attribution_diagnostic: str = "unknown"
     # False when the judge was handed no evidence. Recorded on every verdict so a
     # dead upstream retrieval channel shows up as a flag instead of disappearing
     # into a low quality score (§1.3).
@@ -74,7 +79,7 @@ def _applicable(axes: dict) -> dict:
             for a in _AXIS_ORDER if not (a in axes and axes[a] is None)}
 
 
-def _score(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str]:
+def score_axes(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str]:
     """Parse the judge's axes and apply the pre-registered pass rule.
 
     `faithfulness` asks whether the answer's claims are supported by the
@@ -99,6 +104,10 @@ def _score(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str]:
     return axes, composite, verdict
 
 
+# Back-compat: `replay_rescore` and older callers imported the private name.
+_score = score_axes
+
+
 def _stage_rule(verdict: str, axes: dict) -> str:
     """Attribution rule, over the applicable axes only (see `_applicable`).
 
@@ -110,6 +119,21 @@ def _stage_rule(verdict: str, axes: dict) -> str:
     if verdict == "fail" and all(v >= TAU_AXIS_FLOOR for v in vals.values()):
         return "unknown"
     return _AXIS_TO_STAGE.get(min(vals, key=lambda a: vals[a]), "unknown")
+
+
+def _attribution_diagnostic(verdict: str, axes: dict, evidence_present: bool) -> str:
+    """Diagnostic-only refinement of `_stage_rule` — nothing branches on the result.
+
+    With no evidence retrieved, `faithfulness` is dropped (see `score_axes`) and the answer
+    can only hedge, so `calibration` / `answer_relevance` become the lowest axis and the rule
+    blames the summariser for an upstream retrieval outage. Naming that case
+    `retrieval_starved` is what makes the column carry information (v21 §2.3).
+    """
+    vals = _applicable(axes)
+    if vals and not evidence_present \
+            and min(vals, key=lambda a: vals[a]) in ("calibration", "answer_relevance"):
+        return "retrieval_starved"
+    return _stage_rule(verdict, axes)
 
 
 class InLoopEvaluator:
@@ -172,6 +196,47 @@ class InLoopEvaluator:
                                 axes={"_fail_open": True, "_error": str(e)[:200]},
                                 corrective_hint=None)
 
+    def route_plausible_voted(
+        self,
+        question: str,
+        chosen_route: str,
+        has_address_flag: bool,
+        dialogue_summary: str | None,
+        about_to_request_address: bool = False,
+        k: int = 1,
+    ) -> RouteVerdict:
+        """Majority vote over `k` independent `route_plausible` calls (self-consistency).
+
+        The early judge changes its mind on identical input — it fired on one guard case in
+        1 of 3 replicates and on `EKR_GEN_030` in 1 of 3 (v21 §1.4, §1.5) — and a false fire
+        destroys a case permanently while a true fire only probably gains one. So the fire
+        condition is a strict majority of *post-guard* `implausible` verdicts: each vote has
+        already passed the implausible->ambiguous downgrade guard inside `route_plausible`.
+
+        The deployment is o-family and rejects `temperature`, so the votes differ only by the
+        model's native sampling noise — which is exactly the noise being averaged out.
+
+        `k=1` is the single-call path unchanged. `last_usage` is the sum over the k calls.
+        """
+        k = max(1, int(k))
+        votes: list[RouteVerdict] = []
+        total = {"total_tokens": 0, "completion_tokens": 0}
+        for _ in range(k):
+            # Reset first: a fail-open raises before `_call` records usage, and the stale
+            # value from the previous vote would otherwise be counted twice.
+            self.last_usage = {"total_tokens": 0, "completion_tokens": 0}
+            votes.append(self.route_plausible(question, chosen_route, has_address_flag,
+                                              dialogue_summary, about_to_request_address))
+            for key in total:
+                total[key] += int((self.last_usage or {}).get(key, 0) or 0)
+        self.last_usage = total
+
+        implausible = [v for v in votes if v.verdict == "implausible"]
+        if len(implausible) * 2 > k:
+            return implausible[0]   # hint comes from the first implausible vote
+        survivors = [v for v in votes if v.verdict != "implausible"]
+        return survivors[0] if survivors else votes[0]
+
     def answer_quality(
         self,
         question: str,
@@ -188,12 +253,13 @@ class InLoopEvaluator:
             p = _parse(raw)
             if p is None:
                 raise ValueError(f"JSON failure: {raw[:200]!r}")
-            axes, composite, verdict = _score(p.get("axes") or {}, evidence_present)
+            axes, composite, verdict = score_axes(p.get("axes") or {}, evidence_present)
             return AnswerVerdict(
                 verdict=verdict, axes=axes, composite=composite,  # type: ignore
                 evidence_present=evidence_present,
                 stage_attribution_judge=str(p.get("stage_attribution") or "unknown"),
                 stage_attribution_rule=_stage_rule(verdict, axes),
+                attribution_diagnostic=_attribution_diagnostic(verdict, axes, evidence_present),
                 corrective_hint=p.get("corrective_hint") or None, raw_json=p,
             )
         except Exception as e:

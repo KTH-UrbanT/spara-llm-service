@@ -24,10 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.analyze_results_closed_loop import _load, _mcnemar, _HAS
 
 ARMS = ("A_open", "A_late_only", "A_full")
-# The five generic cases whose only failure was a misrouted address request. Fix 5 exists
-# for these and nothing else; naming them here is what makes prediction 4 falsifiable.
-FIX5_TARGETS = ["EKR_GEN_017", "EKR_GEN_018", "EKR_GEN_019", "EKR_GEN_030",
-                "DEMO_EXTRA_GEN_001"]
+# The generic cases whose only failure was a misrouted address request. Fix 5 exists for
+# these and nothing else; naming them here is what makes prediction 4 falsifiable.
+FIX5_TARGETS = ["EKR_GEN_017", "EKR_GEN_018", "EKR_GEN_019", "DEMO_EXTRA_GEN_001"]
+# EKR_GEN_030 fired in only 1 of 3 single-shot replicates, so v21's k=3 majority vote is
+# expected to suppress it. Declared in advance as a deliberate trade (a false fire destroys
+# a case permanently, §1.4) and moved out of the pinned target list: tracked, not counted.
+FIX5_TRACKED = ["EKR_GEN_030"]
 # Must NOT be re-routed: asking these for an address is the correct behaviour.
 FIX5_GUARDS = ["DEMO_EXTRA_CLAR_001", "DEMO_EXTRA_CLAR_002"]
 NOT_JUDGED = ("_fail_open", "_short_circuit", "_no_answer")
@@ -108,6 +111,12 @@ def replicate(run_dir: Path) -> dict:
             # Attribution is only actionable on a FAILING attempt; counting it over passing
             # attempts reports whichever axis happened to be lowest on a good answer.
             "attrib_fail": _tally(fails, "evaluator_stage_attribution_rule"),
+            # v21 P5: the diagnostic column, over failing judged attempts only.
+            "attrib_diag_fail": _tally(fails, "attribution_diagnostic"),
+            "attrib_on_pass": sum(1 for a in _judged(att) if _verdict(a) == "pass"
+                                  and a.get("evaluator_stage_attribution_rule") is not None),
+            "early_block_exhausted": sum(1 for r in rows if r.get("early_block_exhausted")),
+            "forced_route_applied": sum(1 for r in rows if r.get("forced_route_applied")),
             "strata": _strata(rows),
         }
 
@@ -122,6 +131,7 @@ def replicate(run_dir: Path) -> dict:
                 }
 
     d["fix5"] = _fix5(pc)
+    d["reverse"] = _reverse(pc)
     return d
 
 
@@ -140,16 +150,70 @@ def _strata(rows: list[dict]) -> dict:
 
 
 def _fix5(pc: dict) -> dict:
-    """Prediction 4: did the early checkpoint rescue the five address-misroutes without
+    """Prediction 4: did the early checkpoint rescue the address-misroutes without
     disturbing the two cases where asking for an address is correct?"""
     o, f = _by_id(pc.get("A_open") or []), _by_id(pc.get("A_full") or [])
-    fired = [c for c in FIX5_TARGETS
-             if (f.get(c, {}).get("total_attempts") or 1) > 1]
-    converted = [c for c in FIX5_TARGETS
-                 if f.get(c, {}).get("case_pass") and not o.get(c, {}).get("case_pass")]
-    guards_ok = [c for c in FIX5_GUARDS if f.get(c, {}).get("request_address_fired")]
-    return {"fired": fired, "converted": converted, "guards_held": guards_ok,
-            "guards_total": len(FIX5_GUARDS)}
+    _fired = lambda ids: [c for c in ids if (f.get(c, {}).get("total_attempts") or 1) > 1]
+    _conv = lambda ids: [c for c in ids if f.get(c, {}).get("case_pass")
+                         and not o.get(c, {}).get("case_pass")]
+    return {"fired": _fired(FIX5_TARGETS), "converted": _conv(FIX5_TARGETS),
+            "guards_held": [c for c in FIX5_GUARDS if f.get(c, {}).get("request_address_fired")],
+            "guards_total": len(FIX5_GUARDS),
+            # Reported, never gated — see FIX5_TRACKED.
+            "tracked_fired": _fired(FIX5_TRACKED), "tracked_converted": _conv(FIX5_TRACKED),
+            "forced_route_applied": sorted(c for c, r in f.items()
+                                           if r.get("forced_route_applied"))}
+
+
+def _reverse(pc: dict) -> dict:
+    """v21 P1 clause 2 — the cost side of prompt v2's symmetry.
+
+    The capability criterion is symmetric by construction: it rejects `generic` on a
+    question that needs the user's building just as it rejects `building` on one that does
+    not. That is what converts CLAR_001, and the same mechanism could in principle drag a
+    correctly-generic case onto the building route and lose it. Measured at 0 of 33 in the
+    pre-run canary (`artifacts/runs/smoke_v21_reverse`); this is the check that it stays 0.
+    """
+    o, f = _by_id(pc.get("A_open") or []), _by_id(pc.get("A_full") or [])
+    return {
+        "generic_lost_to_building": [
+            c for c, r in f.items()
+            if r.get("expected_route") == "generic"
+            and o.get(c, {}).get("case_pass") and not r.get("case_pass")
+            and r.get("final_route_taken") == "building"],
+        "clarification_gained": [
+            c for c, r in f.items()
+            if r.get("expected_route") == "clarification"
+            and r.get("case_pass") and not o.get(c, {}).get("case_pass")],
+    }
+
+
+def consensus_mcnemar(run_dirs: list[Path], a: str = "A_open", b: str = "A_full") -> dict:
+    """The pre-registered primary *interpretive* statistic (plan-eil-v21 §4).
+
+    Per case per arm, `pass` = passes in a majority of replicates; then one exact McNemar
+    over the 88 consensus pairs. This is the correct estimator of the systematic case-level
+    effect: bidirectional single-replicate churn (§1.5) cancels, while reproducible flips
+    survive. Declared before the run, with its own arithmetic stated — 5-0 gives p = 0.0625
+    and >= 6-0 is required for p < 0.05 — so it could not be reverse-engineered afterwards.
+    """
+    need = len(run_dirs) // 2 + 1
+    tally: dict[str, dict[str, int]] = {a: {}, b: {}}
+    for rd in run_dirs:
+        for arm in (a, b):
+            for r in _traces(rd, arm, "per_case"):
+                if r.get("case_pass"):
+                    tally[arm][r["case_id"]] = tally[arm].get(r["case_id"], 0) + 1
+    ids = sorted({r["case_id"] for rd in run_dirs for r in _traces(rd, a, "per_case")})
+    cons = {arm: {c: {"case_pass": tally[arm].get(c, 0) >= need} for c in ids} for arm in (a, b)}
+    out = {"n_replicates": len(run_dirs), "majority_needed": need, "n_cases": len(ids),
+           "gained": sorted(c for c in ids
+                            if cons[b][c]["case_pass"] and not cons[a][c]["case_pass"]),
+           "lost": sorted(c for c in ids
+                          if cons[a][c]["case_pass"] and not cons[b][c]["case_pass"])}
+    if _HAS:
+        out["mcnemar"] = _mcnemar(cons[a], cons[b])
+    return out
 
 
 def _sd(vals: list[float]) -> float:
@@ -228,18 +292,22 @@ def report(reps: list[dict]) -> list[str]:
     return md
 
 
-def _verdicts(reps: list[dict]) -> list[str]:
-    out = ["| # | prediction | observed | verdict |", "|---|---|---|---|"]
+def verdicts(reps: list[dict]) -> list[dict]:
+    """The five pre-registered predictions of `plan-eil-v20-fixes.md`, as data.
+
+    Built as dicts so the markdown and the `--out-json` dump are the same numbers rather
+    than two renderings that can drift apart (v21 §2.5).
+    """
+    out: list[dict] = []
+    _v = lambda ok: "PASS" if ok else "FAIL"
 
     ev = [r["arms"]["A_open"]["evidence_absent"] for r in reps if "A_open" in r["arms"]]
-    ok1 = all(v >= 45 for v in ev)
-    out.append(f"| 1 | `evidence_present == false` on ≥45 of 88 A_open | {ev} "
-               f"| {'PASS' if ok1 else 'FAIL'} |")
+    out.append({"n": 1, "prediction": "`evidence_present == false` on ≥45 of 88 A_open",
+                "observed": ev, "verdict": _v(all(v >= 45 for v in ev))})
 
-    p2 = [r["arms"]["A_open"]["pass_77"] for r in reps if "A_open" in r["arms"]]
-    ok2 = all(30 <= n <= 38 for n, _ in p2)
-    out.append(f"| 2 | A_open `case_pass` in 30–38 of 77 | {[n for n, _ in p2]} "
-               f"| {'PASS' if ok2 else 'FAIL'} |")
+    p2 = [n for n, _ in (r["arms"]["A_open"]["pass_77"] for r in reps if "A_open" in r["arms"])]
+    out.append({"n": 2, "prediction": "A_open `case_pass` in 30–38 of 77",
+                "observed": p2, "verdict": _v(all(30 <= n <= 38 for n in p2))})
 
     lr, attr = [], []
     for r in reps:
@@ -247,17 +315,20 @@ def _verdicts(reps: list[dict]) -> list[str]:
             if arm in r["arms"]:
                 lr.append(r["arms"][arm]["late_rewind"])
                 attr.append(next(iter(r["arms"][arm]["attrib_fail"]), None))
-    ok3 = all(v < 20 for v in lr) and not any(a == "summarizer" for a in attr if a)
-    out.append(f"| 3 | late rewinds < 20 **and** top attribution ≠ summarizer "
-               f"| rewinds {lr}, attribution {attr} | {'PASS' if ok3 else 'FAIL'} |")
+    out.append({"n": 3, "prediction": "late rewinds < 20 **and** top attribution ≠ summarizer",
+                "observed": {"late_rewinds": lr, "top_attribution": attr},
+                "verdict": _v(all(v < 20 for v in lr)
+                              and not any(a == "summarizer" for a in attr if a))})
 
     f5 = [r["fix5"] for r in reps]
-    ok4 = all(len(x["fired"]) >= 3 and len(x["converted"]) >= 2
-              and len(x["guards_held"]) == x["guards_total"] for x in f5)
-    out.append(f"| 4 | Fix 5 fires ≥3 of 5, ≥2 convert, both guards hold "
-               f"| fired {[len(x['fired']) for x in f5]}, "
-               f"converted {[len(x['converted']) for x in f5]}, "
-               f"guards {[len(x['guards_held']) for x in f5]} | {'PASS' if ok4 else 'FAIL'} |")
+    out.append({"n": 4,
+                "prediction": f"Fix 5 fires ≥3 of {len(FIX5_TARGETS)}, ≥2 convert, both guards hold",
+                "observed": {"fired": [len(x["fired"]) for x in f5],
+                             "converted": [len(x["converted"]) for x in f5],
+                             "guards_held": [len(x["guards_held"]) for x in f5],
+                             "tracked_fired": [x["tracked_fired"] for x in f5]},
+                "verdict": _v(all(len(x["fired"]) >= 3 and len(x["converted"]) >= 2
+                                  and len(x["guards_held"]) == x["guards_total"] for x in f5))})
 
     wins = sum(1 for r in reps
                if "A_full" in r["arms"] and "A_open" in r["arms"]
@@ -270,13 +341,25 @@ def _verdicts(reps: list[dict]) -> list[str]:
         v5 = "FAIL"          # already lost 2 — a third win cannot rescue it
     else:
         v5 = f"PENDING ({3 - len(reps)} replicate(s) to go)"
-    out.append(f"| 5 | A_full ≥ A_open in ≥2 of 3 replicates | {wins} of {len(reps)} "
-               f"| {v5} |")
+    out.append({"n": 5, "prediction": "A_full ≥ A_open in ≥2 of 3 replicates",
+                "observed": f"{wins} of {len(reps)}", "verdict": v5})
+    return out
+
+
+def _verdicts(reps: list[dict]) -> list[str]:
+    out = ["| # | prediction | observed | verdict |", "|---|---|---|---|"]
+    for v in verdicts(reps):
+        obs = v["observed"]
+        if isinstance(obs, dict):
+            obs = ", ".join(f"{k} {val}" for k, val in obs.items())
+        out.append(f"| {v['n']} | {v['prediction']} | {obs} | {v['verdict']} |")
 
     out += ["", "Per-replicate Fix 5 detail:", ""]
-    for r, x in zip(reps, f5):
+    for r in reps:
+        x = r["fix5"]
         out.append(f"- `{Path(r['run_dir']).name}` fired={x['fired']} "
-                   f"converted={x['converted']} guards_held={x['guards_held']}")
+                   f"converted={x['converted']} guards_held={x['guards_held']} "
+                   f"tracked={x['tracked_fired']} forced_route={x['forced_route_applied']}")
     return out
 
 
@@ -284,6 +367,9 @@ def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", action="append", required=True, dest="run_dirs")
     p.add_argument("--out", default=None)
+    p.add_argument("--out-json", default=None,
+                   help="Dump {replicates, verdicts} — the machine-readable form the v20 "
+                        "run lacked, so a later re-analysis can be diffed against it.")
     args = p.parse_args(argv)
 
     reps = [replicate(Path(d)) for d in args.run_dirs]
@@ -307,6 +393,19 @@ def main(argv=None):
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(md + "\n", encoding="utf-8")
         print(f"\nWrote {args.out}", file=sys.stderr)
+    if args.out_json:
+        Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
+        rds = [Path(d) for d in args.run_dirs]
+        Path(args.out_json).write_text(
+            json.dumps({"replicates": reps, "verdicts": verdicts(reps),
+                        # The §4 primary interpretive statistic belongs in the artifact, not
+                        # only in a write-up that could drift from it.
+                        "consensus": {f"{a} vs {b}": consensus_mcnemar(rds, a, b)
+                                      for a, b in (("A_open", "A_late_only"),
+                                                   ("A_open", "A_full"),
+                                                   ("A_late_only", "A_full"))}},
+                       indent=2, default=str) + "\n", encoding="utf-8")
+        print(f"Wrote {args.out_json}", file=sys.stderr)
     return 0
 
 

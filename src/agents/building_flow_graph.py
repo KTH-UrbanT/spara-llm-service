@@ -832,6 +832,11 @@ def understand_context_node(state: GraphState) -> GraphState:
     # question. So it is appended to the parser's input only.
     _msg = state.get("last_message")
     _router_hint = state.get("router_hint")
+    _had_hint = bool(_router_hint)
+    # The route the evaluator just rejected, set by rewind_to_router_node. Consumed in the
+    # same pass so a stale key can never suppress the promoter on a later, unrelated turn.
+    _rejected_route = state.get("rejected_route")
+    state["rejected_route"] = None
     if _router_hint:
         _msg = f"{_msg}\n\n{_router_hint}"
         state["router_hint"] = None  # consumed; never re-apply on a later pass
@@ -853,7 +858,19 @@ def understand_context_node(state: GraphState) -> GraphState:
     if "intent_list" not in ctx or ctx["intent_list"] is None:
         ctx["intent_list"] = []
 
-    if _looks_like_personal_energy_advice(state.get("last_message")):
+    # This heuristic reads `last_message`, which by design never carries the router hint, so
+    # it cannot tell that a rewind just happened — it re-promoted the very route the early
+    # checkpoint had rejected, silently discarding a correction the parser had already
+    # obeyed (v21 §1.3: EKR_GEN_019 fired 3/3 and converted 0/3 for exactly this reason).
+    # Suppress it only in that situation; normal traffic keeps the heuristic untouched.
+    _suppress_promoter = _had_hint and _rejected_route == "building"
+    if _suppress_promoter:
+        print("[understand_context] promoter suppressed: evaluator rejected route 'building'", flush=True)
+    elif _had_hint and _rejected_route:
+        # Direction matters. Only the building->generic rejection is observed and tested;
+        # an unobserved reverse path is exactly how the §1.7 landmine got planted.
+        print(f"[understand_context] forced_route_skipped: rejected_route={_rejected_route!r}", flush=True)
+    if not _suppress_promoter and _looks_like_personal_energy_advice(state.get("last_message")):
         normalized_intents = [str(item).strip().lower() for item in (ctx.get("intent_list") or [])]
         if not normalized_intents or normalized_intents == ["vector database"]:
             ctx["intent_list"] = ["SQL database", "vector database"]
@@ -921,6 +938,22 @@ def understand_context_node(state: GraphState) -> GraphState:
                            "query generic database", "query specific database"} for i in _intents) \
                  or (not _intents and "sql" in _parsed)
     state["top_route"] = "building" if _wants_sql else "generic"
+
+    # Safety net. If the parser itself re-picks the rejected route, suppressing the promoter
+    # is not enough and the rewind would be wasted (anti-thrash blocks a second one). Flip
+    # onto the ORGANIC generic path — the vector-only bypass at route_after_ambiguity — not
+    # a new one. The traces say the parser already obeys the hint, so this should never fire:
+    # `forced_route_applied` staying false while EKR_GEN_019 converts is the proof that the
+    # promoter was the sole cause (v21 §2.2).
+    if _suppress_promoter and state["top_route"] == _rejected_route:
+        ctx["intent_list"] = ["vector database"]
+        ctx["parsed_intent"] = "vector database"
+        ctx["ambiguous"] = False
+        ctx["ambigious"] = False
+        state["top_route"] = "generic"
+        state["forced_route_applied"] = True
+        print("[understand_context] forced_route_applied: parser re-picked the rejected route", flush=True)
+
     print(f"[understand_context] parsed_intent={ctx.get('parsed_intent')!r} intent_list={ctx.get('intent_list')}", flush=True)
     print("[understand_context] EXIT", flush=True)
     return state
@@ -2148,16 +2181,22 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
         # a pure read of the state, so we can ask it here and hand the judge the actual
         # pending decision. Not a threshold change: an added input (plan-eil-v20-fixes Fix 5).
         pending_hop = route_after_ambiguity(state)
-        verdict = ev.route_plausible(
+        # k=3 self-consistency: a false fire destroys a case permanently while a true fire
+        # only probably gains one, so the asymmetry is worth 3x the early-judge calls
+        # (v21 §2.1). k=1 is the v20 single-call path unchanged.
+        vote_k = max(1, int(os.environ.get("CLOSED_LOOP_EARLY_VOTE_K", "1") or 1))
+        verdict = ev.route_plausible_voted(
             question=str(state.get("last_message") or ""),
             chosen_route=str(state.get("top_route") or "building"),
             has_address_flag=bool((state.get("metadata") or {}).get("address")),
             about_to_request_address=(pending_hop == "request_address"),
-            dialogue_summary=None)
+            dialogue_summary=None, k=vote_k)
         decision = EvaluationController().handle_early_checkpoint(verdict, ctrl)
         rec = {"checkpoint_fired": "early",
                "route_picked_this_attempt": state.get("top_route"),
                "evaluator_verdict_json": {"verdict": verdict.verdict, "axes": verdict.axes},
+               "early_vote_k": vote_k,
+               "forced_route_applied": bool(state.get("forced_route_applied")),
                "controller_action": decision.action,
                "corrective_hint_passed": decision.corrective_hint}
         u = getattr(ev, "last_usage", {}) or {}
@@ -2168,7 +2207,7 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
             "attempt_records": list(state.get("attempt_records") or []) + [rec],
             "hint_target": decision.target_stage,
             "eval_total_tokens": int(state.get("eval_total_tokens") or 0) + int(u.get("total_tokens", 0)),
-            "eval_total_completions": int(state.get("eval_total_completions") or 0) + 1,
+            "eval_total_completions": int(state.get("eval_total_completions") or 0) + vote_k,
         }
         if decision.corrective_hint:
             updates["corrective_hint"] = decision.corrective_hint
@@ -2202,6 +2241,7 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
         specs = [a for a, f in [("generic_sql_agent", "invoked_generic_sql"),
                                 ("specialized_sql_agent", "invoked_specialized_sql"),
                                 ("vector_db_agent", "invoked_vector")] if state.get(f)]
+        _attrib = (lambda v: v) if verdict.verdict == "fail" else (lambda v: None)
         rec = {"checkpoint_fired": "late",
                "answer_drafted_this_attempt": str(state.get("final_response") or "")[:500],
                "specialists_picked_this_attempt": sorted(specs),
@@ -2209,8 +2249,12 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
                "evaluator_axes_json": verdict.axes,
                "evaluator_composite": verdict.composite,
                "evidence_present": verdict.evidence_present,
-               "evaluator_stage_attribution_judge": verdict.stage_attribution_judge,
-               "evaluator_stage_attribution_rule": verdict.stage_attribution_rule,
+               # Attribution is only meaningful on a FAILING attempt — on a passing one it
+               # reports whichever axis happened to be lowest on a good answer, which
+               # pollutes any tally that forgets to filter (v21 §1.6).
+               "evaluator_stage_attribution_judge": _attrib(verdict.stage_attribution_judge),
+               "evaluator_stage_attribution_rule": _attrib(verdict.stage_attribution_rule),
+               "attribution_diagnostic": _attrib(verdict.attribution_diagnostic),
                "controller_action": decision.action,
                "corrective_hint_passed": decision.corrective_hint}
         u = getattr(ev, "last_usage", {}) or {}
@@ -2258,6 +2302,9 @@ def rewind_to_router_node(state: GraphState) -> GraphState:
     # but still reports done).
     updates: GraphState = {
         "router_hint": state.get("corrective_hint") or "",
+        # The route the judge just rejected. understand_context_node reads it to stop the
+        # personal-energy-advice heuristic from re-promoting it (v21 §2.2).
+        "rejected_route": state.get("top_route"),
         "hint_target": None,
         "done_generic_sql": None, "done_specialized_sql": None, "done_vector": None,
         # Decision flags from the attempt being rewound, including the identity gate —
@@ -2275,15 +2322,27 @@ def rewind_to_router_node(state: GraphState) -> GraphState:
 
 
 def rewind_to_specialists_node(state: GraphState) -> GraphState:
-    """Clear specialist state and pass the hint to the summarizer for the re-run."""
+    """Clear specialist state and pass the hint to the summarizer for the re-run.
+
+    Cache-aware for the same reason `rewind_to_router_node` is: a cached arm's specialists
+    early-return without re-setting `invoked_*` / `sql_fields_*` or re-merging
+    `aggregated_data`, so clearing them here would destroy the shared evidence permanently
+    and silently break the paired comparison. Unreachable today — `question_coverage` has
+    never been the lowest axis — which is precisely why it was still armed (v21 §1.7).
+    """
     print("[rewind_to_specialists] re-selecting specialists", flush=True)
-    return {
+    cached = bool(state.get("aggregated_data_cached"))
+    updates: GraphState = {
         "hint_target": None, "eval_feedback": state.get("corrective_hint") or "",
         "done_generic_sql": None, "done_specialized_sql": None, "done_vector": None,
-        "invoked_generic_sql": False, "invoked_specialized_sql": False, "invoked_vector": False,
-        "sql_fields_generic": [], "sql_fields_specialized": [], "vector_chunks_retrieved": [],
-        "aggregated_data": {}, "aggregated_data_cached": False,
     }
+    if not cached:
+        updates.update({
+            "invoked_generic_sql": False, "invoked_specialized_sql": False, "invoked_vector": False,
+            "sql_fields_generic": [], "sql_fields_specialized": [], "vector_chunks_retrieved": [],
+            "aggregated_data": {}, "aggregated_data_cached": False,
+        })
+    return updates
 
 
 def rewind_to_summarizer_node(state: GraphState) -> GraphState:

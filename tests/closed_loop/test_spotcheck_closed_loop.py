@@ -5,9 +5,15 @@ that turns that filled form into the LABEL_FIELDS CSV the `kappa` step consumes.
 """
 import argparse
 import csv
+import json
+from pathlib import Path
+
+import pytest
 
 from scripts.spotcheck_closed_loop import (
     _parse_form, _is_blank_label, _validate_label, cmd_ingest_md,
+    _ac1, _raw_agreement, _was_judged, cmd_audit_ungrounded, cmd_kappa, cmd_sample,
+    AUDIT_FIELDS, LABEL_FIELDS, WORKLIST_FIELDS,
 )
 
 # One filled case + one fully-blank case. Uses the real form's punctuation:
@@ -131,3 +137,168 @@ def test_ingest_md_is_idempotent(tmp_path):
     with labels.open(encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# v21 §2.4 — prevalence-robust agreement, and the fail-open filter that was
+# silently discarding most of the judged pool.
+# ---------------------------------------------------------------------------
+
+def test_ac1_is_stable_exactly_where_kappa_collapses():
+    """The prevalence paradox, in one assertion. 18 agreed passes, 2 disagreements:
+    90% raw agreement, yet Cohen's κ goes NEGATIVE because both raters almost always
+    say 'pass'. Gating on κ >= 0.6 here would reject a judge that agrees 9 times in 10."""
+    from scripts.spotcheck_closed_loop import _kappa_binary
+    pairs = [(1, 1)] * 18 + [(1, 0), (0, 1)]
+    assert _raw_agreement(pairs) == pytest.approx(0.90)
+    assert _kappa_binary(pairs) < 0.0
+    assert _ac1(pairs) == pytest.approx(0.8895, abs=1e-4)
+
+
+def test_ac1_degenerate_inputs_do_not_crash():
+    assert _ac1([]) == 0.0
+    assert _ac1([(1, 1)] * 5) == 1.0        # perfect agreement, zero variance
+
+
+def _worklist(tmp_path, rows):
+    p = tmp_path / "worklist.csv"
+    with p.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=WORKLIST_FIELDS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in WORKLIST_FIELDS})
+    return p
+
+
+def _labels(tmp_path, rows):
+    p = tmp_path / "labels.csv"
+    with p.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=LABEL_FIELDS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in LABEL_FIELDS})
+    return p
+
+
+_JUDGED_AXES = {"judge_answer_relevance": 9, "judge_question_coverage": 9,
+                "judge_calibration": 9, "judge_semantic_judge_pass": "True",
+                "judge_fail_open": False}
+_HUMAN = {"answer_relevance": 9, "question_coverage": 9, "calibration": 9,
+          "faithfulness": 9, "overall_pass": 1}
+
+
+def _kappa(tmp_path, worklist_rows, label_rows):
+    out = tmp_path / "kappa.json"
+    cmd_kappa(argparse.Namespace(worklist=_worklist(tmp_path, worklist_rows),
+                                 labels=_labels(tmp_path, label_rows),
+                                 out=out, n_resamples=50, seed=1))
+    return json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_kappa_keeps_judged_rows_whose_faithfulness_is_null(tmp_path):
+    """The §1.8 instrument bug. After Fix 4, faithfulness is legitimately blank on the 61
+    evidence-absent cases; the old filter read that blank as 'fail-open' and dropped them,
+    which would have thrown away most of the agreement pool."""
+    wl = [dict(_JUDGED_AXES, case_id=f"C{i}", judge_faithfulness="") for i in range(4)]
+    lb = [dict(_HUMAN, case_id=f"C{i}") for i in range(4)]
+    out = _kappa(tmp_path, wl, lb)
+    assert out["n_paired"] == 4 and out["n_dropped_fail_open"] == 0
+    # ...and the null axis simply contributes no pairs, rather than pairing against nothing.
+    assert out["per_axis_kappa_weighted"]["faithfulness"]["n"] == 0
+    assert out["per_axis_kappa_weighted"]["calibration"]["n"] == 4
+
+
+def test_kappa_drops_only_fail_open_rows(tmp_path):
+    wl = [dict(_JUDGED_AXES, case_id="C0", judge_faithfulness=8),
+          dict(_JUDGED_AXES, case_id="C1", judge_faithfulness="", judge_fail_open=True)]
+    lb = [dict(_HUMAN, case_id="C0"), dict(_HUMAN, case_id="C1")]
+    out = _kappa(tmp_path, wl, lb)
+    assert out["n_paired"] == 1 and out["n_dropped_fail_open"] == 1
+
+
+def test_kappa_reports_gates_and_flags_kappa_as_ungated(tmp_path):
+    wl = [dict(_JUDGED_AXES, case_id=f"C{i}", judge_faithfulness=9) for i in range(10)]
+    lb = [dict(_HUMAN, case_id=f"C{i}") for i in range(10)]
+    out = _kappa(tmp_path, wl, lb)
+    assert out["gates"] == {"raw_agreement_ge_0.90": True, "ac1_ge_0.6": True}
+    assert "prevalence" in out["kappa_caveat"]
+
+
+# --- sampling -------------------------------------------------------------------------
+
+def _run_dir(tmp_path, rows):
+    d = tmp_path / "run" / "A_open" / "traces"
+    d.mkdir(parents=True)
+    (d / "per_case.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    ds = tmp_path / "dataset.jsonl"
+    ds.write_text("\n".join(json.dumps({"case_id": r["case_id"], "question": f"q {r['case_id']}"})
+                            for r in rows) + "\n", encoding="utf-8")
+    return tmp_path / "run", ds
+
+
+def _row(cid, axes, **kw):
+    return {"case_id": cid, "expected_route": "generic", "final_answer": f"answer {cid}",
+            "answer_quality_verdict": {"verdict": "pass", "axes": axes, "composite": 8.0},
+            "semantic_judge_pass": True, **kw}
+
+
+def test_was_judged_excludes_short_circuits_and_fail_opens():
+    assert _was_judged(_row("a", {"calibration": 9}))
+    assert not _was_judged(_row("b", {"_fail_open": True}))
+    assert not _was_judged(_row("c", {"_short_circuit": True}))
+    assert not _was_judged(_row("d", {}))
+
+
+def test_all_judged_takes_the_whole_judged_pool(tmp_path):
+    rows = [_row("A", {"calibration": 9, "faithfulness": None}),
+            _row("B", {"calibration": 8}),
+            _row("C", {"_short_circuit": True}),
+            _row("D", {"_fail_open": True, "_error": "boom"})]
+    run, ds = _run_dir(tmp_path, rows)
+    wl = tmp_path / "wl.csv"
+    cmd_sample(argparse.Namespace(run_dir=run, arm="A_open", dataset=ds, worklist=wl,
+                                  seed=1, all_judged=True))
+    with wl.open(encoding="utf-8") as f:
+        got = list(csv.DictReader(f))
+    assert sorted(r["case_id"] for r in got) == ["A", "B"]
+    assert got[0]["judge_fail_open"] == "False"
+
+
+# --- audit-ungrounded -----------------------------------------------------------------
+
+def _audit_ns(run, ds, sheet, n=20):
+    return argparse.Namespace(run_dir=run, arm="A_open", dataset=ds, sheet=sheet,
+                              n=n, seed=1)
+
+
+def test_audit_samples_only_evidence_absent_answers(tmp_path):
+    rows = [_row("A", {"calibration": 9}, evidence_present=False),
+            _row("B", {"calibration": 9}, evidence_present=True),
+            _row("C", {"calibration": 9}, evidence_present=False)]
+    run, ds = _run_dir(tmp_path, rows)
+    sheet = tmp_path / "audit.csv"
+    cmd_audit_ungrounded(_audit_ns(run, ds, sheet))
+    with sheet.open(encoding="utf-8") as f:
+        got = list(csv.DictReader(f))
+    assert [r["case_id"] for r in got] == ["A", "C"]
+    assert got[0]["question"] == "q A"                    # question shown
+    assert got[0]["fabricated_fact_suspected"] == ""      # judge fields hidden, blank to fill
+
+
+def test_audit_tallies_against_the_pre_registered_gate(tmp_path, capsys):
+    """Re-running over a filled sheet reports the fabrication count and the gate verdict."""
+    sheet = tmp_path / "audit.csv"
+    with sheet.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=AUDIT_FIELDS)
+        w.writeheader()
+        for i in range(5):
+            w.writerow({"case_id": f"C{i}", "question": "q", "final_answer": "a",
+                        "contains_building_specific_claim": "1" if i < 2 else "0",
+                        "fabricated_fact_suspected": "1" if i < 3 else "0", "notes": ""})
+    cmd_audit_ungrounded(_audit_ns(Path("unused"), Path("unused"), sheet))
+    got = json.loads(capsys.readouterr().out)
+    assert got["n_labelled"] == 5 and got["complete"] is True
+    assert got["contains_building_specific_claim"] == 2
+    assert got["fabricated_fact_suspected"] == 3
+    assert got["gate_pass"] is False        # 3 > 2

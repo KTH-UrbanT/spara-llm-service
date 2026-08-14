@@ -1,0 +1,848 @@
+{
+  "replicates": [
+    {
+      "run_dir": "artifacts/runs/2026-08-13_v21_r1",
+      "arms": {
+        "A_open": {
+          "n": 88,
+          "pass_88": [
+            50,
+            88
+          ],
+          "pass_77": [
+            50,
+            77
+          ],
+          "pass_capped": [
+            50,
+            88
+          ],
+          "cost_exceeded": 0,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 7,
+          "rewound": 0,
+          "attempts": 0,
+          "early_fired": 0,
+          "early_rewind": 0,
+          "late_fired": 0,
+          "late_rewind": 0,
+          "judged_fail": 0,
+          "judged_pass": 0,
+          "attrib_fail": {},
+          "attrib_diag_fail": {},
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              16,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              32,
+              38
+            ]
+          }
+        },
+        "A_late_only": {
+          "n": 88,
+          "pass_88": [
+            52,
+            88
+          ],
+          "pass_77": [
+            52,
+            77
+          ],
+          "pass_capped": [
+            44,
+            88
+          ],
+          "cost_exceeded": 12,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 7,
+          "rewound": 0,
+          "attempts": 67,
+          "early_fired": 0,
+          "early_rewind": 0,
+          "late_fired": 67,
+          "late_rewind": 0,
+          "judged_fail": 0,
+          "judged_pass": 67,
+          "attrib_fail": {},
+          "attrib_diag_fail": {},
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              17,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              33,
+              38
+            ]
+          }
+        },
+        "A_full": {
+          "n": 88,
+          "pass_88": [
+            55,
+            88
+          ],
+          "pass_77": [
+            55,
+            77
+          ],
+          "pass_capped": [
+            47,
+            88
+          ],
+          "cost_exceeded": 13,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 3,
+          "rewound": 4,
+          "attempts": 163,
+          "early_fired": 92,
+          "early_rewind": 4,
+          "late_fired": 71,
+          "late_rewind": 0,
+          "judged_fail": 0,
+          "judged_pass": 71,
+          "attrib_fail": {},
+          "attrib_diag_fail": {},
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              17,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              36,
+              38
+            ]
+          }
+        }
+      },
+      "mcnemar": {
+        "A_open vs A_late_only": {
+          "n88": {
+            "n_discordant": 2,
+            "n_b_better": 2,
+            "n_a_better": 0,
+            "p_value": 0.5
+          },
+          "n77": {
+            "n_discordant": 2,
+            "n_b_better": 2,
+            "n_a_better": 0,
+            "p_value": 0.5
+          }
+        },
+        "A_open vs A_full": {
+          "n88": {
+            "n_discordant": 5,
+            "n_b_better": 5,
+            "n_a_better": 0,
+            "p_value": 0.0625
+          },
+          "n77": {
+            "n_discordant": 5,
+            "n_b_better": 5,
+            "n_a_better": 0,
+            "p_value": 0.0625
+          }
+        },
+        "A_late_only vs A_full": {
+          "n88": {
+            "n_discordant": 3,
+            "n_b_better": 3,
+            "n_a_better": 0,
+            "p_value": 0.25
+          },
+          "n77": {
+            "n_discordant": 3,
+            "n_b_better": 3,
+            "n_a_better": 0,
+            "p_value": 0.25
+          }
+        }
+      },
+      "fix5": {
+        "fired": [
+          "EKR_GEN_017",
+          "EKR_GEN_018",
+          "EKR_GEN_019",
+          "DEMO_EXTRA_GEN_001"
+        ],
+        "converted": [
+          "EKR_GEN_017",
+          "EKR_GEN_018",
+          "EKR_GEN_019"
+        ],
+        "guards_held": [
+          "DEMO_EXTRA_CLAR_001",
+          "DEMO_EXTRA_CLAR_002"
+        ],
+        "guards_total": 2,
+        "tracked_fired": [],
+        "tracked_converted": [],
+        "forced_route_applied": []
+      },
+      "reverse": {
+        "generic_lost_to_building": [],
+        "clarification_gained": []
+      }
+    },
+    {
+      "run_dir": "artifacts/runs/2026-08-13_v21_r2",
+      "arms": {
+        "A_open": {
+          "n": 88,
+          "pass_88": [
+            49,
+            88
+          ],
+          "pass_77": [
+            49,
+            77
+          ],
+          "pass_capped": [
+            49,
+            88
+          ],
+          "cost_exceeded": 0,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 7,
+          "rewound": 0,
+          "attempts": 0,
+          "early_fired": 0,
+          "early_rewind": 0,
+          "late_fired": 0,
+          "late_rewind": 0,
+          "judged_fail": 0,
+          "judged_pass": 0,
+          "attrib_fail": {},
+          "attrib_diag_fail": {},
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              16,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              31,
+              38
+            ]
+          }
+        },
+        "A_late_only": {
+          "n": 88,
+          "pass_88": [
+            50,
+            88
+          ],
+          "pass_77": [
+            50,
+            77
+          ],
+          "pass_capped": [
+            43,
+            88
+          ],
+          "cost_exceeded": 13,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 7,
+          "rewound": 3,
+          "attempts": 70,
+          "early_fired": 0,
+          "early_rewind": 0,
+          "late_fired": 70,
+          "late_rewind": 3,
+          "judged_fail": 3,
+          "judged_pass": 67,
+          "attrib_fail": {
+            "summarizer": 3
+          },
+          "attrib_diag_fail": {
+            "retrieval_starved": 2,
+            "summarizer": 1
+          },
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              16,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              32,
+              38
+            ]
+          }
+        },
+        "A_full": {
+          "n": 88,
+          "pass_88": [
+            55,
+            88
+          ],
+          "pass_77": [
+            55,
+            77
+          ],
+          "pass_capped": [
+            49,
+            88
+          ],
+          "cost_exceeded": 16,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 4,
+          "rewound": 6,
+          "attempts": 164,
+          "early_fired": 93,
+          "early_rewind": 5,
+          "late_fired": 71,
+          "late_rewind": 1,
+          "judged_fail": 1,
+          "judged_pass": 70,
+          "attrib_fail": {
+            "summarizer": 1
+          },
+          "attrib_diag_fail": {
+            "retrieval_starved": 1
+          },
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              15,
+              34
+            ],
+            "clarification": [
+              3,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              37,
+              38
+            ]
+          }
+        }
+      },
+      "mcnemar": {
+        "A_open vs A_late_only": {
+          "n88": {
+            "n_discordant": 1,
+            "n_b_better": 1,
+            "n_a_better": 0,
+            "p_value": 1.0
+          },
+          "n77": {
+            "n_discordant": 1,
+            "n_b_better": 1,
+            "n_a_better": 0,
+            "p_value": 1.0
+          }
+        },
+        "A_open vs A_full": {
+          "n88": {
+            "n_discordant": 8,
+            "n_b_better": 7,
+            "n_a_better": 1,
+            "p_value": 0.0703125
+          },
+          "n77": {
+            "n_discordant": 8,
+            "n_b_better": 7,
+            "n_a_better": 1,
+            "p_value": 0.0703125
+          }
+        },
+        "A_late_only vs A_full": {
+          "n88": {
+            "n_discordant": 7,
+            "n_b_better": 6,
+            "n_a_better": 1,
+            "p_value": 0.125
+          },
+          "n77": {
+            "n_discordant": 7,
+            "n_b_better": 6,
+            "n_a_better": 1,
+            "p_value": 0.125
+          }
+        }
+      },
+      "fix5": {
+        "fired": [
+          "EKR_GEN_017",
+          "EKR_GEN_018",
+          "EKR_GEN_019",
+          "DEMO_EXTRA_GEN_001"
+        ],
+        "converted": [
+          "EKR_GEN_017",
+          "EKR_GEN_018",
+          "EKR_GEN_019",
+          "DEMO_EXTRA_GEN_001"
+        ],
+        "guards_held": [
+          "DEMO_EXTRA_CLAR_001",
+          "DEMO_EXTRA_CLAR_002"
+        ],
+        "guards_total": 2,
+        "tracked_fired": [],
+        "tracked_converted": [],
+        "forced_route_applied": []
+      },
+      "reverse": {
+        "generic_lost_to_building": [],
+        "clarification_gained": [
+          "CLAR_001"
+        ]
+      }
+    },
+    {
+      "run_dir": "artifacts/runs/2026-08-13_v21_r3",
+      "arms": {
+        "A_open": {
+          "n": 88,
+          "pass_88": [
+            48,
+            88
+          ],
+          "pass_77": [
+            48,
+            77
+          ],
+          "pass_capped": [
+            48,
+            88
+          ],
+          "cost_exceeded": 0,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 7,
+          "rewound": 0,
+          "attempts": 0,
+          "early_fired": 0,
+          "early_rewind": 0,
+          "late_fired": 0,
+          "late_rewind": 0,
+          "judged_fail": 0,
+          "judged_pass": 0,
+          "attrib_fail": {},
+          "attrib_diag_fail": {},
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              15,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              31,
+              38
+            ]
+          }
+        },
+        "A_late_only": {
+          "n": 88,
+          "pass_88": [
+            48,
+            88
+          ],
+          "pass_77": [
+            48,
+            77
+          ],
+          "pass_capped": [
+            42,
+            88
+          ],
+          "cost_exceeded": 15,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 7,
+          "rewound": 6,
+          "attempts": 73,
+          "early_fired": 0,
+          "early_rewind": 0,
+          "late_fired": 73,
+          "late_rewind": 6,
+          "judged_fail": 7,
+          "judged_pass": 66,
+          "attrib_fail": {
+            "summarizer": 7
+          },
+          "attrib_diag_fail": {
+            "summarizer": 4,
+            "retrieval_starved": 3
+          },
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              15,
+              34
+            ],
+            "clarification": [
+              2,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              31,
+              38
+            ]
+          }
+        },
+        "A_full": {
+          "n": 88,
+          "pass_88": [
+            55,
+            88
+          ],
+          "pass_77": [
+            55,
+            77
+          ],
+          "pass_capped": [
+            46,
+            88
+          ],
+          "cost_exceeded": 18,
+          "wall_exceeded": 0,
+          "evidence_absent": 61,
+          "clarification_fired": 14,
+          "request_address_fired": 4,
+          "rewound": 6,
+          "attempts": 164,
+          "early_fired": 93,
+          "early_rewind": 5,
+          "late_fired": 71,
+          "late_rewind": 1,
+          "judged_fail": 1,
+          "judged_pass": 70,
+          "attrib_fail": {
+            "summarizer": 1
+          },
+          "attrib_diag_fail": {
+            "summarizer": 1
+          },
+          "attrib_on_pass": 0,
+          "early_block_exhausted": 0,
+          "forced_route_applied": 0,
+          "strata": {
+            "building_specific": [
+              16,
+              34
+            ],
+            "clarification": [
+              3,
+              5
+            ],
+            "combined": [
+              0,
+              11
+            ],
+            "generic": [
+              36,
+              38
+            ]
+          }
+        }
+      },
+      "mcnemar": {
+        "A_open vs A_late_only": {
+          "n88": {
+            "n_discordant": 4,
+            "n_b_better": 2,
+            "n_a_better": 2,
+            "p_value": 1.0
+          },
+          "n77": {
+            "n_discordant": 4,
+            "n_b_better": 2,
+            "n_a_better": 2,
+            "p_value": 1.0
+          }
+        },
+        "A_open vs A_full": {
+          "n88": {
+            "n_discordant": 9,
+            "n_b_better": 8,
+            "n_a_better": 1,
+            "p_value": 0.0390625
+          },
+          "n77": {
+            "n_discordant": 9,
+            "n_b_better": 8,
+            "n_a_better": 1,
+            "p_value": 0.0390625
+          }
+        },
+        "A_late_only vs A_full": {
+          "n88": {
+            "n_discordant": 7,
+            "n_b_better": 7,
+            "n_a_better": 0,
+            "p_value": 0.015625
+          },
+          "n77": {
+            "n_discordant": 7,
+            "n_b_better": 7,
+            "n_a_better": 0,
+            "p_value": 0.015625
+          }
+        }
+      },
+      "fix5": {
+        "fired": [
+          "EKR_GEN_017",
+          "EKR_GEN_018",
+          "EKR_GEN_019",
+          "DEMO_EXTRA_GEN_001"
+        ],
+        "converted": [
+          "EKR_GEN_017",
+          "EKR_GEN_018",
+          "EKR_GEN_019",
+          "DEMO_EXTRA_GEN_001"
+        ],
+        "guards_held": [
+          "DEMO_EXTRA_CLAR_001",
+          "DEMO_EXTRA_CLAR_002"
+        ],
+        "guards_total": 2,
+        "tracked_fired": [],
+        "tracked_converted": [],
+        "forced_route_applied": []
+      },
+      "reverse": {
+        "generic_lost_to_building": [],
+        "clarification_gained": [
+          "CLAR_001"
+        ]
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "n": 1,
+      "prediction": "`evidence_present == false` on \u226545 of 88 A_open",
+      "observed": [
+        61,
+        61,
+        61
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "n": 2,
+      "prediction": "A_open `case_pass` in 30\u201338 of 77",
+      "observed": [
+        50,
+        49,
+        48
+      ],
+      "verdict": "FAIL"
+    },
+    {
+      "n": 3,
+      "prediction": "late rewinds < 20 **and** top attribution \u2260 summarizer",
+      "observed": {
+        "late_rewinds": [
+          0,
+          0,
+          3,
+          1,
+          6,
+          1
+        ],
+        "top_attribution": [
+          null,
+          null,
+          "summarizer",
+          "summarizer",
+          "summarizer",
+          "summarizer"
+        ]
+      },
+      "verdict": "FAIL"
+    },
+    {
+      "n": 4,
+      "prediction": "Fix 5 fires \u22653 of 4, \u22652 convert, both guards hold",
+      "observed": {
+        "fired": [
+          4,
+          4,
+          4
+        ],
+        "converted": [
+          3,
+          4,
+          4
+        ],
+        "guards_held": [
+          2,
+          2,
+          2
+        ],
+        "tracked_fired": [
+          [],
+          [],
+          []
+        ]
+      },
+      "verdict": "PASS"
+    },
+    {
+      "n": 5,
+      "prediction": "A_full \u2265 A_open in \u22652 of 3 replicates",
+      "observed": "3 of 3",
+      "verdict": "PASS"
+    }
+  ],
+  "consensus": {
+    "A_open vs A_late_only": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "gained": [
+        "BRF_ODEN_01_TULEGATAN_5A_002_HEATING",
+        "EKR_GEN_016"
+      ],
+      "lost": [
+        "DEMO_EXTRA_GEN_006"
+      ],
+      "mcnemar": {
+        "n_discordant": 3,
+        "n_b_better": 2,
+        "n_a_better": 1,
+        "p_value": 1.0
+      }
+    },
+    "A_open vs A_full": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "gained": [
+        "BRF_ODEN_01_TULEGATAN_5A_002_HEATING",
+        "CLAR_001",
+        "DEMO_EXTRA_GEN_001",
+        "EKR_GEN_016",
+        "EKR_GEN_017",
+        "EKR_GEN_018",
+        "EKR_GEN_019"
+      ],
+      "lost": [],
+      "mcnemar": {
+        "n_discordant": 7,
+        "n_b_better": 7,
+        "n_a_better": 0,
+        "p_value": 0.015625
+      }
+    },
+    "A_late_only vs A_full": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "gained": [
+        "CLAR_001",
+        "DEMO_EXTRA_GEN_001",
+        "DEMO_EXTRA_GEN_006",
+        "EKR_GEN_017",
+        "EKR_GEN_018",
+        "EKR_GEN_019"
+      ],
+      "lost": [],
+      "mcnemar": {
+        "n_discordant": 6,
+        "n_b_better": 6,
+        "n_a_better": 0,
+        "p_value": 0.03125
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "run_id": "rev_full",
+  "arm": "A_full",
+  "code_sha256": "a9330d5b3b47166705ec5d6279adb2223ed81dd8d20b772fb98e72e01e093eae",
+  "code_n_files": 89,
+  "git_sha": "",
+  "git_dirty": null,
+  "dataset": "artifacts/datasets/smoke_v21_reverse.jsonl",
+  "dataset_sha256": "1738031a21719c591c8c3d3e2768ce135f70b0bb8028ad0069f878e17ed73ca4",
+  "env": {
+    "RUN_ARM": "A_full",
+    "EARLY_CHECKPOINT_ENABLED": "true",
+    "LATE_CHECKPOINT_ENABLED": "true",
+    "EVALUATOR_MODE": "off",
+    "CLOSED_LOOP_EARLY_VOTE_K": "3",
+    "ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
+    "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v1.txt",
+    "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": "o4-mini"
+  },
+  "constants": {
+    "WALL_BUDGET_S": 300,
+    "MAX_RETRIES": 2,
+    "COST_CAP_MULT": 5.0
+  }
+}

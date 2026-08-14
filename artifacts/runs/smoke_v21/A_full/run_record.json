@@ -1,0 +1,23 @@
+{
+  "run_id": "smoke_v21_full",
+  "arm": "A_full",
+  "git_sha": "",
+  "git_dirty": null,
+  "dataset": "artifacts/datasets/smoke_v21.jsonl",
+  "dataset_sha256": "912e9281d9e31d2a5e6876744579c97113d72a96d4f387beec7c82895eb6cb71",
+  "env": {
+    "RUN_ARM": "A_full",
+    "EARLY_CHECKPOINT_ENABLED": "true",
+    "LATE_CHECKPOINT_ENABLED": "true",
+    "EVALUATOR_MODE": "off",
+    "CLOSED_LOOP_EARLY_VOTE_K": "3",
+    "ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
+    "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v1.txt",
+    "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": null
+  },
+  "constants": {
+    "WALL_BUDGET_S": 300,
+    "MAX_RETRIES": 2,
+    "COST_CAP_MULT": 5.0
+  }
+}
