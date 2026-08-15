@@ -3,7 +3,8 @@ needs its own check — a silently-inverted comparison would report PASS on a fa
 import json
 from pathlib import Path
 
-from scripts.check_predictions import (_fix5, _judged, _n77, _verdicts, verdicts,
+from scripts.check_predictions import (_det_pass, _det_view, _fix5, _judged, _n77,
+                                       _verdicts, verdicts,
                                        FIX5_GUARDS, FIX5_TARGETS, FIX5_TRACKED)
 
 
@@ -161,3 +162,44 @@ def test_consensus_majority_cancels_churn_but_keeps_reproducible_flips(tmp_path,
     assert out["gained"] == ["REAL"]        # 2 of 3 survives
     assert out["lost"] == ["LOST"]          # and a loss is not hidden
     assert "CHURN" not in out["gained"]     # 1 of 3 cancels
+
+
+def _det_row(cid, **kw):
+    row = {"case_id": cid, "route_match": True, "agent_match": True,
+           "building_id_match": True, "field_coverage_pass": True,
+           "must_include_pass": True, "must_not_include_pass": True,
+           "semantic_judge_pass": True, "case_pass": True}
+    row.update(kw)
+    return row
+
+
+def test_det_pass_is_case_pass_minus_the_judge_bit():
+    """v22 R1: the judge's verdict is the one case_pass term the treatment retries until it
+    flips. Deterministic-core must ignore it — and nothing else."""
+    row = _det_row("C", semantic_judge_pass=False, case_pass=False)
+    assert _det_pass(row)                       # judge veto removed
+    for gold in ("route_match", "agent_match", "building_id_match",
+                 "field_coverage_pass", "must_include_pass", "must_not_include_pass"):
+        assert not _det_pass(_det_row("C", **{gold: False}))   # gold checks still gate
+
+
+def test_det_view_is_shaped_for_mcnemar():
+    view = _det_view([_det_row("A", semantic_judge_pass=False, case_pass=False),
+                      _det_row("B", route_match=False)])
+    assert view["A"]["case_pass"] is True and view["B"]["case_pass"] is False
+
+
+def test_consensus_det_scoring_ignores_the_judge_verdict(monkeypatch):
+    """A case whose six gold checks pass in every A_full replicate but which the judge failed:
+    invisible to the judge-inclusive consensus, a gain under deterministic-core."""
+    from scripts import check_predictions as m
+
+    def fake_traces(rd, arm, kind):
+        ok = arm == "A_full"
+        return [_det_row("C", route_match=ok, semantic_judge_pass=False, case_pass=False)]
+
+    monkeypatch.setattr(m, "_traces", fake_traces)
+    dirs = [Path("0"), Path("1"), Path("2")]
+    assert m.consensus_mcnemar(dirs)["gained"] == []                    # judge-inclusive
+    det = m.consensus_mcnemar(dirs, scoring="det")
+    assert det["gained"] == ["C"] and det["scoring"] == "det"

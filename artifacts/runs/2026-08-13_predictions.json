@@ -13,6 +13,14 @@
             49,
             77
           ],
+          "pass_88_det": [
+            49,
+            88
+          ],
+          "pass_77_det": [
+            49,
+            77
+          ],
           "pass_capped": [
             49,
             88
@@ -61,6 +69,14 @@
             88
           ],
           "pass_77": [
+            50,
+            77
+          ],
+          "pass_88_det": [
+            50,
+            88
+          ],
+          "pass_77_det": [
             50,
             77
           ],
@@ -116,6 +132,14 @@
             88
           ],
           "pass_77": [
+            52,
+            77
+          ],
+          "pass_88_det": [
+            52,
+            88
+          ],
+          "pass_77_det": [
             52,
             77
           ],
@@ -178,6 +202,12 @@
             "n_b_better": 2,
             "n_a_better": 1,
             "p_value": 1.0
+          },
+          "n88_det": {
+            "n_discordant": 3,
+            "n_b_better": 2,
+            "n_a_better": 1,
+            "p_value": 1.0
           }
         },
         "A_open vs A_full": {
@@ -192,6 +222,12 @@
             "n_b_better": 5,
             "n_a_better": 2,
             "p_value": 0.453125
+          },
+          "n88_det": {
+            "n_discordant": 7,
+            "n_b_better": 5,
+            "n_a_better": 2,
+            "p_value": 0.453125
           }
         },
         "A_late_only vs A_full": {
@@ -202,6 +238,12 @@
             "p_value": 0.75390625
           },
           "n77": {
+            "n_discordant": 10,
+            "n_b_better": 6,
+            "n_a_better": 4,
+            "p_value": 0.75390625
+          },
+          "n88_det": {
             "n_discordant": 10,
             "n_b_better": 6,
             "n_a_better": 4,
@@ -252,6 +294,14 @@
             47,
             77
           ],
+          "pass_88_det": [
+            48,
+            88
+          ],
+          "pass_77_det": [
+            48,
+            77
+          ],
           "pass_capped": [
             47,
             88
@@ -300,6 +350,14 @@
             88
           ],
           "pass_77": [
+            47,
+            77
+          ],
+          "pass_88_det": [
+            47,
+            88
+          ],
+          "pass_77_det": [
             47,
             77
           ],
@@ -355,6 +413,14 @@
             88
           ],
           "pass_77": [
+            50,
+            77
+          ],
+          "pass_88_det": [
+            50,
+            88
+          ],
+          "pass_77_det": [
             50,
             77
           ],
@@ -417,6 +483,12 @@
             "n_b_better": 2,
             "n_a_better": 2,
             "p_value": 1.0
+          },
+          "n88_det": {
+            "n_discordant": 3,
+            "n_b_better": 1,
+            "n_a_better": 2,
+            "p_value": 1.0
           }
         },
         "A_open vs A_full": {
@@ -431,6 +503,12 @@
             "n_b_better": 7,
             "n_a_better": 4,
             "p_value": 0.548828125
+          },
+          "n88_det": {
+            "n_discordant": 10,
+            "n_b_better": 6,
+            "n_a_better": 4,
+            "p_value": 0.75390625
           }
         },
         "A_late_only vs A_full": {
@@ -441,6 +519,12 @@
             "p_value": 0.453125
           },
           "n77": {
+            "n_discordant": 7,
+            "n_b_better": 5,
+            "n_a_better": 2,
+            "p_value": 0.453125
+          },
+          "n88_det": {
             "n_discordant": 7,
             "n_b_better": 5,
             "n_a_better": 2,
@@ -484,6 +568,14 @@
           ],
           "pass_77": [
             50,
+            77
+          ],
+          "pass_88_det": [
+            51,
+            88
+          ],
+          "pass_77_det": [
+            51,
             77
           ],
           "pass_capped": [
@@ -534,6 +626,14 @@
             88
           ],
           "pass_77": [
+            51,
+            77
+          ],
+          "pass_88_det": [
+            51,
+            88
+          ],
+          "pass_77_det": [
             51,
             77
           ],
@@ -589,6 +689,14 @@
             88
           ],
           "pass_77": [
+            53,
+            77
+          ],
+          "pass_88_det": [
+            53,
+            88
+          ],
+          "pass_77_det": [
             53,
             77
           ],
@@ -651,6 +759,12 @@
             "n_b_better": 1,
             "n_a_better": 0,
             "p_value": 1.0
+          },
+          "n88_det": {
+            "n_discordant": 0,
+            "n_b_better": 0,
+            "n_a_better": 0,
+            "p_value": 1.0
           }
         },
         "A_open vs A_full": {
@@ -665,6 +779,12 @@
             "n_b_better": 4,
             "n_a_better": 1,
             "p_value": 0.375
+          },
+          "n88_det": {
+            "n_discordant": 4,
+            "n_b_better": 3,
+            "n_a_better": 1,
+            "p_value": 0.625
           }
         },
         "A_late_only vs A_full": {
@@ -675,6 +795,12 @@
             "p_value": 0.625
           },
           "n77": {
+            "n_discordant": 4,
+            "n_b_better": 3,
+            "n_a_better": 1,
+            "p_value": 0.625
+          },
+          "n88_det": {
             "n_discordant": 4,
             "n_b_better": 3,
             "n_a_better": 1,
@@ -794,6 +920,7 @@
       "n_replicates": 3,
       "majority_needed": 2,
       "n_cases": 88,
+      "scoring": "judge",
       "gained": [
         "BRF_ODEN_10_RADMANSGATAN_31_004_HEATING"
       ],
@@ -811,6 +938,7 @@
       "n_replicates": 3,
       "majority_needed": 2,
       "n_cases": 88,
+      "scoring": "judge",
       "gained": [
         "BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE",
         "DEMO_EXTRA_GEN_001",
@@ -831,6 +959,71 @@
       "n_replicates": 3,
       "majority_needed": 2,
       "n_cases": 88,
+      "scoring": "judge",
+      "gained": [
+        "BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE",
+        "DEMO_EXTRA_GEN_001",
+        "DEMO_EXTRA_GEN_006",
+        "EKR_GEN_017",
+        "EKR_GEN_018"
+      ],
+      "lost": [
+        "BRF_ODEN_10_RADMANSGATAN_31_001_HEATING",
+        "BRF_ODEN_10_RADMANSGATAN_31_004_HEATING"
+      ],
+      "mcnemar": {
+        "n_discordant": 7,
+        "n_b_better": 5,
+        "n_a_better": 2,
+        "p_value": 0.453125
+      }
+    }
+  },
+  "consensus_det": {
+    "A_open vs A_late_only": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "scoring": "det",
+      "gained": [
+        "BRF_ODEN_10_RADMANSGATAN_31_004_HEATING"
+      ],
+      "lost": [
+        "DEMO_EXTRA_GEN_006"
+      ],
+      "mcnemar": {
+        "n_discordant": 2,
+        "n_b_better": 1,
+        "n_a_better": 1,
+        "p_value": 1.0
+      }
+    },
+    "A_open vs A_full": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "scoring": "det",
+      "gained": [
+        "BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE",
+        "DEMO_EXTRA_GEN_001",
+        "EKR_GEN_017",
+        "EKR_GEN_018"
+      ],
+      "lost": [
+        "BRF_ODEN_10_RADMANSGATAN_31_001_HEATING"
+      ],
+      "mcnemar": {
+        "n_discordant": 5,
+        "n_b_better": 4,
+        "n_a_better": 1,
+        "p_value": 0.375
+      }
+    },
+    "A_late_only vs A_full": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "scoring": "det",
       "gained": [
         "BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE",
         "DEMO_EXTRA_GEN_001",

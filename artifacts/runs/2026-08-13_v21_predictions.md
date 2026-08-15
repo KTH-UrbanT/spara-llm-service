@@ -10,6 +10,22 @@ Replicates: 3 — artifacts/runs/2026-08-13_v21_r1, artifacts/runs/2026-08-13_v2
 | A_late_only | 0.568 ± 0.023 | 0.649 ± 0.026 | 52/77, 50/77, 48/77 |
 | A_full | 0.625 ± 0.000 | 0.714 ± 0.000 | 55/77, 55/77, 55/77 |
 
+## Dual scoring (v22 R1): judge-inclusive vs deterministic-core
+
+Deterministic-core drops `semantic_judge_pass` — the one `case_pass` term the treatment retries until it flips — and keeps the six gold checks.
+
+| replicate | arm | judge-inclusive n=88 | deterministic-core n=88 |
+|---|---|---|---|
+| 2026-08-13_v21_r1 | A_open | 50/88 = 0.568 | 51/88 = 0.580 |
+| 2026-08-13_v21_r1 | A_late_only | 52/88 = 0.591 | 52/88 = 0.591 |
+| 2026-08-13_v21_r1 | A_full | 55/88 = 0.625 | 55/88 = 0.625 |
+| 2026-08-13_v21_r2 | A_open | 49/88 = 0.557 | 50/88 = 0.568 |
+| 2026-08-13_v21_r2 | A_late_only | 50/88 = 0.568 | 50/88 = 0.568 |
+| 2026-08-13_v21_r2 | A_full | 55/88 = 0.625 | 55/88 = 0.625 |
+| 2026-08-13_v21_r3 | A_open | 48/88 = 0.545 | 50/88 = 0.568 |
+| 2026-08-13_v21_r3 | A_late_only | 48/88 = 0.545 | 49/88 = 0.557 |
+| 2026-08-13_v21_r3 | A_full | 55/88 = 0.625 | 55/88 = 0.625 |
+
 ## Evidence and short-circuit summary (per replicate)
 
 | replicate | arm | evidence absent | clarification | request_address | rewound |
@@ -60,22 +76,31 @@ Fix 2 removed the cost/wall vetoes from `case_pass` because they applied to the 
 |---|---|---:|---:|---:|---:|---:|
 | 2026-08-13_v21_r1 | A_open vs A_late_only | 88 | 2 | 2 | 0 | 0.5000 |
 | 2026-08-13_v21_r1 | A_open vs A_late_only | 77 | 2 | 2 | 0 | 0.5000 |
+| 2026-08-13_v21_r1 | A_open vs A_late_only | 88 det | 1 | 1 | 0 | 1.0000 |
 | 2026-08-13_v21_r1 | A_open vs A_full | 88 | 5 | 5 | 0 | 0.0625 |
 | 2026-08-13_v21_r1 | A_open vs A_full | 77 | 5 | 5 | 0 | 0.0625 |
+| 2026-08-13_v21_r1 | A_open vs A_full | 88 det | 4 | 4 | 0 | 0.1250 |
 | 2026-08-13_v21_r1 | A_late_only vs A_full | 88 | 3 | 3 | 0 | 0.2500 |
 | 2026-08-13_v21_r1 | A_late_only vs A_full | 77 | 3 | 3 | 0 | 0.2500 |
+| 2026-08-13_v21_r1 | A_late_only vs A_full | 88 det | 3 | 3 | 0 | 0.2500 |
 | 2026-08-13_v21_r2 | A_open vs A_late_only | 88 | 1 | 1 | 0 | 1.0000 |
 | 2026-08-13_v21_r2 | A_open vs A_late_only | 77 | 1 | 1 | 0 | 1.0000 |
+| 2026-08-13_v21_r2 | A_open vs A_late_only | 88 det | 0 | 0 | 0 | 1.0000 |
 | 2026-08-13_v21_r2 | A_open vs A_full | 88 | 8 | 7 | 1 | 0.0703 |
 | 2026-08-13_v21_r2 | A_open vs A_full | 77 | 8 | 7 | 1 | 0.0703 |
+| 2026-08-13_v21_r2 | A_open vs A_full | 88 det | 7 | 6 | 1 | 0.1250 |
 | 2026-08-13_v21_r2 | A_late_only vs A_full | 88 | 7 | 6 | 1 | 0.1250 |
 | 2026-08-13_v21_r2 | A_late_only vs A_full | 77 | 7 | 6 | 1 | 0.1250 |
+| 2026-08-13_v21_r2 | A_late_only vs A_full | 88 det | 7 | 6 | 1 | 0.1250 |
 | 2026-08-13_v21_r3 | A_open vs A_late_only | 88 | 4 | 2 | 2 | 1.0000 |
 | 2026-08-13_v21_r3 | A_open vs A_late_only | 77 | 4 | 2 | 2 | 1.0000 |
+| 2026-08-13_v21_r3 | A_open vs A_late_only | 88 det | 1 | 0 | 1 | 1.0000 |
 | 2026-08-13_v21_r3 | A_open vs A_full | 88 | 9 | 8 | 1 | 0.0391 |
 | 2026-08-13_v21_r3 | A_open vs A_full | 77 | 9 | 8 | 1 | 0.0391 |
+| 2026-08-13_v21_r3 | A_open vs A_full | 88 det | 7 | 6 | 1 | 0.1250 |
 | 2026-08-13_v21_r3 | A_late_only vs A_full | 88 | 7 | 7 | 0 | 0.0156 |
 | 2026-08-13_v21_r3 | A_late_only vs A_full | 77 | 7 | 7 | 0 | 0.0156 |
+| 2026-08-13_v21_r3 | A_late_only vs A_full | 88 det | 6 | 6 | 0 | 0.0312 |
 
 ## The five pre-registered predictions
 
@@ -92,3 +117,14 @@ Per-replicate Fix 5 detail:
 - `2026-08-13_v21_r1` fired=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] converted=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019'] guards_held=['DEMO_EXTRA_CLAR_001', 'DEMO_EXTRA_CLAR_002'] tracked=[] forced_route=[]
 - `2026-08-13_v21_r2` fired=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] converted=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] guards_held=['DEMO_EXTRA_CLAR_001', 'DEMO_EXTRA_CLAR_002'] tracked=[] forced_route=[]
 - `2026-08-13_v21_r3` fired=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] converted=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] guards_held=['DEMO_EXTRA_CLAR_001', 'DEMO_EXTRA_CLAR_002'] tracked=[] forced_route=[]
+
+## Consensus McNemar (pre-registered §4), both scorings
+
+| contrast | scoring | gained | lost | p |
+|---|---|---|---|---|
+| A_open vs A_late_only | judge-inclusive | 2: BRF_ODEN_01_TULEGATAN_5A_002_HEATING, EKR_GEN_016 | 1: DEMO_EXTRA_GEN_006 | 1.0000 |
+| A_open vs A_full | judge-inclusive | 7: BRF_ODEN_01_TULEGATAN_5A_002_HEATING, CLAR_001, DEMO_EXTRA_GEN_001, EKR_GEN_016, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 0: — | 0.0156 |
+| A_late_only vs A_full | judge-inclusive | 6: CLAR_001, DEMO_EXTRA_GEN_001, DEMO_EXTRA_GEN_006, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 0: — | 0.0312 |
+| A_open vs A_late_only | deterministic-core | 1: BRF_ODEN_01_TULEGATAN_5A_002_HEATING | 1: DEMO_EXTRA_GEN_006 | 1.0000 |
+| A_open vs A_full | deterministic-core | 6: BRF_ODEN_01_TULEGATAN_5A_002_HEATING, CLAR_001, DEMO_EXTRA_GEN_001, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 0: — | 0.0312 |
+| A_late_only vs A_full | deterministic-core | 6: CLAR_001, DEMO_EXTRA_GEN_001, DEMO_EXTRA_GEN_006, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 0: — | 0.0312 |

@@ -44,6 +44,19 @@ def _by_id(rows: list[dict]) -> dict:
     return {r["case_id"]: r for r in rows}
 
 
+# v22 R1: the six gold checks, i.e. case_pass minus `semantic_judge_pass` — the one term the
+# treatment arms retry until it flips. Defaults mirror deterministic_checks.case_pass.
+def _det_pass(r: dict) -> bool:
+    return all([r.get("route_match", False), r.get("agent_match", True),
+                r.get("building_id_match", True), r.get("field_coverage_pass", True),
+                r.get("must_include_pass", True), r.get("must_not_include_pass", True)])
+
+
+def _det_view(rows: list[dict]) -> dict:
+    """Rows re-keyed with deterministic-core scoring, shaped for `_mcnemar`."""
+    return {r["case_id"]: {"case_pass": _det_pass(r)} for r in rows}
+
+
 def _n77(rows: list[dict]) -> list[dict]:
     """The 11 `combined` cases are concordant across arms, so they move the headline rate
     without moving any p-value. Reported as a named stratum, never silently dropped."""
@@ -94,6 +107,9 @@ def replicate(run_dir: Path) -> dict:
             "n": len(rows),
             "pass_88": _rate(rows),
             "pass_77": _rate(_n77(rows)),
+            # v22 R1: the treatment-independent scoring, alongside the published one.
+            "pass_88_det": (sum(1 for r in rows if _det_pass(r)), len(rows)),
+            "pass_77_det": (sum(1 for r in _n77(rows) if _det_pass(r)), len(_n77(rows))),
             "pass_capped": (len(capped), len(rows)),
             "cost_exceeded": sum(1 for r in rows if r.get("cost_exceeded")),
             "wall_exceeded": sum(1 for r in rows if r.get("wall_budget_exceeded")),
@@ -128,6 +144,7 @@ def replicate(run_dir: Path) -> dict:
                 d["mcnemar"][f"{a} vs {b}"] = {
                     "n88": _mcnemar(_by_id(pc[a]), _by_id(pc[b])),
                     "n77": _mcnemar(_by_id(_n77(pc[a])), _by_id(_n77(pc[b]))),
+                    "n88_det": _mcnemar(_det_view(pc[a]), _det_view(pc[b])),
                 }
 
     d["fix5"] = _fix5(pc)
@@ -188,7 +205,8 @@ def _reverse(pc: dict) -> dict:
     }
 
 
-def consensus_mcnemar(run_dirs: list[Path], a: str = "A_open", b: str = "A_full") -> dict:
+def consensus_mcnemar(run_dirs: list[Path], a: str = "A_open", b: str = "A_full",
+                      scoring: str = "judge") -> dict:
     """The pre-registered primary *interpretive* statistic (plan-eil-v21 §4).
 
     Per case per arm, `pass` = passes in a majority of replicates; then one exact McNemar
@@ -198,15 +216,18 @@ def consensus_mcnemar(run_dirs: list[Path], a: str = "A_open", b: str = "A_full"
     and >= 6-0 is required for p < 0.05 — so it could not be reverse-engineered afterwards.
     """
     need = len(run_dirs) // 2 + 1
+    # v22 R1: scoring="det" applies the deterministic-core measure to the same estimator.
+    passed = _det_pass if scoring == "det" else (lambda r: bool(r.get("case_pass")))
     tally: dict[str, dict[str, int]] = {a: {}, b: {}}
     for rd in run_dirs:
         for arm in (a, b):
             for r in _traces(rd, arm, "per_case"):
-                if r.get("case_pass"):
+                if passed(r):
                     tally[arm][r["case_id"]] = tally[arm].get(r["case_id"], 0) + 1
     ids = sorted({r["case_id"] for rd in run_dirs for r in _traces(rd, a, "per_case")})
     cons = {arm: {c: {"case_pass": tally[arm].get(c, 0) >= need} for c in ids} for arm in (a, b)}
     out = {"n_replicates": len(run_dirs), "majority_needed": need, "n_cases": len(ids),
+           "scoring": scoring,
            "gained": sorted(c for c in ids
                             if cons[b][c]["case_pass"] and not cons[a][c]["case_pass"]),
            "lost": sorted(c for c in ids
@@ -218,6 +239,24 @@ def consensus_mcnemar(run_dirs: list[Path], a: str = "A_open", b: str = "A_full"
 
 def _sd(vals: list[float]) -> float:
     return statistics.stdev(vals) if len(vals) > 1 else 0.0
+
+
+_CONTRASTS = (("A_open", "A_late_only"), ("A_open", "A_full"), ("A_late_only", "A_full"))
+
+
+def _consensus_md(cons: dict) -> list[str]:
+    """v22 R1: the §4 estimator under both scorings, in the markdown and not only the JSON."""
+    if not cons:
+        return []
+    md = ["", "## Consensus McNemar (pre-registered §4), both scorings", "",
+          "| contrast | scoring | gained | lost | p |", "|---|---|---|---|---|"]
+    for s, label in (("judge", "judge-inclusive"), ("det", "deterministic-core")):
+        for name, c in cons[s].items():
+            p = (c.get("mcnemar") or {}).get("p_value")
+            md.append(f"| {name} | {label} | {len(c['gained'])}: {', '.join(c['gained']) or '—'} "
+                      f"| {len(c['lost'])}: {', '.join(c['lost']) or '—'} "
+                      f"| {'—' if p is None else format(p, '.4f')} |")
+    return md
 
 
 def report(reps: list[dict]) -> list[str]:
@@ -237,6 +276,17 @@ def report(reps: list[dict]) -> list[str]:
         each = ", ".join(_fmt(*g["pass_77"]).split(" = ")[0] for g in got)
         md.append(f"| {arm} | {statistics.mean(r88):.3f} ± {_sd(r88):.3f} "
                   f"| {statistics.mean(r77):.3f} ± {_sd(r77):.3f} | {each} |")
+
+    # ---- v22 R1: judge-inclusive vs deterministic-core ----
+    md += ["", "## Dual scoring (v22 R1): judge-inclusive vs deterministic-core", "",
+           "Deterministic-core drops `semantic_judge_pass` — the one `case_pass` term the "
+           "treatment retries until it flips — and keeps the six gold checks.", "",
+           "| replicate | arm | judge-inclusive n=88 | deterministic-core n=88 |",
+           "|---|---|---|---|"]
+    for r in reps:
+        for arm, g in r["arms"].items():
+            md.append(f"| {Path(r['run_dir']).name} | {arm} | {_fmt(*g['pass_88'])} "
+                      f"| {_fmt(*g['pass_88_det'])} |")
 
     # ---- evidence + short-circuit summary ----
     md += ["", "## Evidence and short-circuit summary (per replicate)", "",
@@ -279,7 +329,8 @@ def report(reps: list[dict]) -> list[str]:
            "|---|---|---:|---:|---:|---:|---:|"]
     for r in reps:
         for name, both in r["mcnemar"].items():
-            for lbl, m in (("88", both["n88"]), ("77", both["n77"])):
+            for lbl, m in (("88", both["n88"]), ("77", both["n77"]),
+                           ("88 det", both["n88_det"])):
                 md.append(f"| {Path(r['run_dir']).name} | {name} | {lbl} "
                           f"| {m['n_discordant']} | {m['n_b_better']} | {m['n_a_better']} "
                           f"| {m['p_value']:.4f} |")
@@ -387,7 +438,11 @@ def main(argv=None):
             print(f"WARNING: {r['run_dir']} looks incomplete — rows per arm {counts}. "
                   f"Verdicts below are provisional.", file=sys.stderr)
 
-    md = "\n".join(report(reps))
+    rds = [Path(d) for d in args.run_dirs]
+    cons = ({s: {f"{a} vs {b}": consensus_mcnemar(rds, a, b, scoring=s)
+                 for a, b in _CONTRASTS} for s in ("judge", "det")}
+            if len(rds) > 1 else {})
+    md = "\n".join(report(reps) + _consensus_md(cons))
     print(md)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -395,15 +450,12 @@ def main(argv=None):
         print(f"\nWrote {args.out}", file=sys.stderr)
     if args.out_json:
         Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
-        rds = [Path(d) for d in args.run_dirs]
         Path(args.out_json).write_text(
             json.dumps({"replicates": reps, "verdicts": verdicts(reps),
                         # The §4 primary interpretive statistic belongs in the artifact, not
-                        # only in a write-up that could drift from it.
-                        "consensus": {f"{a} vs {b}": consensus_mcnemar(rds, a, b)
-                                      for a, b in (("A_open", "A_late_only"),
-                                                   ("A_open", "A_full"),
-                                                   ("A_late_only", "A_full"))}},
+                        # only in a write-up that could drift from it. Both scorings (v22 R1).
+                        "consensus": cons.get("judge", {}),
+                        "consensus_det": cons.get("det", {})},
                        indent=2, default=str) + "\n", encoding="utf-8")
         print(f"Wrote {args.out_json}", file=sys.stderr)
     return 0

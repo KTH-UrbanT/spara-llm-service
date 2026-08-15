@@ -13,6 +13,14 @@
             50,
             77
           ],
+          "pass_88_det": [
+            51,
+            88
+          ],
+          "pass_77_det": [
+            51,
+            77
+          ],
           "pass_capped": [
             50,
             88
@@ -64,6 +72,14 @@
             52,
             77
           ],
+          "pass_88_det": [
+            52,
+            88
+          ],
+          "pass_77_det": [
+            52,
+            77
+          ],
           "pass_capped": [
             44,
             88
@@ -112,6 +128,14 @@
             88
           ],
           "pass_77": [
+            55,
+            77
+          ],
+          "pass_88_det": [
+            55,
+            88
+          ],
+          "pass_77_det": [
             55,
             77
           ],
@@ -170,6 +194,12 @@
             "n_b_better": 2,
             "n_a_better": 0,
             "p_value": 0.5
+          },
+          "n88_det": {
+            "n_discordant": 1,
+            "n_b_better": 1,
+            "n_a_better": 0,
+            "p_value": 1.0
           }
         },
         "A_open vs A_full": {
@@ -184,6 +214,12 @@
             "n_b_better": 5,
             "n_a_better": 0,
             "p_value": 0.0625
+          },
+          "n88_det": {
+            "n_discordant": 4,
+            "n_b_better": 4,
+            "n_a_better": 0,
+            "p_value": 0.125
           }
         },
         "A_late_only vs A_full": {
@@ -194,6 +230,12 @@
             "p_value": 0.25
           },
           "n77": {
+            "n_discordant": 3,
+            "n_b_better": 3,
+            "n_a_better": 0,
+            "p_value": 0.25
+          },
+          "n88_det": {
             "n_discordant": 3,
             "n_b_better": 3,
             "n_a_better": 0,
@@ -238,6 +280,14 @@
           ],
           "pass_77": [
             49,
+            77
+          ],
+          "pass_88_det": [
+            50,
+            88
+          ],
+          "pass_77_det": [
+            50,
             77
           ],
           "pass_capped": [
@@ -288,6 +338,14 @@
             88
           ],
           "pass_77": [
+            50,
+            77
+          ],
+          "pass_88_det": [
+            50,
+            88
+          ],
+          "pass_77_det": [
             50,
             77
           ],
@@ -344,6 +402,14 @@
             88
           ],
           "pass_77": [
+            55,
+            77
+          ],
+          "pass_88_det": [
+            55,
+            88
+          ],
+          "pass_77_det": [
             55,
             77
           ],
@@ -406,6 +472,12 @@
             "n_b_better": 1,
             "n_a_better": 0,
             "p_value": 1.0
+          },
+          "n88_det": {
+            "n_discordant": 0,
+            "n_b_better": 0,
+            "n_a_better": 0,
+            "p_value": 1.0
           }
         },
         "A_open vs A_full": {
@@ -420,6 +492,12 @@
             "n_b_better": 7,
             "n_a_better": 1,
             "p_value": 0.0703125
+          },
+          "n88_det": {
+            "n_discordant": 7,
+            "n_b_better": 6,
+            "n_a_better": 1,
+            "p_value": 0.125
           }
         },
         "A_late_only vs A_full": {
@@ -430,6 +508,12 @@
             "p_value": 0.125
           },
           "n77": {
+            "n_discordant": 7,
+            "n_b_better": 6,
+            "n_a_better": 1,
+            "p_value": 0.125
+          },
+          "n88_det": {
             "n_discordant": 7,
             "n_b_better": 6,
             "n_a_better": 1,
@@ -477,6 +561,14 @@
           ],
           "pass_77": [
             48,
+            77
+          ],
+          "pass_88_det": [
+            50,
+            88
+          ],
+          "pass_77_det": [
+            50,
             77
           ],
           "pass_capped": [
@@ -528,6 +620,14 @@
           ],
           "pass_77": [
             48,
+            77
+          ],
+          "pass_88_det": [
+            49,
+            88
+          ],
+          "pass_77_det": [
+            49,
             77
           ],
           "pass_capped": [
@@ -583,6 +683,14 @@
             88
           ],
           "pass_77": [
+            55,
+            77
+          ],
+          "pass_88_det": [
+            55,
+            88
+          ],
+          "pass_77_det": [
             55,
             77
           ],
@@ -645,6 +753,12 @@
             "n_b_better": 2,
             "n_a_better": 2,
             "p_value": 1.0
+          },
+          "n88_det": {
+            "n_discordant": 1,
+            "n_b_better": 0,
+            "n_a_better": 1,
+            "p_value": 1.0
           }
         },
         "A_open vs A_full": {
@@ -659,6 +773,12 @@
             "n_b_better": 8,
             "n_a_better": 1,
             "p_value": 0.0390625
+          },
+          "n88_det": {
+            "n_discordant": 7,
+            "n_b_better": 6,
+            "n_a_better": 1,
+            "p_value": 0.125
           }
         },
         "A_late_only vs A_full": {
@@ -673,6 +793,12 @@
             "n_b_better": 7,
             "n_a_better": 0,
             "p_value": 0.015625
+          },
+          "n88_det": {
+            "n_discordant": 6,
+            "n_b_better": 6,
+            "n_a_better": 0,
+            "p_value": 0.03125
           }
         }
       },
@@ -789,6 +915,7 @@
       "n_replicates": 3,
       "majority_needed": 2,
       "n_cases": 88,
+      "scoring": "judge",
       "gained": [
         "BRF_ODEN_01_TULEGATAN_5A_002_HEATING",
         "EKR_GEN_016"
@@ -807,6 +934,7 @@
       "n_replicates": 3,
       "majority_needed": 2,
       "n_cases": 88,
+      "scoring": "judge",
       "gained": [
         "BRF_ODEN_01_TULEGATAN_5A_002_HEATING",
         "CLAR_001",
@@ -828,6 +956,69 @@
       "n_replicates": 3,
       "majority_needed": 2,
       "n_cases": 88,
+      "scoring": "judge",
+      "gained": [
+        "CLAR_001",
+        "DEMO_EXTRA_GEN_001",
+        "DEMO_EXTRA_GEN_006",
+        "EKR_GEN_017",
+        "EKR_GEN_018",
+        "EKR_GEN_019"
+      ],
+      "lost": [],
+      "mcnemar": {
+        "n_discordant": 6,
+        "n_b_better": 6,
+        "n_a_better": 0,
+        "p_value": 0.03125
+      }
+    }
+  },
+  "consensus_det": {
+    "A_open vs A_late_only": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "scoring": "det",
+      "gained": [
+        "BRF_ODEN_01_TULEGATAN_5A_002_HEATING"
+      ],
+      "lost": [
+        "DEMO_EXTRA_GEN_006"
+      ],
+      "mcnemar": {
+        "n_discordant": 2,
+        "n_b_better": 1,
+        "n_a_better": 1,
+        "p_value": 1.0
+      }
+    },
+    "A_open vs A_full": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "scoring": "det",
+      "gained": [
+        "BRF_ODEN_01_TULEGATAN_5A_002_HEATING",
+        "CLAR_001",
+        "DEMO_EXTRA_GEN_001",
+        "EKR_GEN_017",
+        "EKR_GEN_018",
+        "EKR_GEN_019"
+      ],
+      "lost": [],
+      "mcnemar": {
+        "n_discordant": 6,
+        "n_b_better": 6,
+        "n_a_better": 0,
+        "p_value": 0.03125
+      }
+    },
+    "A_late_only vs A_full": {
+      "n_replicates": 3,
+      "majority_needed": 2,
+      "n_cases": 88,
+      "scoring": "det",
       "gained": [
         "CLAR_001",
         "DEMO_EXTRA_GEN_001",
