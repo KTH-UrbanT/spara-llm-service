@@ -1,0 +1,169 @@
+case_id,question,final_answer,contains_building_specific_claim,fabricated_fact_suspected,describes_other_building,notes
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_ADVICE,What should my building prioritize to improve energy efficiency?,"To recommend the most effective measures we’d normally look at your building’s specifics—especially its current EPC energy class (epc_egienergiklass), heated area (epc_egenatemp), building type (epc_egenbyggnadstyp), and existing systems. In the absence of those details, here are the typical priority areas for most buildings:  
+
+1. Building Envelope  
+   • Insulation – upgrade or add insulation in lofts/roofs, external walls and ground floors.  
+   • Windows and doors – replace single-glazed or poorly sealed units with high-performance, low-U-value glazing and airtight frames.  
+   • Air tightness – seal gaps around pipes, ducts, windows and service penetrations to reduce drafts and heat loss.  
+
+2. Heating, Cooling and Ventilation  
+   • Heating system – consider high-efficiency boilers, heat pumps or district heating connections.  
+   • Ventilation – install or retrofit controlled mechanical ventilation with heat recovery (MVHR) to maintain air quality while minimizing heat losses.  ",0,0,0,"Names the fields it would need (epc_egienergiklass, epc_egenatemp, epc_egenbyggnadstyp) and then says explicitly 'In the absence of those details', labelling everything that follows as typical for most buildings. No class, figure, system or address is asserted for this building. The only defect is exposing raw schema names, a presentation issue rather than a fabrication."
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_HEATING,What is the heating system in my building?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,0,"Clean refusal - states it could not find enough building data for the address, offers general guidance as an alternative, and invites a corrected address in case of a misspelling. No claim of any kind. This is the reference behaviour for an evidence-absent building question."
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_PERFORMANCE,What is the energy performance of my building?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,0,"Identical clean refusal to Audit 2, applied to the performance question. No claim asserted, and no attempt to substitute generic content dressed as building-specific."
+BRF_ODEN_05_ARTEMISGATAN_17_001_ADVICE,What should my building prioritize to improve energy efficiency?,"Improving a building’s energy efficiency is best approached in stages: first address the biggest energy losses, then optimize systems and operations. Although specific measures will depend on your building’s current condition and use, here is a general priority list:
+
+1. Conduct an Energy Audit or EPC  
+   • Have a certified energy auditor review your building (or update your Energy Performance Certificate).  
+   • Identify your current energy class (epc_egienergiklass) and the measures with the highest cost-benefit.
+
+2. Upgrade the Building Envelope  
+   • Insulation – add or improve roof, wall and floor insulation to reduce heat loss.  
+   • Windows and doors – replace single-glazed or poorly sealed units with high-performance, double- or triple-glazing; improve weather-stripping.  
+   • Air-tightness – seal gaps around service penetrations, joinery and between building elements to eliminate drafts.
+
+3. Optimize Heating, Cooling and Ventilation  
+   • Heating system – consider high-e",0,0,0,"Generic staged advice that conditions on 'your building's current condition and use' and tells the user to have a certified auditor establish the current class rather than stating one. Directs the user toward their own EPC instead of asserting its contents, which is the exact inversion of the Audit 20 failure."
+BRF_ODEN_05_ARTEMISGATAN_17_001_HEATING,What is the heating system in my building?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,0,"Clean refusal, identical wording to Audits 2 and 3. No claim asserted."
+BRF_ODEN_10_RADMANSGATAN_31_003_PERFORMANCE,What is the energy performance of my building?,"I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the full address or the specific system you want to ask about?",0,0,0,"Says 'I found the building, but I do not have enough building data yet' and then asks for the full address, which is self-contradictory: if the building was located, the address was sufficient. No substantive claim about the building follows, so all three flags stay 0, but the retrieval-state message is misleading and would confuse a user who had already given a valid address."
+DEMO_EXTRA_BRF_001,What is the energy performance for Artemisgatan 17 in Stockholm?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,0,"Clean refusal for a fully specified address (Artemisgatan 17, Stockholm). No claim asserted."
+DEMO_EXTRA_BRF_004,What heating system does Rådmansgatan 31 in Motala have?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,0,"Clean refusal in itself, but flagged at run level: Cases 54-57 of the labeling set did retrieve a Motala record (05-83-RAEFSAN5-1) for Radmansgatan 31, so this refusal contradicts the run's own retrieval for the same street and municipality. Evidence of non-deterministic retrieval rather than a genuine data gap."
+DEMO_EXTRA_GEN_004,What does ventilation balancing mean for energy use?,"Ventilation balancing (sometimes called “air-flow balancing” or “commissioning of ventilation”) is the process of measuring, adjusting and fine-tuning the supply and exhaust air flows in a mechanical ventilation system so that each room or zone receives exactly the amount of fresh air it needs—or no more—according to design specifications. Proper balancing typically involves:
+
+ • Measuring air-flow rates at diffusers, grilles and ductwork  
+ • Adjusting dampers, fan speeds or inverter drives to achieve target flow rates  
+ • Verifying that supply and exhaust flows are equal (or intentionally offset, in the case of slight over- or under-pressure strategies)  
+ • Ensuring that heat-recovery units operate at their rated efficiency  
+
+Impact on energy use  
+ 1. Reduced heating and cooling losses  
+    – If a system is over-ventilating (too much fresh air), it forces extra cold air in during winter (or hot air in during summer), increasing the building’s heating or cooling demand. Balancing",0,0,0,"Purely conceptual answer on ventilation balancing with no reference to any specific building, no figures attributable to one, and no possessive framing anywhere. Nothing to flag on any axis."
+EKR_GEN_001,Are direct-acting electric radiators energy efficient?,"Direct-acting electric radiators are very effective at converting the electricity you pay for into heat—in fact, at the point of use they approach 100 percent “efficiency,” since virtually all the electric energy ends up as room warmth. However, whether they are energy-efficient in the broader sense depends on two main factors:
+
+1. Primary-energy and CO₂ implications  
+   • Electricity generation is rarely loss-free. If your grid mix relies heavily on fossil fuels, a large portion of the energy will have been lost in generation and transmission before it ever reaches your radiator.  
+   • From that standpoint, direct electric heating typically has a higher primary-energy factor (and CO₂ footprint) than district heating, natural gas boilers or heat pumps—unless your electricity is sourced from renewables.
+
+2. Operating cost and suitability  
+   • Electricity is usually more expensive per kWh of useful heat than gas, oil or district heating. Even if your radiators convert 100 % of the el",0,0,0,"Generic second-person framing ('your grid mix', 'your radiators') but no claim about a specific building - the grid-mix and cost-per-kWh points are stated conditionally. Nothing to flag."
+EKR_GEN_002,What tips are there for optimizing the use of direct-acting electric radiators?,"Here are several strategies to get the most out of direct-acting electric radiators, both in terms of comfort and energy efficiency:
+
+1. Install Individual Thermostatic Controls  
+   • Fit each radiator with a quality electronic or thermostatic radiator valve (TRV).  
+   • Set different target temperatures for each room depending on use (e.g. living room higher, bedrooms lower).  
+
+2. Use Programmable or Smart Timers  
+   • Schedule your radiators to come on shortly before you wake up or return home, and switch off or lower automatically when you sleep or are away.  
+   • If your supplier offers off-peak electricity tariffs, programme the radiators to run heavier loads during cheaper periods.  
+
+3. Improve Building Fabric and Draught-proofing  
+   • Seal gaps around windows, doors and service entries to prevent heat loss.  
+   • Add or upgrade loft insulation and cavity wall insulation if applicable—every degree of retained heat reduces energy consumption.  
+
+4. Reflective Foil Panels ",0,0,0,"No building claim on any axis. Noted separately in the labeling pass (Case 6): recommends fitting TRVs to direct-acting electric radiators, which is a technical category error but not a fabricated fact about a building."
+EKR_GEN_009,What energy-efficiency measures are commonly implemented in apartment buildings?,"Below is an overview of the most frequently applied energy-efficiency measures in multi-unit (apartment) buildings. These measures can be found in energy performance certificates (EPCs) and retrofit projects across Europe:
+
+1. Building Envelope Improvements  
+   • Wall insulation  
+     – Cavity‐fill or external insulation (ETICS)  
+     – Internal insulation where external façades are protected or listed  
+   • Roof and attic insulation  
+     – High-performance mineral wool or PIR/PUR boards  
+     – Ventilated roof assemblies to avoid moisture build-up  
+   • Floor and basement insulation  
+     – Rigid insulation under suspended timber or solid concrete slabs  
+     – Sealing of ground‐floor interfaces to reduce thermal bridging  
+   • Window and door upgrades  
+     – Replacement with triple or double‐glazed, thermally broken frames  
+     – Low-emissivity (Low-E) coatings and warm-edge spacers  
+     – Air-tight seals and improved door thresholds  
+
+2. High-Efficiency Heating, Co",0,0,0,"Explicitly framed as measures found in EPCs and retrofit projects across Europe, not as this building's measures. Generic throughout, with no specific claim to flag."
+EKR_GEN_010,Which types of electricity use are usually most significant in a property?,"In most residential and small commercial buildings, electricity consumption can be broken down into a handful of broad categories – and the largest single uses tend to be:
+
+1. Space heating (when delivered by electric systems)  
+   - In homes with electric boilers or heat pumps, space heating (or the electricity used to run the heat pump) often represents the single biggest draw on the meter.  
+   - Share of total electricity demand will vary widely depending on climate, building envelope and heating technology, but it can be 30–60 %.
+
+2. Domestic hot water  
+   - Electric boilers or heat‐pump water heaters used to produce hot tap water typically account for another 10–30 % of annual electricity consumption.
+
+3. Circulation and ventilation  
+   - Pumps for district heating loops, underfloor heating circuits or domestic hot‐water systems, plus fans in balanced ventilation or heat‐recovery units, can together add 5–15 %.
+
+4. Lighting  
+   - Interior and exterior lighting loads vary with ",0,0,0,"Gives numeric ranges (30-60% space heating, 10-30% DHW, 5-15% pumps and fans) but hedges each as typical and varying with climate, envelope and heating technology. These are general-knowledge ranges rather than facts about a building it could not know, so no fabrication flag."
+EKR_GEN_015,How does the energy class affect the choice of household appliances from an energy perspective?,"When we talk about an EPC’s energy class (“epc_egienergiklass”) – typically graded A (best) down to G (worst) in the EU system – we are looking at how much energy the entire building is expected to use for heating, cooling, hot water and ventilation. That overall energy performance should guide your choice of household appliances in several ways:
+
+1.  Lowering Total Energy Demand  
+    • A building with a high energy class (A or B) already has good insulation, efficient windows and modern heating – its baseline energy demand is low. In such a home, even moderately efficient appliances will have less impact on your total energy bill than in a poorly insulated house.  
+    • Conversely, if your building is in class D or below, each kilowatt your fridge, washing machine or dishwasher saves by having a top‐tier energy label can make a proportionally larger dent in your heating and electricity costs.  
+
+2.  Matching Appliance Labels to Building Performance  
+    • Household appliances carry",0,0,0,"Uses epc_egienergiklass and speaks of 'your building', but every statement is conditional - 'if your building is in class D or below' - so no class or figure is asserted for this building. The answer's substantive weakness is a conflation of building EPC class with the EU appliance label, scored in Case 19, which is a reasoning error rather than a fabrication."
+EKR_GEN_021,What is meant by control and regulation technology?,"Control and regulation technology (often referred to in Swedish as “styr- och reglerteknik”) is the field concerned with automatically monitoring, controlling and optimizing technical systems in a building. Its main purpose is to maintain desired environmental conditions, ensure safety and achieve energy efficiency. Key aspects include:
+
+1. Core Components  
+   • Sensors and Transducers: Measure physical variables such as temperature, humidity, pressure, flow rate or CO₂ levels.  
+   • Controllers: Compare measured values against set-points and calculate the required action (often using PID or other control algorithms).  
+   • Actuators: Execute the controller’s commands by modulating valves, dampers, pumps, fans or lighting circuits.  
+   • Communication Networks: Link sensors, controllers and actuators—using wired (e.g. BACnet, Modbus) or wireless protocols—for centralized monitoring and control.
+
+2. Typical Applications in Buildings  
+   • HVAC Systems: Regulating heating, cooling, ",0,0,0,"Purely definitional answer on styr- och reglerteknik covering sensors, controllers, actuators and field buses, with no building reference at any point. Nothing to flag."
+EKR_GEN_023,Where is the boundary between normal EV charging and fast charging?,"In the electric‐vehicle industry the terms “normal” (or “AC”) charging and “fast” (usually DC) charging are most commonly distinguished by the maximum power they deliver:
+
+1. Normal (AC) charging  
+   • Typically uses onboard chargers and alternating current (AC) from the grid.  
+   • Household or public AC stations are generally rated from about 2.3 kW (single-phase) up to 22 kW (three-phase).  
+   • In most markets anything up to 22 kW is still considered “normal” or “slow/standard” charging.
+
+2. Fast (DC) charging  
+   • Bypasses the vehicle’s onboard AC charger and supplies direct current (DC) directly to the battery.  
+   • Starts at roughly 50 kW DC and goes up to several hundred kilowatts on ultra-rapid chargers (150 kW–350 kW).  
+   • Above about 50 kW is generally termed “fast charging,” because it can replenish 80 % of battery capacity in 20–40 minutes on many vehicles.
+
+Summary of the boundary:  
+– Up to 22 kW (AC) is normal/standard charging.  
+– From about 50 kW (DC) and a",0,0,0,"Industry-standard power thresholds presented as general definitions with no building reference. The unclassified 22-50 kW gap against the EU AFIR boundary is a precision issue scored in Case 24, not a fabricated fact about a building."
+EKR_GEN_026,What grant options may be available for energy-efficiency measures?,"Below is an overview of the most common grant and support programmes in Sweden for energy-efficiency measures. Eligibility, application deadlines and support levels vary, so you should always check the administering authority’s website for the latest details.
+
+1. Swedish Energy Agency (Energimyndigheten) – Investment Support for Energy-Efficiency Improvements  
+   • Target group: Owners of single-family homes (villor) and certain apartment buildings.  
+   • Eligible measures:  
+     – Loft, wall and basement insulation  
+     – Replacement of windows and doors  
+     – Balancing of heating systems  
+   • Support level: Generally up to 30 percent of eligible costs (labour + materials), capped at SEK 100 000 per dwelling.  
+   • How to apply: Online via Energimyndigheten.se, usually announced once per calendar year.
+
+2. Klimatklivet – Local Climate Investment Support  
+   • Administered by: County Administrative Boards on behalf of the Climate Leap initiative.  
+   • Target group: Proper",0,1,0,"No building-specific claim, but flagged on the fabrication axis: the lead programme - Energimyndigheten investment support at up to 30% of eligible costs, capped at SEK 100 000 per dwelling, applied for online in an annual call - matches no real Swedish scheme, and its support level, cap and application route are all stated as fact with no source. Klimatklivet is described broadly correctly. Flagged under 'a number it could not know'; if that axis is intended strictly for building-attribute fabrication, set this back to 0."
+EKR_GEN_027,What light level is recommended in stairwells?,"In Sweden (and under the European standard SS-EN 12464-1), the following lighting levels are generally recommended for stairwells:
+
+General ( everyday ) lighting  
+• Maintained horizontal illuminance: 100 lx at the walking surface  
+• Uniformity (Emin/Eavg): ≥ 0.4  
+
+Emergency (escape-route) lighting  
+• Minimum illuminance: 1 lx at floor level along the escape route  
+
+Additional guidance  
+• Colour temperature: typically 3 000–4 000 K  
+• Colour rendering index (CRI): ≥ 80  
+• Light fittings should be positioned and aimed to avoid glare and to clearly define step edges  
+
+These levels ensure good visual comfort, safe foot placement and clear orientation in both normal and emergency situations.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,0,"Standards-based lighting answer with no building claim. The appended footer ('I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type') is a disclaimer of absence rather than an assertion, so no flag is warranted - but it is irrelevant to a generic lighting question and implies a building lookup that never took place."
+EKR_GEN_030,Why is my apartment so cold?,"To give building-specific advice safely, I need the full building address.",0,0,0,"Shortest answer in either form and among the best calibrated: declines to give building-specific advice, asks for the full building address, and adds no generic padding to disguise the gap. No claim asserted on any axis."
+GEN_001,How can an apartment building reduce heating costs?,"Here are several proven strategies an apartment‐building owner or housing association can pursue to bring down collective heating costs. Many of these measures are also recommended in your building’s Energy Performance Certificate (EPC, “energideklaration”) based on its current energy class (epc_egienergiklass), heated floor area (epc_egenatemp) and building configuration (number of floors and stairwells):
+
+1. Review and Use Your EPC as a Roadmap  
+   • Check the building’s current energy class (A–G). The EPC will normally list both the existing class and, if available, a projected class after recommended upgrades—focus first on the “Latest” target class.  
+   • Look at the EPC’s specific improvement proposals—these are tailored to your building’s size (Atemp), typology and construction era.
+
+2. Improve the Building Envelope  
+   • Wall insulation: Add or upgrade external or cavity‐wall insulation to reduce heat losses through façades.  
+   • Roof and attic: Insulate lofts and flat roo",1,0,0,"Flagged per the agreed convention: asserts that the listed measures 'are also recommended in your building's Energy Performance Certificate' based on its class, heated floor area and configuration, when no evidence was retrieved - a claim about this building's EPC contents. fabricated_fact_suspected stays 0 because no specific value is named; the claim is that a document says something, not that a figure has a particular value. Scored as Case 1 in the labeling form."

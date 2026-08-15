@@ -578,3 +578,42 @@ Note: Some building details may be outdated because I could not confirm how rece
 "[{""epc"": ""A""}]","Answer v1
 
 Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,8,8.35,8,True,evaluated,False,,9,9,False,,[],strict,8,True,[],8,True,evaluated,,,,strict,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-13T16:40:12.145976+00:00,2,fail
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,7,7.6,7,True,evaluated,False,,8,8,False,,[],balanced,8,False,"[""numeric_fidelity_score"", ""constraint_satisfaction_score"", ""uncertainty_calibration_score""]",7,True,evaluated,,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.277349+00:00,2,pass
+"[{""epc"": ""A""}]","Answer bad
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,6,6.6,6,True,evaluated,False,,7,7,False,,"[""unsupported value""]",balanced,7,True,"[""numeric_fidelity_score"", ""constraint_satisfaction_score"", ""uncertainty_calibration_score""]",6,True,evaluated,,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.301603+00:00,2,fail
+"[{""epc"": ""A""}]","Answer fixed
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,1,,,1,8,8.0,8,True,evaluated,False,,8,8,False,,[],balanced,8,False,"[""numeric_fidelity_score"", ""constraint_satisfaction_score"", ""uncertainty_calibration_score""]",8,True,evaluated,,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.316730+00:00,2,pass
+"[{""epc"": ""A""}]","Answer bad
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,6,6.6,6,True,evaluated,False,,7,7,False,,"[""missing required numeric detail""]",balanced,7,True,"[""numeric_fidelity_score"", ""constraint_satisfaction_score"", ""uncertainty_calibration_score""]",6,True,evaluated,,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.334423+00:00,2,fail
+"[{""epc"": ""A""}]","Answer still bad
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,1,,,1,6,6.6,6,True,evaluated,False,,7,7,False,,"[""missing required numeric detail""]",balanced,7,True,"[""numeric_fidelity_score"", ""constraint_satisfaction_score"", ""uncertainty_calibration_score""]",6,True,evaluated,,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.349048+00:00,2,fail
+"[{""epc"": ""A""}]","Answer bad
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,4,3.4,4,True,evaluated,False,,3,3,False,,"[""major omissions""]",balanced,3,False,"[""numeric_fidelity_score"", ""constraint_satisfaction_score"", ""uncertainty_calibration_score""]",4,True,evaluated,,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.366944+00:00,2,fail
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,,,,False,failed_open,True,boom,,,False,,[],balanced,,False,[],,False,failed_open,boom,,,balanced,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.385234+00:00,2,pass
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,8,8.2,8,True,evaluated,False,,9,9,False,,[],strict,9,True,[],0,True,evaluated,,10,,strict,test-deployment,evaluator_prompt.txt,What is the building EPC?,,,10,,False,,2026-08-15T11:49:46.453789+00:00,2,fail
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,9,9.0,9,True,evaluated,False,,9,9,True,Numeric contradiction with aggregated data.,[],balanced,9,False,[],9,True,evaluated,,10,,balanced,test-deployment,evaluator_prompt.txt,What is the building EPC?,,,10,,False,,2026-08-15T11:49:46.473611+00:00,2,fail
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,6,6.0,6,True,evaluated,False,,6,6,False,,"[""below per-axis minimums""]",balanced,6,True,[],6,True,evaluated,,10,,balanced,test-deployment,evaluator_prompt.txt,What is the building EPC?,,,10,,False,,2026-08-15T11:49:46.491396+00:00,2,fail
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,8,8.0,8,True,evaluated,False,,8,8,False,,[],balanced,8,False,[],8,True,evaluated,,10,,balanced,test-deployment,evaluator_prompt.txt,What is the building EPC?,,,10,,False,,2026-08-15T11:49:46.509657+00:00,2,pass
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,8,8.0,8,True,evaluated,False,,8,8,False,,[],strict,8,True,[],8,True,evaluated,,10,,strict,test-deployment,evaluator_prompt.txt,What is the building EPC?,,,10,,False,,2026-08-15T11:49:46.525028+00:00,2,fail
+"[{""epc"": ""A""}]","Answer v1
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",,0,,,0,8,8.35,8,True,evaluated,False,,9,9,False,,[],strict,8,True,[],8,True,evaluated,,,,strict,,evaluator_prompt.txt,What is the building EPC?,,,,,False,,2026-08-15T11:49:46.553742+00:00,2,fail
