@@ -2243,7 +2243,7 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
                                 ("vector_db_agent", "invoked_vector")] if state.get(f)]
         _attrib = (lambda v: v) if verdict.verdict == "fail" else (lambda v: None)
         rec = {"checkpoint_fired": "late",
-               "answer_drafted_this_attempt": str(state.get("final_response") or "")[:500],
+               "answer_drafted_this_attempt": str(state.get("final_response") or ""),
                "specialists_picked_this_attempt": sorted(specs),
                "evaluator_verdict_json": {"verdict": verdict.verdict, "axes": verdict.axes, "composite": verdict.composite},
                "evaluator_axes_json": verdict.axes,

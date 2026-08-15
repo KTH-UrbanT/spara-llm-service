@@ -132,6 +132,7 @@ def write_run_record(run_dir: Path, arm: str, run_id: str, dataset: str) -> None
     between-replicate change visible to anyone reading the run directory.
     """
     import hashlib, subprocess
+    from src.evaluation.closed_loop.in_loop_evaluator import is_o_family
     code_sha, n_files = code_fingerprint()
     try:
         # Best-effort only, and empty inside the container: llm-service is a git submodule,
@@ -145,6 +146,21 @@ def write_run_record(run_dir: Path, arm: str, run_id: str, dataset: str) -> None
     except (OSError, subprocess.SubprocessError):
         sha, dirty = "", None
     ds = Path(dataset)
+    dep = os.environ.get("OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME") or ""
+    if dep:
+        # Derived from the same predicate the judge's request builder uses
+        # (in_loop_evaluator._call), so the record cannot drift from what was actually sent.
+        # o-family deployments reject `temperature` outright: the judge is NOT deterministic
+        # there, which is precisely the noise the k=3 early vote averages over (v21 §2b).
+        judge_sampling = {"deployment": dep,
+                          "temperature_requested": None if is_o_family(dep) else 0,
+                          "temperature_unsupported": is_o_family(dep),
+                          "note": "derived from in_loop_evaluator.is_o_family; see _call"}
+    else:
+        # InLoopEvaluator.__init__ hard-indexes this variable, so a run without it never
+        # constructed a judge. Record nulls rather than assert sampling behaviour for one.
+        judge_sampling = {"deployment": None, "temperature_requested": None,
+                          "temperature_unsupported": None, "note": "no judge deployment pinned"}
     rec = {
         "run_id": run_id, "arm": arm,
         "code_sha256": code_sha, "code_n_files": n_files,
@@ -156,6 +172,7 @@ def write_run_record(run_dir: Path, arm: str, run_id: str, dataset: str) -> None
                  "EVALUATOR_MODE", "CLOSED_LOOP_EARLY_VOTE_K",
                  "ROUTE_PLAUSIBILITY_PROMPT_VERSION", "ANSWER_QUALITY_PROMPT_VERSION",
                  "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")},
+        "judge_sampling": judge_sampling,
         "constants": {"WALL_BUDGET_S": WALL_BUDGET_S, "MAX_RETRIES": MAX_RETRIES,
                       "COST_CAP_MULT": COST_CAP_MULT},
     }
@@ -388,7 +405,7 @@ def run(args) -> int:
             "final_sql_fields_used": snap.get("sql_fields_used"),
             "final_sql_fields_used_by_agent": snap.get("sql_fields_used_by_agent"),
             "final_vector_chunks_retrieved": snap.get("vector_chunks_retrieved"),
-            "final_answer": snap["final_answer"][:1000],
+            "final_answer": snap["final_answer"],
             "answer_quality_verdict": score_verdict,
             # Control-flow and evidence visibility. evidence_present in particular makes a
             # dead upstream channel a flag on the row instead of a mysteriously low

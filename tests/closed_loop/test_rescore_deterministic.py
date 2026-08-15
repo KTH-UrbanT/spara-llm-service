@@ -5,12 +5,14 @@ failure mode that made `replay_rescore.py` unusable for this."""
 from scripts.rescore_deterministic import consensus, flips, rescore_rows
 
 
-def _row(cid, answer, mi, **kw):
+def _row(cid, answer, mi, schema=3, **kw):
+    # schema=3 is what every frozen 2026-08-13 trace carries: final_answer stored [:1000].
     others = dict(route_match=True, agent_match=True, building_id_match=True,
                   field_coverage_pass=True, must_not_include_pass=True,
                   semantic_judge_pass=True)
     others.update(kw)
     return {"case_id": cid, "final_answer": answer, "must_include_pass": mi,
+            "trace_schema_version": schema,
             "case_pass": all(others.values()) and mi, **others}
 
 
@@ -43,6 +45,22 @@ def test_truncated_row_is_inconclusive_not_a_flip():
     assert rows[0]["inconclusive"] and rows[0]["mi_re"] is True
     assert not rows[1]["inconclusive"] and rows[1]["mi_re"] is True
     assert flips({"r1": {"A_open": rows}}) == [{"run": "r1", "arm": "A_open", **rows[1]}]
+
+
+def test_v4_rows_are_conclusive_because_the_answer_is_stored_whole():
+    """Schema v4 stores final_answer untruncated, so a long answer that lacks the token is a
+    genuine failure and must flip — holding it inconclusive would silently suppress a real
+    correction. A row carrying no version field at all keeps the conservative v3 rule."""
+    cases = {"c1": {"must_include": ["zzz"]}}
+    long = "b" + "x" * 999                       # at the v3 cap, token genuinely absent
+    v4 = rescore_rows([_row("c1", long, True, schema=4)], cases)
+    assert not v4[0]["inconclusive"] and v4[0]["mi_re"] is False
+    assert [x["case_id"] for x in flips({"r1": {"A_open": v4}})] == ["c1"]
+
+    unversioned = [{k: v for k, v in _row("c1", long, True).items()
+                    if k != "trace_schema_version"}]
+    out = rescore_rows(unversioned, cases)
+    assert out[0]["inconclusive"] and out[0]["mi_re"] is True
 
 
 def test_judge_none_stays_falsy_in_judge_inclusive_view():

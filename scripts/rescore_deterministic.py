@@ -28,10 +28,11 @@ from scripts.analyze_results_closed_loop import _load, _mcnemar, _HAS
 
 ARMS = ("A_open", "A_late_only", "A_full")
 _CONTRASTS = (("A_open", "A_late_only"), ("A_open", "A_full"), ("A_late_only", "A_full"))
-# run_arm_closed_loop.py computes checks on the full answer but stores final_answer[:1000],
-# so a token past the cap is invisible here. A recomputed True is always sound (a token in
-# the prefix is in the full text); a recomputed False on a row stored at the cap is
+# Trace schema v3 computed checks on the full answer but stored final_answer[:1000], so a
+# token past the cap is invisible here. A recomputed True is always sound (a token in the
+# prefix is in the full text); a recomputed False on a v3 row stored at the cap is
 # inconclusive — the stored value is kept and the row reported, never silently.
+# Schema v4 stores the answer untruncated, so v4+ rows are always conclusive.
 TRUNCATION_CAP = 1000
 
 
@@ -43,7 +44,10 @@ def rescore_rows(rows: list[dict], cases: dict[str, dict]) -> list[dict]:
         answer = r.get("final_answer") or ""
         mi_stored = bool(r.get("must_include_pass", True))
         mi_raw = check_must_include(answer, cases.get(r["case_id"], {}))
-        inconclusive = not mi_raw and len(answer) >= TRUNCATION_CAP
+        # A missing version field (old fixtures, pre-v3 traces) defaults to 0 and keeps the
+        # conservative v3 rule.
+        truncating_schema = int(r.get("trace_schema_version") or 0) < 4
+        inconclusive = truncating_schema and not mi_raw and len(answer) >= TRUNCATION_CAP
         mi_re = mi_stored if inconclusive else mi_raw
         others = [r.get("route_match", False), r.get("agent_match", True),
                   r.get("building_id_match", True), r.get("field_coverage_pass", True),

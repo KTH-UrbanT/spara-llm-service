@@ -148,6 +148,37 @@ def test_run_record_pins_the_code_and_config_that_produced_the_traces(tmp_path):
     assert len(rec["code_sha256"]) == 64 and rec["code_n_files"] > 20
 
 
+def test_run_record_pins_the_judge_sampling_actually_requested(tmp_path):
+    """A hand-written note about judge temperature can drift from the request builder, so
+    this field is computed from the same predicate `_call` uses. o-family deployments reject
+    `temperature` outright: the record must say the judge was NOT deterministic there."""
+    import os
+    from unittest.mock import patch
+    from scripts.run_arm_closed_loop import write_run_record
+    ds = tmp_path / "cases.jsonl"
+    ds.write_text('{"case_id": "X", "question": "q"}\n', encoding="utf-8")
+
+    def sampling_for(dep):
+        with patch.dict(os.environ, {"OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": dep}):
+            if not dep:
+                os.environ.pop("OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")
+            write_run_record(tmp_path, "A_full", "run_1", str(ds))
+        return json.loads((tmp_path / "A_full" / "run_record.json").read_text())["judge_sampling"]
+
+    assert sampling_for("o4-mini") == {
+        "deployment": "o4-mini", "temperature_requested": None,
+        "temperature_unsupported": True,
+        "note": "derived from in_loop_evaluator.is_o_family; see _call"}
+
+    gpt = sampling_for("gpt-4o")
+    assert gpt["temperature_requested"] == 0 and gpt["temperature_unsupported"] is False
+
+    # No deployment pinned -> InLoopEvaluator could not have been constructed (it hard-indexes
+    # the variable). Assert nothing about a judge that never existed.
+    absent = sampling_for("")
+    assert absent["deployment"] is None and absent["temperature_unsupported"] is None
+
+
 def test_code_fingerprint_changes_when_a_source_byte_changes(tmp_path, monkeypatch):
     """The property the whole record rests on. A git SHA would have been identical across
     v20's r1/r2/r3 despite the edit; this must not be."""

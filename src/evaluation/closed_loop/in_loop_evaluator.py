@@ -136,6 +136,18 @@ def _attribution_diagnostic(verdict: str, axes: dict, evidence_present: bool) ->
     return _stage_rule(verdict, axes)
 
 
+def is_o_family(deployment: str | None) -> bool:
+    """o3/o4 deployments reject `temperature`, `top_p`, `frequency_penalty`,
+    `presence_penalty`, and `max_tokens` — they require `max_completion_tokens`
+    instead, and the API-version check fires on certain param combinations.
+
+    Module-level so the run record can derive the judge's sampling config from the same
+    predicate `_call` builds the request with, instead of a hand-written claim about it.
+    """
+    name = (deployment or "").lower()
+    return ("o4" in name) or ("o3" in name)
+
+
 class InLoopEvaluator:
     def __init__(self) -> None:
         # o3/o4 deployments require api-version 2024-12-01-preview or later. The
@@ -271,11 +283,7 @@ class InLoopEvaluator:
                                  stage_attribution_rule="unknown", corrective_hint=None)
 
     def _is_o4_family(self) -> bool:
-        """o3/o4 deployments reject `temperature`, `top_p`, `frequency_penalty`,
-        `presence_penalty`, and `max_tokens` — they require `max_completion_tokens`
-        instead, and the API-version check fires on certain param combinations."""
-        name = (self._dep or "").lower()
-        return ("o4" in name) or ("o3" in name)
+        return is_o_family(self._dep)
 
     def _call(self, system: str, user: str) -> str:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]

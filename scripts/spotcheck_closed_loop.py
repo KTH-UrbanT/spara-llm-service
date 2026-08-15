@@ -145,7 +145,7 @@ def cmd_sample(args):
             "case_id": cid,
             "expected_route": _csv_safe(r.get("expected_route")),
             "question": ds.get("question") or "(question not in dataset)",
-            "final_answer": (r.get("final_answer") or "")[:2000],
+            "final_answer": r.get("final_answer") or "",
             "retrieved_evidence_summary": _evidence_summary(r),
             "judge_verdict": _csv_safe(v.get("verdict")),
             "judge_composite": _csv_safe(v.get("composite")),
@@ -407,7 +407,7 @@ def cmd_audit_ungrounded(args):
             w.writerow({"case_id": r["case_id"],
                         "question": (dataset.get(r["case_id"]) or {}).get("question")
                                     or "(question not in dataset)",
-                        "final_answer": (r.get("final_answer") or "")[:2000],
+                        "final_answer": r.get("final_answer") or "",
                         "contains_building_specific_claim": "",
                         "fabricated_fact_suspected": "", "notes": ""})
     print(f"Wrote {len(chosen)} of {len(ungrounded)} evidence-absent rows to {args.sheet} "

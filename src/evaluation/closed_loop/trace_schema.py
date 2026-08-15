@@ -4,7 +4,10 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-TRACE_SCHEMA_VERSION = 3
+# v4: final_answer and answer_drafted_this_attempt are stored untruncated (v3 capped them at
+# 1000 and 500 chars). A consumer that infers "the stored text may be cut off" must gate on
+# trace_schema_version < 4 — see scripts/rescore_deterministic.py.
+TRACE_SCHEMA_VERSION = 4
 
 
 def _now() -> str:
