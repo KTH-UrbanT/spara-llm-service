@@ -2236,7 +2236,11 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
         verdict = ev.answer_quality(
             question=str(state.get("last_message") or ""),
             retrieved_evidence=state.get("aggregated_data") or {},
-            final_answer=str(state.get("final_response") or ""))
+            final_answer=str(state.get("final_response") or ""),
+            # v24 C2: the system's own identity resolution, written by llm_summarizer_node
+            # just upstream. Without it the judge sees several records under one address and
+            # cannot tell which one is the user's, so citing either scores as faithful.
+            identified_building=(state.get("metadata") or {}).get("building_identity_check"))
         decision = EvaluationController().handle_late_checkpoint(verdict, ctrl)
         specs = [a for a, f in [("generic_sql_agent", "invoked_generic_sql"),
                                 ("specialized_sql_agent", "invoked_specialized_sql"),
@@ -2327,8 +2331,13 @@ def rewind_to_specialists_node(state: GraphState) -> GraphState:
     Cache-aware for the same reason `rewind_to_router_node` is: a cached arm's specialists
     early-return without re-setting `invoked_*` / `sql_fields_*` or re-merging
     `aggregated_data`, so clearing them here would destroy the shared evidence permanently
-    and silently break the paired comparison. Unreachable today — `question_coverage` has
-    never been the lowest axis — which is precisely why it was still armed (v21 §1.7).
+    and silently break the paired comparison. It was unreachable because `question_coverage`
+    was never the lowest axis, which is precisely why it was still armed (v21 §1.7).
+
+    Since v24 it is *structurally* dead: `question_coverage` is retired and no live axis maps
+    to `specialists`, so `handle_late_checkpoint` can no longer target this node. Left in
+    place rather than deleted — removing a graph node mid-study is a behaviour change v24
+    does not need, and the cache-parity guard above already makes it safe.
     """
     print("[rewind_to_specialists] re-selecting specialists", flush=True)
     cached = bool(state.get("aggregated_data_cached"))

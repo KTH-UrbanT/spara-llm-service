@@ -32,6 +32,31 @@ def test_late_rewinds_when_faithfulness_is_not_applicable():
     assert "calibration" in d.corrective_hint      # the worst APPLICABLE axis
     assert "faithfulness=None" not in d.corrective_hint
 
+def test_late_rewinds_when_entity_consistency_is_not_applicable():
+    """v24 adds a second axis that can be None (no building resolved / no evidence). The
+    same min() that Fix 4 defused must survive it, or the rewind silently becomes a no-op."""
+    v = AnswerVerdict(verdict="fail",
+                      axes={"faithfulness": 8, "answer_relevance": 8,
+                            "entity_consistency": None, "calibration": 3},
+                      composite=6.33, evidence_present=True,
+                      stage_attribution_judge="summarizer", stage_attribution_rule="summarizer",
+                      corrective_hint="Hedge where evidence is missing.")
+    d = c.handle_late_checkpoint(v, _ctrl(arm="A_full", budget=2))
+    assert d.action == "rewind" and d.target_stage == "llm_summarizer"
+    assert "calibration" in d.corrective_hint and "entity_consistency=None" not in d.corrective_hint
+
+def test_late_entity_consistency_rewinds_to_the_summarizer():
+    """C3: the fixable class is a citation error with the right record already retrieved."""
+    v = AnswerVerdict(verdict="fail",
+                      axes={"faithfulness": 8, "answer_relevance": 8,
+                            "entity_consistency": 2, "calibration": 8},
+                      composite=6.5, evidence_present=True,
+                      stage_attribution_judge="summarizer", stage_attribution_rule="summarizer",
+                      corrective_hint="Quote byggnadsid 19-84-LEOPARDEN5-1.")
+    d = c.handle_late_checkpoint(v, _ctrl(arm="A_full", budget=2))
+    assert d.action == "rewind" and d.target_stage == "llm_summarizer"
+    assert "entity_consistency" in d.corrective_hint
+
 def test_early_rewinds_with_a_none_axis():
     v = RouteVerdict(verdict="implausible",
                      axes={"intent_consistency": 3, "precondition_satisfied": None},

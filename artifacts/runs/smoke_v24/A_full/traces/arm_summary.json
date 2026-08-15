@@ -1,0 +1,22 @@
+{
+  "timestamp_utc": "2026-08-15T19:14:39.723901+00:00",
+  "trace_schema_version": 4,
+  "run_id": "smoke_v24",
+  "arm": "A_full",
+  "n_cases": 7,
+  "n_pass": 5,
+  "case_pass_rate": 0.7142857142857143,
+  "per_stratum_pass_rate": {
+    "building_specific": 0.6,
+    "clarification": 1.0
+  },
+  "mean_attempts": 1.7142857142857142,
+  "median_attempts": 2,
+  "early_block_exhausted_count": 1,
+  "terminated_without_pass_count": 0,
+  "terminated_router_disallowed_count": 0,
+  "cost_exceeded_count": 5,
+  "total_tokens": 213875,
+  "total_completions": 44,
+  "total_wall_time_s": 585.4417961410072
+}

@@ -24,9 +24,33 @@ TAU_AXIS_FLOOR = 4.0     # late checkpoint: any axis below this forces a fail
 # into a silent pass. Sized for reasoning + the verdict.
 _MAX_COMPLETION_TOKENS = 6000
 
-_AXIS_ORDER = ["faithfulness", "answer_relevance", "question_coverage", "calibration"]
+# v24: `question_coverage` scored 10 on 855 of 855 attempts (its own rubric gave single-clause
+# questions full marks, and the dataset is all single-clause) and agreed with humans at k = 0.0.
+# `entity_consistency` replaces it. With several records under one address string, quoting the
+# wrong building's figures IS faithful — both numbers are in the evidence — so no other axis
+# can see the dominant real failure (v24 §1.1).
+_AXIS_ORDER = ["faithfulness", "answer_relevance", "entity_consistency", "calibration"]
+# The v1 rubric, kept because `replay_rescore` runs `score_axes` over the frozen v20/v21
+# traces: those rows carry `question_coverage`, and scoring them under the v2 order would read
+# the absent `entity_consistency` as 0 and report drift that never happened.
+_AXIS_ORDER_V1 = ["faithfulness", "answer_relevance", "question_coverage", "calibration"]
+# `entity_consistency` -> summarizer, not specialists: the right record is already in the
+# evidence, so only the re-draft can fix the citation. That leaves no axis mapped to
+# `specialists`, i.e. `rewind_to_specialists` is now structurally dead (v24 §C3).
 _AXIS_TO_STAGE = {"faithfulness": "summarizer", "answer_relevance": "router",
-                  "question_coverage": "specialists", "calibration": "summarizer"}
+                  "entity_consistency": "summarizer", "calibration": "summarizer",
+                  "question_coverage": "specialists"}   # retired axis; frozen traces only
+
+# The only identity fields the judge may see. Projected here rather than at each call site
+# so no caller can widen it by handing over the whole identity block.
+_IDENTITY_KEYS = ("matched_building_id", "matched_address", "candidate_building_ids",
+                  "multiple_records_same_address")
+
+
+def _axis_order(axes: dict) -> list[str]:
+    """Which rubric produced these axes — v1 traces carry `question_coverage`."""
+    return _AXIS_ORDER_V1 if ("question_coverage" in axes
+                              and "entity_consistency" not in axes) else _AXIS_ORDER
 
 
 @dataclass
@@ -69,17 +93,18 @@ def _parse(content: str) -> dict | None:
 def _applicable(axes: dict) -> dict:
     """The axes the pass rule and the attribution rule apply over.
 
-    An axis explicitly set to None is *not applicable* — today only
-    `faithfulness`, when there was no evidence to check the answer against
-    (see `_score`) — and is dropped rather than read as a zero. An axis the
-    judge simply *omitted* still counts as 0, so a missing score is attributed
-    to its stage rather than masked.
+    An axis explicitly set to None is *not applicable* — `faithfulness` when
+    there was no evidence to check the answer against, `entity_consistency`
+    when the system identified no building (see `_score`) — and is dropped
+    rather than read as a zero. An axis the judge simply *omitted* still counts
+    as 0, so a missing score is attributed to its stage rather than masked.
     """
     return {a: (axes[a] if a in axes else 0)
-            for a in _AXIS_ORDER if not (a in axes and axes[a] is None)}
+            for a in _axis_order(axes) if not (a in axes and axes[a] is None)}
 
 
-def score_axes(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str]:
+def score_axes(raw_axes: dict, evidence_present: bool,
+               entity_scorable: bool = True) -> tuple[dict, float, str]:
     """Parse the judge's axes and apply the pre-registered pass rule.
 
     `faithfulness` asks whether the answer's claims are supported by the
@@ -90,12 +115,21 @@ def score_axes(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str
     (§1.2). TAU_SEMANTIC and TAU_AXIS_FLOOR are unchanged — only the set of
     axes they are applied over changes.
 
+    `entity_consistency` has the same shape of missing input: with no evidence,
+    or with no building resolved to check the answer's figures against, there is
+    nothing to be consistent *with*. `entity_scorable` is False in exactly those
+    cases and the axis is recorded as None. Enforced here and not left to the
+    prompt, for the same reason faithfulness is: a 0 on the 61 evidence-absent
+    cases would re-create the v20 false-negative epidemic.
+
     Returns (axes, composite, verdict).
     """
     # None is the judge saying "not applicable" — keep it, never int() it.
     axes = {k: (None if v is None else int(v)) for k, v in (raw_axes or {}).items()}
     if not evidence_present:
         axes["faithfulness"] = None
+    if not entity_scorable and "entity_consistency" in _axis_order(axes):
+        axes["entity_consistency"] = None
 
     vals = _applicable(axes)
     composite = sum(vals.values()) / len(vals) if vals else 0.0
@@ -108,6 +142,22 @@ def score_axes(raw_axes: dict, evidence_present: bool) -> tuple[dict, float, str
 _score = score_axes
 
 
+# Rewind risk per stage, for tie-breaking only (v24 C5). A summariser re-draft keeps the
+# route and the evidence, so a wrong one costs an attempt. A router rewind re-decides the
+# route: on the v24 smoke, `TULEGATAN_5A_002` scored answer_relevance and entity_consistency
+# both 2, the tie resolved to `router` in axis order, the route went building -> generic and
+# a passing case failed on `route_match` while its answer had got BETTER. Ties now resolve to
+# the recoverable stage; a strictly lower axis still wins outright.
+_STAGE_RISK = {"summarizer": 0, "specialists": 1, "router": 2}
+
+
+def _worst_axis(vals: dict) -> str:
+    """The axis a failure is attributed to — lowest score, ties to the safest stage."""
+    lo = min(vals.values())
+    tied = sorted(a for a, v in vals.items() if v == lo)
+    return min(tied, key=lambda a: _STAGE_RISK.get(_AXIS_TO_STAGE.get(a, ""), 3))
+
+
 def _stage_rule(verdict: str, axes: dict) -> str:
     """Attribution rule, over the applicable axes only (see `_applicable`).
 
@@ -118,7 +168,7 @@ def _stage_rule(verdict: str, axes: dict) -> str:
         return "unknown"
     if verdict == "fail" and all(v >= TAU_AXIS_FLOOR for v in vals.values()):
         return "unknown"
-    return _AXIS_TO_STAGE.get(min(vals, key=lambda a: vals[a]), "unknown")
+    return _AXIS_TO_STAGE.get(_worst_axis(vals), "unknown")
 
 
 def _attribution_diagnostic(verdict: str, axes: dict, evidence_present: bool) -> str:
@@ -131,7 +181,7 @@ def _attribution_diagnostic(verdict: str, axes: dict, evidence_present: bool) ->
     """
     vals = _applicable(axes)
     if vals and not evidence_present \
-            and min(vals, key=lambda a: vals[a]) in ("calibration", "answer_relevance"):
+            and _worst_axis(vals) in ("calibration", "answer_relevance"):
         return "retrieval_starved"
     return _stage_rule(verdict, axes)
 
@@ -254,18 +304,30 @@ class InLoopEvaluator:
         question: str,
         retrieved_evidence: dict,
         final_answer: str,
+        identified_building: dict | None = None,
     ) -> AnswerVerdict:
+        """`identified_building` is the system's OWN identity resolution
+        (`state.metadata.building_identity_check`), not gold — the same class of input as
+        `route_plausible`'s `about_to_request_address`. Without it the judge cannot see the
+        dominant real failure: with several records under one address string, an answer that
+        quotes the wrong building's figures is faithful to the evidence and passes every
+        axis (v24 §1.1). Only the four fields in `_IDENTITY_KEYS` are forwarded."""
         # A dict of empty containers holds no evidence: {"generic_sql": []} is
         # truthy but there is nothing in it for faithfulness to check against.
         evidence_present = any(bool(v) for v in (retrieved_evidence or {}).values())
+        ident = ({k: (identified_building or {}).get(k) for k in _IDENTITY_KEYS}
+                 if (identified_building or {}).get("matched_building_id") else None)
         try:
             raw = self._call(self._ap, json.dumps(
                 {"question": question, "retrieved_evidence": retrieved_evidence,
+                 "identified_building": ident,
                  "final_answer": final_answer}, ensure_ascii=False, default=str))
             p = _parse(raw)
             if p is None:
                 raise ValueError(f"JSON failure: {raw[:200]!r}")
-            axes, composite, verdict = score_axes(p.get("axes") or {}, evidence_present)
+            axes, composite, verdict = score_axes(
+                p.get("axes") or {}, evidence_present,
+                entity_scorable=bool(ident) and evidence_present)
             return AnswerVerdict(
                 verdict=verdict, axes=axes, composite=composite,  # type: ignore
                 evidence_present=evidence_present,

@@ -17,7 +17,9 @@ import argparse, json, os, sys, time
 from pathlib import Path
 
 _PROMPT_ENV = {"ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
-               "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v1.txt"}
+               # v24 C4: entity_consistency replaces the degenerate question_coverage axis.
+               # Inert in A_open, which fires no checkpoint; the early prompt is unchanged.
+               "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v2.txt"}
 # CLOSED_LOOP_EARLY_VOTE_K is pinned per arm rather than left to the ambient environment:
 # the early checkpoint exists only in A_full, and an unset variable would let a value leak
 # in from the shell and go unrecorded. k=3 there, k=1 (a no-op) everywhere else.
@@ -298,7 +300,10 @@ def resolve_scoring_verdict(snap: dict, case: dict, get_scorer) -> dict:
     av = get_scorer().answer_quality(
         question=case["question"],
         retrieved_evidence=snap.get("aggregated_data") or {},
-        final_answer=answer)
+        final_answer=answer,
+        # Same inputs the in-loop judge gets, or the judge-inclusive metric would be
+        # measured with a blinder instrument in the open arm than in the treatment arms.
+        identified_building=(snap.get("cache_bundle") or {}).get(_CACHED_IDENTITY_KEY))
     return {"verdict": av.verdict, "axes": av.axes, "composite": av.composite,
             "evidence_present": av.evidence_present}
 

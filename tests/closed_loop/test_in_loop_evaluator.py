@@ -122,7 +122,12 @@ def test_empty_evidence_marks_faithfulness_not_applicable():
     assert v.composite == pytest.approx(9.0)      # mean of the three scored axes
     assert v.verdict == "pass"
     assert "_fail_open" not in v.axes             # the None must not trip the fail-open
-    assert v.stage_attribution_rule != "summarizer"  # and must not crash the min()
+    # ...and must not crash or be ranked by the min(). Asserted on the mechanism rather than
+    # on the stage name: since v24 C5 every scored axis here is 9, and the tie resolves to
+    # the safest stage, which is `summarizer` via calibration — a legitimate answer.
+    from src.evaluation.closed_loop.in_loop_evaluator import _applicable, _worst_axis
+    assert "faithfulness" not in _applicable(v.axes)
+    assert _worst_axis(_applicable(v.axes)) != "faithfulness"
 
 def test_judge_returned_null_faithfulness_is_not_a_fail_open():
     """int(None) inside the parser would be caught by the fail-open and become a pass."""
@@ -239,3 +244,131 @@ def test_faithfulness_still_scored_when_evidence_present():
     v = r.answer_quality("q?", _EV, "wrong number")
     assert v.evidence_present is True and v.axes["faithfulness"] == 2
     assert v.verdict == "fail" and v.stage_attribution_rule == "summarizer"
+
+
+# --- v24: entity_consistency replaces question_coverage --------------------------------
+
+# The system's own identity resolution. The trailing key is deliberate: it is NOT one of
+# the four forwarded fields, and the projection must drop it.
+_IDENT = {"matched_building_id": "B1", "matched_address": "Tulegatan 5A",
+          "candidate_building_ids": ["B1", "B2"], "multiple_records_same_address": True,
+          "expected_building_id": "MUST-NOT-LEAK"}
+
+
+def _v2(**axes):
+    """A v2-rubric judge reply with the given axes."""
+    full = {"faithfulness": 9, "answer_relevance": 9, "entity_consistency": 9, "calibration": 9}
+    full.update(axes)
+    return json.dumps({"verdict": "pass", "axes": full, "composite": 9.0,
+                       "stage_attribution": "summarizer", "corrective_hint": None})
+
+
+def _payload(r):
+    return json.loads(r._client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+
+
+def test_identified_building_reaches_the_judge():
+    """C2: without it the judge cannot tell which of several same-address records is the user's."""
+    r = _ev(_v2())
+    r.answer_quality("q?", _EV, "a", identified_building=_IDENT)
+    assert _payload(r)["identified_building"]["matched_building_id"] == "B1"
+
+
+def test_identified_building_is_projected_to_the_four_declared_fields():
+    """The judge must never see anything but the four fields v24 §C2 declares."""
+    r = _ev(_v2())
+    r.answer_quality("q?", _EV, "a", identified_building=_IDENT)
+    assert set(_payload(r)["identified_building"]) == {
+        "matched_building_id", "matched_address", "candidate_building_ids",
+        "multiple_records_same_address"}
+
+
+def test_entity_consistency_scored_when_a_building_was_identified():
+    """The point of the axis: a wrong-record citation fails, attributed to the summariser."""
+    r = _ev(_v2(entity_consistency=2))
+    v = r.answer_quality("q?", _EV, "quotes the other building", identified_building=_IDENT)
+    assert v.axes["entity_consistency"] == 2
+    assert v.verdict == "fail" and v.stage_attribution_rule == "summarizer"
+
+
+def test_entity_consistency_not_applicable_without_an_identified_building():
+    """No resolved building = nothing to be consistent with. A 0 here would fail every
+    general-advice answer, which is the v20 false-negative epidemic (Fix 4's lesson)."""
+    r = _ev(_v2(entity_consistency=0))
+    v = r.answer_quality("q?", _EV, "General advice.")
+    assert v.axes["entity_consistency"] is None
+    assert v.verdict == "pass" and v.composite == pytest.approx(9.0)
+    assert "_fail_open" not in v.axes
+
+
+def test_entity_consistency_not_applicable_without_evidence():
+    """Empty evidence drops faithfulness AND entity_consistency; the rest still score."""
+    r = _ev(_v2(faithfulness=0, entity_consistency=0))
+    v = r.answer_quality("q?", {}, "advice", identified_building=_IDENT)
+    assert v.axes["faithfulness"] is None and v.axes["entity_consistency"] is None
+    assert v.composite == pytest.approx(9.0) and v.verdict == "pass"
+
+
+def test_judge_returned_null_entity_consistency_is_not_a_fail_open():
+    """int(None) inside the parser would be caught by the fail-open and become a pass."""
+    r = _ev(_v2(entity_consistency=None))
+    v = r.answer_quality("q?", _EV, "a", identified_building=_IDENT)
+    assert "_fail_open" not in v.axes and v.axes["entity_consistency"] is None
+    assert v.composite == pytest.approx(9.0)
+
+
+def test_an_omitted_entity_consistency_is_still_read_as_zero():
+    """Not-applicable is the judge saying null. Silently dropping the axis is not the same
+    thing, and would let a judge skip the one axis v24 exists for."""
+    r = _ev(json.dumps({"verdict": "pass",
+                        "axes": {"faithfulness": 9, "answer_relevance": 9, "calibration": 9},
+                        "composite": 9.0, "stage_attribution": "summarizer",
+                        "corrective_hint": None}))
+    v = r.answer_quality("q?", _EV, "a", identified_building=_IDENT)
+    assert v.verdict == "fail" and v.stage_attribution_rule == "summarizer"
+
+
+def test_v1_axes_still_score_under_the_v1_rubric():
+    """The replay gate rests on this: `replay_rescore` runs `score_axes` over the frozen
+    v20/v21 traces, which carry `question_coverage`. Reading the absent `entity_consistency`
+    as 0 there would report drift that never happened."""
+    from src.evaluation.closed_loop.in_loop_evaluator import score_axes
+    axes, composite, verdict = score_axes(
+        {"faithfulness": 8, "answer_relevance": 8, "question_coverage": 10, "calibration": 8},
+        evidence_present=True)
+    assert "entity_consistency" not in axes
+    assert composite == pytest.approx(8.5) and verdict == "pass"
+
+
+def test_a_tie_for_the_lowest_axis_does_not_rewind_the_router():
+    """C5, from the v24 smoke: answer_relevance and entity_consistency both 2 attributed to
+    `router`, the rewind re-decided the route, and a passing case failed on route_match with
+    a BETTER answer. A tie must go to the recoverable stage."""
+    r = _ev(_v2(answer_relevance=2, entity_consistency=2))
+    v = r.answer_quality("q?", _EV, "cites the other building", identified_building=_IDENT)
+    assert v.verdict == "fail" and v.stage_attribution_rule == "summarizer"
+
+
+def test_a_strictly_lower_answer_relevance_still_reaches_the_router():
+    """The tie-break must not disarm genuine routing failures."""
+    r = _ev(_v2(answer_relevance=1, entity_consistency=3))
+    assert r.answer_quality("q?", _EV, "off topic",
+                            identified_building=_IDENT).stage_attribution_rule == "router"
+
+
+def test_arms_are_wired_to_a_rubric_that_has_the_new_axis():
+    """C4. A typo in the filename is a FileNotFoundError 88 times per arm at run time; a
+    stale filename is a silently degenerate axis for three replicates."""
+    from pathlib import Path
+    from scripts.run_arm_closed_loop import _ARM_ENV
+    import src.evaluation.closed_loop.in_loop_evaluator as m
+    for arm, env in _ARM_ENV.items():
+        p = Path(m.__file__).parent / "prompts" / env["ANSWER_QUALITY_PROMPT_VERSION"]
+        assert p.exists(), f"{arm} points at a missing rubric: {p.name}"
+        assert "entity_consistency" in p.read_text(), f"{arm} still runs the retired axis"
+
+
+def test_v1_question_coverage_keeps_its_stage():
+    """Frozen traces must attribute the way they did when they were written."""
+    r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":8,"answer_relevance":7,"question_coverage":2,"calibration":8},"composite":6.25,"stage_attribution":"specialists","corrective_hint":"Missing."}))
+    assert r.answer_quality("q?", _EV, "a").stage_attribution_rule == "specialists"
