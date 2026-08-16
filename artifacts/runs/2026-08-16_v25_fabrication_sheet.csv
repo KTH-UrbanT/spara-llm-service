@@ -1,0 +1,422 @@
+case_id,question,final_answer,contains_building_specific_claim,fabricated_fact_suspected,notes
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_ADVICE,What should my building prioritize to improve energy efficiency?,"To improve your building’s energy efficiency, you should adopt a systematic approach that targets both the building envelope and its technical systems. Even without specific EPC data, the following priorities will generally yield the greatest savings:
+
+1. Commission an Energy Audit  
+   – Have a certified energy consultant or auditor perform a detailed inspection (thermography, blower door test, utility‐bill analysis) to pinpoint your building’s greatest heat losses, air leaks and system inefficiencies.  
+   – The audit will also help you establish baselines and prioritize measures by cost–benefit ratio.
+
+2. Upgrade the Building Envelope  
+   – Roof/Ceiling Insulation: In most buildings, up to 25–30 % of heat is lost through an under-insulated roof or attic. Adding or improving insulation can pay back quickly.  
+   – Wall Insulation: External or internal wall insulation can reduce heat losses significantly, especially in older masonry or timber-frame constructions.  
+   – Windows and Doors: Replace single-glazed frames with high-performance double or triple glazing. Ensure airtight seals around frames to eliminate drafts.
+
+3. Improve Air Tightness and Ventilation  
+   – Seal cracks around windows, doors, service penetrations and junctions between building elements.  
+   – Install or upgrade mechanical ventilation with heat recovery (MVHR or FTX units) to ensure fresh air supply while retaining up to 90 % of outgoing heat.
+
+4. Optimize Heating, Cooling and Domestic Hot Water Systems  
+   – Replace old boilers or electric heaters with high-efficiency condensing boilers, heat pumps (ground‐source or air‐source) or district heating connections where available.  
+   – Insulate hot‐water pipes and storage tanks to reduce distribution losses.  
+   – Fit programmable or smart thermostats and implement zoning controls to avoid overheating or conditioning unoccupied areas.
+
+5. Upgrade Lighting and Electrical Equipment  
+   – Retrofit all lighting to LED technology. LEDs use 50–80 % less electricity than incandescent or fluorescent lamps.  
+   – Install occupancy sensors and daylight dimmers in corridors, bathrooms and meeting rooms.  
+   – When possible, choose ENERGY STAR or equivalent high‐efficiency appliances and office equipment.
+
+6. Integrate Renewable Energy Sources  
+   – Solar photovoltaic (PV) panels can offset a significant portion of your building’s electricity consumption.  
+   – Consider solar thermal systems for domestic hot water pre-heating or small heat pumps.  
+   – Evaluate battery storage to maximize on‐site consumption of solar electricity.
+
+7. Implement Building Automation and Monitoring  
+   – Use a building management system (BMS) or sub-metering to monitor energy flows in real time.  
+   – Set up automated controls for HVAC start/stop schedules, setback temperatures and fault detection.
+
+8. Engage Occupants in Energy-Smart Practices  
+   – Educate staff or tenants on simple measures: closing doors and windows when heating is on, turning off lights and equipment when not in use, and reporting faults promptly.  
+   – Display energy dashboards or monthly performance reports to sustain awareness and drive behavior change.
+
+By following these steps—starting with a professional energy audit and then systematically upgrading insulation, ventilation, technical systems and controls—you’ll target the largest energy losses first and ensure each investment delivers the highest possible return in both cost savings and carbon reduction.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,"Generic roadmap; explicitly disclaims EPC data; only industry-typical ranges (25-30% roof loss, 90% FTX recovery)."
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_HEATING,What is the heating system in my building?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,Refusal; no claims.
+BRF_ODEN_03_TEKNIKRINGEN_10B_001_PERFORMANCE,What is the energy performance of my building?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,Refusal; no claims.
+BRF_ODEN_05_ARTEMISGATAN_17_001_ADVICE,What should my building prioritize to improve energy efficiency?,"Improving a building’s energy efficiency is best approached in a structured way, starting with measures that typically deliver the greatest savings for the lowest investment. Even without detailed information about your particular property, you can follow this general roadmap:
+
+1. Carry out an energy audit or review your EPC  
+   – If you have an Energy Performance Certificate (EPC), identify the largest “energy losers.”  
+   – A professional audit (thermographic imaging, blower‐door test) pinpoints air leaks, thermal bridges or under-insulated areas.  
+
+2. Optimize the building envelope  
+   – Roof and attic insulation: Heat rises, so improving roof insulation often yields quick payback.  
+   – Wall insulation: If cavity walls are uninsulated, consider filling; for solid walls, think internal or external insulation.  
+   – Floor insulation: Insulate suspended timber or unheated basements to reduce heat loss.  
+   – Windows and doors: Upgrade to high-performance double or triple glazing with low-E coatings; ensure tight seals and well-fitting frames.  
+
+3. Improve airtightness and ventilation  
+   – Seal cracks around windows, doors, service penetrations and at junctions between floors and walls.  
+   – Install or upgrade mechanical ventilation with heat recovery (MVHR) to maintain indoor air quality without dumping warmth.  
+
+4. Upgrade heating, cooling and hot-water systems  
+   – Replace old boilers with high-efficiency condensing gas/oil units, or ideally a heat pump (air-source or ground-source).  
+   – Insulate hot-water pipes and install a weather-compensated control or smart thermostat to modulate supply.  
+
+5. Enhance controls and lighting  
+   – Fit programmable or smart thermostats, zoning controls and occupancy sensors.  
+   – Switch to LED lighting and install daylight or motion sensors in corridors and common areas.  
+
+6. Consider renewable energy generation  
+   – Solar photovoltaics (PV) to offset electricity consumption.  
+   – Solar thermal panels for domestic hot water pre-heating.  
+   – Battery storage to maximize self-consumption of on-site generation.  
+
+7. Monitor performance and plan for the long term  
+   – Install energy‐monitoring sub-meters to track consumption by heating, ventilation, lighting, etc.  
+   – Use the monitoring data to identify further savings opportunities and to verify the impact of measures.  
+
+By following this hierarchy—starting with the envelope, then ventilation/heating systems, then controls and renewables—you’ll typically achieve the best combination of cost-effectiveness and carbon savings. If you can supply your building’s EPC energy class and key metrics such as heated floor area (Atemp) and current heating system, it’s possible to refine these recommendations even further.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,Generic roadmap; asks the user for EPC class/Atemp instead of asserting them.
+BRF_ODEN_05_ARTEMISGATAN_17_001_HEATING,What is the heating system in my building?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,Refusal; no claims.
+BRF_ODEN_10_RADMANSGATAN_31_003_PERFORMANCE,What is the energy performance of my building?,"I found the building, but I do not have enough building data yet for personalized advice. Could you share any more details you have, such as the full address or the specific system you want to ask about?",0,0,Borderline: 'I found the building' asserts identification only; no building attribute or energy fact claimed.
+DEMO_EXTRA_BRF_001,What is the energy performance for Artemisgatan 17 in Stockholm?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,Refusal; no claims.
+DEMO_EXTRA_BRF_004,What heating system does Rådmansgatan 31 in Motala have?,"I could not find enough building data for that address. I can still give general guidance, or you can share another full street address if this one was misspelled.",0,0,Refusal; no claims.
+DEMO_EXTRA_GEN_004,What does ventilation balancing mean for energy use?,"Ventilation balancing refers to the process of adjusting and fine-tuning the airflow rates in a building’s ventilation system so that each supply and exhaust outlet delivers the intended volume of air. Proper balancing ensures that the system is neither under- nor over-ventilating any zone, and it has several key implications for energy use:
+
+1. Reduced Heat Losses and Gains  
+   • When airflow rates match design values, conditioned (heated or cooled) air is delivered only where needed.  
+   • Over-ventilation leads to unnecessary heating in winter or cooling in summer, driving up energy consumption.  
+   • Under-ventilation can force occupants to open windows for fresh air, bypassing heat-recovery units or mechanical cooling and increasing thermal losses.
+
+2. Improved Heat-Recovery Performance  
+   • Many modern ventilation systems include heat- or energy-recovery units that transfer heat between the exhaust and supply air streams.  
+   • If airflow is unbalanced, the heat exchanger cannot operate at its optimal effectiveness, reducing the recovered energy and increasing the net heating or cooling load.
+
+3. Lower Fan and Pump Energy  
+   • Imbalanced systems often result in higher duct pressures or unexpected leaks, forcing fans to work harder.  
+   • Proper balancing minimizes pressure differences and duct losses, so fans can operate closer to their most efficient point on the performance curve.
+
+4. Enhanced Indoor Air Quality with Less Energy  
+   • Balanced systems ensure that stale air is removed and fresh air is supplied at the correct rate for occupant density and building usage.  
+   • By avoiding over-ventilation, you supply only the necessary outdoor air, reducing the need to heat or cool excess ventilation air.
+
+5. Longer Equipment Life and Reduced Maintenance  
+   • When ventilation equipment operates under the correct loads, stresses on fans, motors and control components are minimized.  
+   • This reduces maintenance needs, unexpected failures and the associated energy spikes during restart or repair.
+
+In summary, ventilation balancing optimizes both thermal comfort and air quality while minimizing the energy required for heating, cooling and fan operation. Properly balanced systems—including those with heat-recovery ventilation—can cut overall HVAC energy use by 10–30 percent, depending on the building type and climate.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,Generic definition; 10-30% HVAC saving is an unsourced but industry-typical range.
+EKR_GEN_001,Are direct-acting electric radiators energy efficient?,"Direct-acting (also called direct-acting) electric radiators convert nearly 100 % of the electricity they consume into heat at the point of use. However, when assessing their overall energy efficiency and cost-effectiveness, you need to consider several factors:
+
+1. Point-of-use efficiency  
+   – Electric radiators themselves are “perfect” heaters in that all incoming electrical energy becomes heat in the room.  
+   – There are no flue losses or standby heat losses through water pipes.  
+
+2. Primary (well-to-room) efficiency  
+   – If your electricity comes from fossil-fuel power plants, there are generation and transmission losses (typically 25–40 % losses before the electricity reaches your home).  
+   – Even with modern combined-cycle gas or renewable sources, some losses occur upstream.  
+
+3. Running costs  
+   – Electricity per kWh is often more expensive than district heating, natural gas, or heat‐pump-supplied heat.  
+   – Direct-acting electric radiators are therefore usually the most costly way to maintain a comfortable indoor temperature over long periods.  
+
+4. Flexibility and installation  
+   – Very simple to install and control (no water circuits, no pumps).  
+   – Ideal for intermittent or supplemental heating (e.g., in a seldom-used room, garage or holiday home).  
+   – Programmable thermostats and “smart” controls can optimize usage and reduce bills.  
+
+5. Comparison with alternatives  
+   – Air-to-air or ground-source heat pumps typically deliver 3–5 kWh of heat per kWh of electricity (COP 3–5), dramatically reducing running costs.  
+   – District heating and modern biomass boilers can also be more economical if available.  
+
+Recommendations  
+– Use direct-acting electric radiators primarily for occasional or zoning purposes rather than whole-house heating.  
+– Combine with time-of-use electricity tariffs, smart controls and good insulation to minimize operating hours and costs.  
+– For full-time heating in a permanent residence, consider a heat-pump solution or another lower-cost heat source.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,Generic; COP 3-5 and upstream grid-loss figures are standard.
+EKR_GEN_002,What tips are there for optimizing the use of direct-acting electric radiators?,"Here are several practical ways to get the most out of direct-acting electric radiators while keeping your costs and energy use down:
+
+1. Use programmable or smart controls  
+   • Fit each radiator with a digital thermostat or timer so it only runs when you need it (e.g. pre-heat living areas before you wake or return home).  
+   • Lower the setpoint by a degree or two at night or when rooms are unoccupied—each °C you drop can cut energy use by around 5 %.
+
+2. Zone your heating  
+   • Only heat the rooms you’re actually using. Close doors to unused rooms and turn off their radiators.  
+   • In larger homes, consider grouping radiators onto separate circuits so you can control whole zones simultaneously.
+
+3. Take advantage of radiator-mounted thermostatic valves  
+   • A TRV (thermostatic radiator valve) automatically maintains the temperature you choose within each room, preventing overheating.  
+   • If you don’t have TRVs, look for a model designed for retrofit—installation is usually straightforward.
+
+4. Improve heat retention in the room  
+   • Ensure windows, doors and any through-wall vents are well sealed and draught-proofed.  
+   • Add heavy curtains or blinds over windows and close them at dusk.  
+   • Install reflective foil behind radiators on external walls to push heat back into the living space.
+
+5. Optimise radiator placement and airflow  
+   • Keep radiators clear of furniture, curtains or anything else that blocks airflow.  
+   • Position furniture to encourage warm air to circulate rather than trapping it in one spot.
+
+6. Run radiators in “eco” or low-power mode where available  
+   • Many modern electric heaters offer an “eco” or “low” mode that cycles the element on and off to save energy while still maintaining comfort.  
+   • Experiment with these settings to find a balance between comfort and cost.
+
+7. Monitor and adjust regularly  
+   • Keep an eye on your electricity meter or smart-meter app so you can see how changes in settings affect consumption.  
+   • Tweak schedules or setpoints as the seasons change—your summer-to-autumn needs will differ from deep winter.
+
+8. Consider supplementary insulation upgrades  
+   • While not a radiator tweak per se, improving loft insulation, cavity-wall insulation or even under-floor insulation reduces the workload on your heaters and can be highly cost-effective.
+
+By combining good controls, proper maintenance and attention to heat loss, you’ll keep each direct-acting electric radiator running as efficiently as possible—and avoid paying to heat the great outdoors.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,"Generic; caveat: recommends TRVs (a hydronic device) for direct-acting electric radiators - wrong-domain advice, not an invented fact."
+EKR_GEN_009,What energy-efficiency measures are commonly implemented in apartment buildings?,"In multi‐family residential buildings (apartment blocks), the energy performance certificate (EPC/Energideklaration) typically identifies a range of cost‐effective measures. The most common energy‐efficiency upgrades include:
+
+•  Building‐envelope insulation  
+  – Cavity‐wall and external‐wall insulation  
+  – Loft (roof) and floor insulation (especially over unheated spaces)  
+  – Sealing of thermal bridges and reduction of air leakage (draught‐proofing)
+
+•  High-performance windows and doors  
+  – Replacement of single‐ or old double-glazed units with modern low-emissivity (low-E) triple or double glazing  
+  – Improved frame materials (e.g. thermally broken aluminum or wood‐composite frames)  
+  – Proper sealing and weatherstripping
+
+•  Upgrades to heating and hot-water systems  
+  – Conversion from old boilers to condensing boilers or district heating connection  
+  – Installation of ground‐source or air-source heat pumps  
+  – Tank insulation and heat‐recovery from hot‐water circulation loops  
+  – Thermostatic radiator valves or electronic room thermostats in each apartment
+
+•  Ventilation and indoor-air quality improvements  
+  – Mechanical ventilation with heat recovery (MVHR, FTX units)  
+  – Demand-controlled ventilation (CO₂ or humidity sensors)  
+  – Balancing of ductwork to optimise airflow
+
+•  Lighting and controls  
+  – Replacement of fluorescent or incandescent lamps with LED fixtures  
+  – Presence detectors and daylight dimming controls in common areas  
+  – Centralised lighting control systems for corridors, stairwells and underground parking
+
+•  Building automation and energy management  
+  – Installation of building-management systems (BMS) that monitor and adjust heating, cooling, ventilation and lighting  
+  – Sub-metering of electricity, heat and hot water per staircase or individual flats to encourage resident engagement  
+  – Remote monitoring and fault detection
+
+•  Renewable‐energy integration  
+  – Photovoltaic (PV) panels on roofs or façades for on-site electricity production  
+  – Solar‐thermal collectors for domestic hot‐water pre-heating  
+  – Shared battery storage or vehicle-to-grid integration in emerging projects
+
+•  Water‐saving and waste‐heat recovery  
+  – Low-flow taps, showerheads and dual-flush toilets to reduce hot‐water demand  
+  – Heat recovery from grey-water (showers, sinks) in large complexes  
+  – Centralised laundry facilities with heat-recovery dryers
+
+Most EPCs will prioritise measures according to cost-effectiveness, expected energy savings (kWh/m², kWh/person) and pay-back time. In Sweden, the resulting EPC energy class (epc_egienergiklass) typically ranges from A (best) to G (poorest); applying a combination of the above measures can often move a building one or two classes upward, reducing operating costs and carbon emissions substantially.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,1,"Presents internal field name 'epc_egienergiklass' as the Swedish EPC class term; no such term exists (Boverket uses 'energiklass') - invented label stated as fact, though the A-G content is correct. Blind second annotator concurred (1). Terminology-level, not decision-level: flagged for human adjudication."
+EKR_GEN_010,Which types of electricity use are usually most significant in a property?,"In most residential and smaller commercial buildings, electricity consumption can be grouped into five to seven broad end-use categories. Although the exact shares will vary from one property to another (depending on climate, building systems, occupant behaviour and fuel mix), the following uses are almost always the largest:
+
+1. Space heating (when electric heating is installed)  
+   • Often the single biggest electricity demand – in an all-electric home it can account for 40–50 % (or more) of total consumption.  
+   • Includes resistance radiators, heat pumps (compressor power), underfloor electric mats, fan coil units, etc.
+
+2. Domestic hot water  
+   • Typically 10–20 % of electricity use in an electrically heated building.  
+   • Covers storage-tank immersion heaters, instantaneous electric water heaters and heat‐pump water heaters.
+
+3. Ventilation, cooling and pumps  
+   • Mechanical ventilation fans, air-conditioning compressors, circulation pumps for heat distribution, pool pumps, etc.  
+   • Depending on climate and system efficiency, this can be 10–20 % (higher in warmer climates or poorly insulated buildings).
+
+4. Household appliances (“white goods”)  
+   • Refrigerators, freezers, washing machines, dishwashers, tumble dryers, and similar.  
+   • Typically 10–15 % in an electric-heated house, but larger if the dwelling is very appliance-intensive or lacks other electrical heating loads.
+
+5. Lighting  
+   • Interior and exterior lighting (including security and landscape lighting).  
+   • In a modern, LED-lit home you might see 5–10 %; in an older building with incandescent or fluorescent fittings it can be 15 % or more.
+
+6. Cooking and built-in kitchen equipment  
+   • Electric ranges, ovens, hobs, microwaves and extractor fans.  
+   • Usually 5–10 % of total electricity, though higher in homes where electric cooking is predominant.
+
+7. Small electronics and miscellaneous loads  
+   • TVs, computers, chargers, entertainment systems, smart-home devices, standby losses, etc.  
+   • Generally 5–15 %, but rising as more devices and “always-on” equipment are installed.
+
+Key drivers of variation  
+• If the building uses district heating or gas for space and water heating, the electricity share for heating drops to nearly zero and lighting/appliances/electronics dominate.  
+• Highly efficient heat pumps can reduce the electricity share for space and water heating, shifting the balance toward appliances and lighting.  
+• In commercial or office buildings, lighting, HVAC (ventilation and cooling), and ICT (servers, computers) often dominate.
+
+In summary, while “space heating” (in electrically heated properties), “domestic hot water” and “ventilation/cooling” are the largest single buckets in many all-electric buildings, appliances, lighting and small electronics together typically account for at least 30–40 % of the annual electricity demand in most homes.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,"Generic end-use shares, typical ranges, hedged."
+EKR_GEN_015,How does the energy class affect the choice of household appliances from an energy perspective?,"The energy class of a building (often reported on its Energy Performance Certificate, or EPC, as “epc_egienergiklass”) is an overall indicator of how much energy the building envelope and its fixed systems (heating, ventilation, cooling, lighting) consume per square meter. When you know a building’s energy class, you can more effectively target where to save energy—and that in turn influences which household appliances will give you the best returns in reduced energy use and cost.  
+
+1. Understanding the share of energy use  
+   • In a high-performance building (e.g. energy class A or B), losses through walls, roof and windows are already low. As a result, appliances (white goods, electronics, cooking equipment) often become the single largest remaining energy draw. Investing in top-rated appliances (EU label A or B under the new A–G scale) will therefore yield relatively large percentage savings on total household consumption.  
+   • In a lower-performance building (e.g. class D, E or lower), heating (and cooling, where relevant) typically dominates energy use. Although upgrading to efficient appliances still saves energy, the relative impact on your overall bill is smaller compared with fixing insulation, windows or heating systems first.  
+
+2. Choosing appliance energy classes to match building performance  
+   • If your building is rated A–B:  
+     – Prioritize appliances in the top energy classes (A or B under the current EU A–G label).  
+     – Look for models with features like inverter compressors (in refrigerators), “eco” wash cycles (in dishwashers and washing machines) and high SCOP/SEER values (in heat-pump water heaters or integrated heat-pump systems).  
+   • If your building is rated C–D:  
+     – A balance of mid-range appliances (class C or D) can be cost-effective if the purchase price premium for top-class units is very high.  
+     – However, if you plan major building envelope upgrades in the near future, it can still make sense to choose top-class appliances up front so they operate efficiently once the building is improved.  
+   • If your building is rated E–G:  
+     – Focus first on building improvements (insulation, sealing, heating).  
+     – In parallel, replacing very old appliances (classes F, G or un-labeled) with at least class C–D models will still produce noticeable savings and lower peaks on your existing heating system.  
+
+3. Smart and integrated controls  
+   No matter the building class, selecting appliances with smart-energy management functions can further reduce consumption. Features to look for include:  
+   – Time-of-use programming (runs dishwashers, washing machines or charging stations when electricity is cheapest or when on-site renewables are producing).  
+   – Load-shifting capabilities that coordinate with your home energy management system to avoid simultaneous high-power draws.  
+
+4. Total cost of ownership  
+   While high-class appliances often have a higher upfront cost, their lower electricity and water consumption usually pays back over the appliance’s lifetime—especially in a well-insulated, efficient building where heating costs are already minimized.  
+
+Summary  
+By aligning your choice of household appliances with the building’s EPC energy class, you ensure that your investment in efficiency yields the greatest possible savings. In a top-class building, appliances become the principal lever for further energy reduction. In a lower-class building, appliance upgrades are still beneficial but should be paired with improvements to the building envelope and fixed systems to maximize overall gains.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,1,Claims the EPC reports the class 'as epc_egienergiklass' - nonexistent term (real term: 'energiklass'); invented specific despite otherwise correct EU A-G appliance-label facts. Blind second annotator concurred (1). Terminology-level: flagged for human adjudication.
+EKR_GEN_021,What is meant by control and regulation technology?,"Control and regulation technology (sometimes called automation or “styr- och reglerteknik” in Swedish) is the branch of engineering and applied science concerned with measuring, monitoring and automatically adjusting the behaviour of technical systems. In the context of building services and energy performance, it covers:
+
+1. Sensors and Measurement  
+   • Temperature, humidity, pressure, flow and light sensors  
+   • Energy meters for electricity, gas or district heating  
+
+2. Controllers and Logic  
+   • Programmable Logic Controllers (PLCs) or building-automation controllers  
+   • Control algorithms (e.g. PID-controllers) that compare measured values against set-points  
+
+3. Actuators and Final Control Elements  
+   • Valves, dampers, pumps and fans that respond to control signals  
+   • Variable-speed drives and motor controllers  
+
+4. Feedback and Regulation Loops  
+   • Closed-loop control where the system continuously adjusts to maintain a desired condition (for example, keeping room temperature at 21 °C)  
+   • Cascaded or multivariable loops for more complex processes (e.g. combined heating and ventilation control)  
+
+5. Supervision and Integration  
+   • Building Management Systems (BMS) or SCADA platforms that collect data, visualize system status and allow centralized commissioning, alarms and trend analysis  
+   • Communication protocols such as BACnet, Modbus or KNX for interoperability  
+
+Key benefits in buildings include:
+– Energy efficiency through optimized operation of HVAC, lighting and other services  
+– Improved occupant comfort and indoor environmental quality  
+– Remote monitoring, fault detection and preventive maintenance  
+
+In short, control and regulation technology is the toolbox—both hardware and software—that ensures technical systems operate safely, efficiently and in accordance with user requirements.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,Textbook definition; named protocols (BACnet/Modbus/KNX) are real.
+EKR_GEN_023,Where is the boundary between normal EV charging and fast charging?,"In practice, the cut-off between “normal” (sometimes called slow or AC) charging and “fast” charging is almost always set at 22 kW:
+
+•  Normal (AC) charging  
+   – Typically up to 22 kW.  
+   – In Europe most home and public AC chargers are 3.7–22 kW (single- or three-phase).  
+•  Fast charging  
+   – Defined as any charging point rated at 22 kW or above.  
+   – On AC this is still up to ~43 kW in some installations, but by convention 22 kW+ is “fast.”  
+   – DC fast chargers generally start at around 50 kW and today commonly range from 50 kW up to 350 kW or more.
+
+Different standards bodies or countries may subdivide further (e.g. “rapid” for ≥50 kW DC or “ultra-rapid” >150 kW), but the industry consensus for the normal-vs-fast boundary is 22 kW.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,"22 kW boundary maps to the real EU AFID normal/high-power split; '22 kW or above is fast' flips the strict inequality and self-contradicts 'normal up to 22 kW' - imprecise, not invented."
+EKR_GEN_026,What grant options may be available for energy-efficiency measures?,"Here’s an overview of the principal grant- and subsidy-programmes in Sweden that you can explore if you want to carry out energy-efficiency measures in an existing building.  Depending on the measure and your building’s ownership form (private home, tenant‐owner association, commercial property or public building), you may be eligible for one or more of these supports:
+
+1. Swedish Energy Agency (“Energimyndigheten”) investment support  
+   • Target – Major energy-efficiency renovations in single‐family houses, owner-occupied apartments and certain non-residential buildings.  
+   • Measures – Façade insulation, new windows, upgraded ventilation with heat recovery (FTX), heat‐pump installations, replacement of oil- or direct-electric heating, etc.  
+   • Support level – Typically up to 30 percent of the eligible cost, capped at SEK 50 000–60 000 per dwelling (for single‐family houses) or adjusted levels for multi-family and non-residential buildings.  
+   • Application – Via the Energy Agency’s online portal; you must get an energy audit or consult an accredited energy advisor before applying.  
+
+2. ROT Tax Deduction (“ROT-avdrag”)  
+   • Target – All private homeowners and apartment associations (housing companies) who carry out renovation, conversion or extension work.  
+   • Measures – Among other things, replacement of windows and doors, installation of heat pumps, ventilation systems, heat recovery units, etc.  
+   • Benefit – 30 percent deduction on the labour cost (maximum deduction SEK 50 000 per person per year for ROT), directly applied on the invoice. No support for materials.  
+   • Note – You engage an approved contractor who handles the deduction in the invoice.  
+
+3. Klimatklivet (“The Climate Leap”)  
+   • Target – Municipalities, county councils, companies and other organisations with larger climate-saving investment projects.  
+   • Measures – Industrial heat recovery, biofuel boilers, electric buses, large-scale energy efficiency upgrades, etc.  
+   • Support level – Varies on the project’s CO₂‐reduction potential; can cover up to 50 percent of eligible investment costs.  
+   • Application – Through the Swedish Environmental Protection Agency once a year (calls for proposals usually in spring).  
+
+4. Boverket’s loan for energy-efficiency improvements  
+   • Target – Multi-family dwellings owned by private individuals or housing companies; also small commercial properties.  
+   • Measures – Thermal renovation, improved ventilation, new heating systems, etc.  
+   • Terms – Low-interest, long-term loans (often 1 percent interest over 25 years). Maximum loan amount tied to energy saved (kWh/m²).  
+   • Application – Via your bank in partnership with Boverket; an energy consultant must certify the planned measures.  
+
+5. Municipal and regional programmes  
+   • Many municipalities and county administrative boards (Länsstyrelser) run local grants or loans to stimulate energy-saving investments.  
+   • Examples – Small subsidies for attic or basement insulation; interest-free loans for heat pump installations; free or subsidised energy audits.  
+   • Check – Your municipality’s website or contact their environmental/energy-advisory unit for current offers and deadlines.  
+
+6. Investment support for solar power and storage  
+   • Target – Anyone installing photovoltaic (PV) systems on residential or commercial buildings.  
+   • Support level – Typically 10–20 percent of investment costs (up to a defined ceiling per kW installed).  
+   • Note – Often combined with net-metering arrangements and the ROT deduction for installation labour.  
+
+Key steps when applying  
+• Have a valid Energy Performance Certificate (EPC or “energideklaration”) in place. The EPC documents the building’s energy class and baseline energy use, which many programmes require.  
+• Engage an accredited energy advisor early – most grants demand an energy-audit report or project plan approved in advance.  
+• Apply before work begins – few programmes reimburse retroactively.  
+• Keep all invoices and technical specifications – inspectors may request detailed documentation of materials and installation.  
+
+By combining these programmes strategically (for example, pairing the Energy Agency’s investment support with the ROT tax deduction, plus municipal loans), you can often finance up to 50 percent or more of a major energy-efficiency upgrade. Always check each programme’s current rules and application windows on the responsible agency’s website before you start.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,1,"Plausible-but-wrong Swedish program specifics stated confidently: households investment support attributed to Energimyndigheten (real grant is Boverket/lansstyrelsen, 30k+30k kr split cap, not 50-60k per dwelling); 'Boverket 1% 25-year loan via banks' matches no real instrument (the real multi-family scheme was a grant, discontinued); solar 'investment support 10-20%' describes the abolished solcellsstod, missing gron teknik (15%); Klimatklivet cadence wrong (multiple rounds/year, not one annual spring call); 'net-metering arrangements' do not exist in Sweden; ROT wrongly extended to apartment associations. Web-verified; blind second annotator independently confirmed. Same species as the DEMO_EXTRA_GEN_006 'plausible Swedish program names' note."
+EKR_GEN_027,What light level is recommended in stairwells?,"In most national and international lighting standards (for example SS-EN 12464-1), stairwells are classified as “circulation areas” and are prescribed an average horizontal illuminance of 100 lux measured at floor or step level. Key points:  
+• Recommended average illuminance: 100 lx  
+• Illuminance uniformity (U₀): ≥ 0.4 (to avoid dark spots)  
+• Glare control: choose luminaires with proper shielding or diffusion  
+• Emergency/escape‐route lighting: as a complement to the normal lighting, maintain at least 1 lx along the escape path at floor level  
+
+By meeting these levels you ensure both safety (good visibility of each step) and compliance with widely adopted building‐lighting regulations.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,"SS-EN 12464-1 is real and the U0>=0.4 / 1 lx escape-route figures check out, but the 2021 edition lists 150 lx for stairs - 100 lx is the corridor/older circulation-area value, so an outdated/misapplied real figure, not an invented one. Second annotator scored 1; adjudicated 0 for consistency with EKR_GEN_023 (real value, wrong application). Borderline - flagged."
+EKR_GEN_030,Why is my apartment so cold?,"To give building-specific advice safely, I need the full building address.",0,0,Refusal; no claims.
+GEN_001,How can an apartment building reduce heating costs?,"Here are several proven strategies for reducing heating costs in an apartment building. You can combine measures to maximize savings:
+
+1. Improve Insulation and Airtightness  
+   • Wall and Roof Insulation – Upgrade to high-performance insulation materials (e.g., mineral wool, PIR panels) to lower heat losses through building envelope.  
+   • Floor and Basement Insulation – Add rigid insulation under suspended floors or at the interface with unheated spaces.  
+   • Seal Air Leaks – Use weather-stripping, window seals and foam sealants around doors, windows, service penetrations and ductwork to eliminate drafts.
+
+2. Upgrade Windows and Doors  
+   • High-performance Glazing – Replace single- or poorly insulated double-glazing with low-E, argon-filled triple-glazed units.  
+   • Thermally Broken Frames – Choose frames with thermal breaks (e.g., fiberglass, PVC) to reduce conductive heat loss.
+
+3. Modernize Heating System  
+   • High-Efficiency Boilers or Heat Pumps – Swap older boilers (especially those >15 years old) for condensing boilers (efficiency >90 %) or ground/air-source heat pumps (seasonal COP 3–4+).  
+   • Zoning and Smart Controls – Install programmable thermostats and thermostatic radiator valves so each apartment or floor can be heated according to occupancy and comfort needs.  
+   • System Balancing – Have a qualified technician perform hydraulic balancing to ensure even heat distribution and avoid overheating some radiators while under-heating others.
+
+4. Optimize Ventilation and Heat Recovery  
+   • Controlled Mechanical Ventilation (CMV) – Upgrade to a balanced ventilation system with heat recovery (HRV/ERV). These systems recover up to 90 % of the heat from exhaust air.  
+   • Regular Maintenance – Clean or replace filters and check fans to ensure the system runs at peak efficiency.
+
+5. Metering and Resident Engagement  
+   • Sub-Metering – Install individual heat- or energy-meters for each apartment so residents pay for what they consume. This typically drives behavioral changes and reduces waste.  
+   • Information Campaigns – Educate residents about optimal thermostat settings (18–21 °C when home, lower when away/asleep) and simple habits (closing doors, reporting drafts).
+
+6. Renewable and Low-Carbon Integration  
+   • Solar Thermal or PV – Add solar collectors for hot-water preheating or photovoltaic panels to offset the building’s electricity use (pumps, fans, controls).  
+   • District Heating – If available, connect to a modern district heating network, which often supplies heat more efficiently than individual boilers.
+
+7. Regular Maintenance and Monitoring  
+   • Annual Service – Have heating equipment serviced annually for combustion safety, burner calibration and filter changes.  
+   • Energy Monitoring – Use a building-level energy management system (EMS) to track consumption in real time, spot anomalies and verify savings after upgrades.
+
+By combining envelope improvements, system upgrades, smart controls and resident engagement, many apartment buildings can cut heating costs by 20 – 50 %—often amortizing their investment within 5–10 years through lower energy bills.
+
+Note: Some building details may be outdated because I could not confirm how recent the underlying energy-declaration data is. I do not have confirmed data for: energy_class, energy_performance, heating_system, ventilation_type.",0,0,Generic measures; 20-50% savings and 5-10 yr payback are advisory-typical ranges.

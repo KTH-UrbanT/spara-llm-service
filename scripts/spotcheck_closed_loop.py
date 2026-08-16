@@ -390,10 +390,16 @@ Score every block, then ingest with:
 which arm produced the answer, so knowing the loop had a second attempt cannot colour
 the score. The building id given is the one *the system resolved* — it is not the gold
 answer, and it is what `entity_consistency` is defined against: does every figure the
-answer presents as the user's own belong to that building? Leave a score blank to skip
-a block; re-ingesting is idempotent.
+answer presents as the user's own belong to that building?
 
 Scale 0 (worst) – 10 (perfect). `overall_pass` is 0 or 1: would you ship this answer?
+
+**A single axis may be left blank when it does not apply** — about 15 of these blocks
+retrieved no evidence and identify no building, so there is nothing for
+`entity_consistency` (or `faithfulness`) to be checked against. A blank axis is dropped
+from that axis's agreement pool and the rest of the block still counts. `overall_pass`
+is always required. Leaving *every* field blank skips the block entirely, so a partly
+filled form can be ingested as often as you like — re-ingesting is idempotent.
 
 ---
 """
@@ -718,11 +724,25 @@ def _is_blank_label(rec: dict, axes: list[str]) -> bool:
 
 
 def _validate_label(rec: dict, axes: list[str]) -> str | None:
-    """Return an error string if the parsed scores are out of range, else None."""
+    """Return an error string if the parsed scores are out of range, else None.
+
+    A blank axis means *not applicable* and is allowed: 15 of the v25 frame's 65 rows
+    have no evidence and no identified building, so there is nothing for
+    `entity_consistency` to be scored against. `kappa` already drops such pairs. If a
+    blank instead invalidated the whole block, the annotator leaving one axis empty
+    would silently delete the row from the audit — the trap this rule removes.
+    A block with no axis scored at all is still an error.
+    """
+    scored = 0
     for ax in axes:
         v = str(rec.get(ax, "")).strip()
+        if v == "":
+            continue
         if not v.isdigit() or not (0 <= int(v) <= 10):
             return f"{ax}={rec.get(ax)!r} not an integer in [0,10]"
+        scored += 1
+    if not scored:
+        return "no axis scored"
     op = str(rec.get("overall_pass", "")).strip()
     if op not in ("0", "1"):
         return f"overall_pass={op!r} must be 0 or 1"
@@ -797,7 +817,9 @@ def cmd_ingest_md(args):
                 "case_id": cid,
                 "annotator_id": args.annotator_id,
                 "timestamp_utc": ts,
-                **{ax: int(rec[ax]) for ax in axes},
+                # Blank stays blank: "not applicable", not zero.
+                **{ax: (int(rec[ax]) if str(rec.get(ax, "")).strip() else "")
+                   for ax in axes},
                 "overall_pass": int(rec["overall_pass"]),
                 "notes": rec["notes"],
             })

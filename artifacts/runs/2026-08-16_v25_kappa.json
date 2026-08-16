@@ -1,0 +1,104 @@
+{
+  "n_paired": 65,
+  "n_dropped_fail_open": 0,
+  "n_resamples": 10000,
+  "seed": 42,
+  "raw_agreement": 0.8769230769230769,
+  "ac1": 0.7855670103092782,
+  "ac1_ci95": [
+    0.628489777973181,
+    0.9187669235575923
+  ],
+  "kappa_binary": 0.7123893805309734,
+  "kappa_binary_ci95": [
+    0.5124999999999998,
+    0.8827420324714373
+  ],
+  "kappa_caveat": "prevalence paradox \u2014 reported for comparability, not a gate",
+  "gates": {
+    "raw_agreement_ge_0.90": false,
+    "ac1_ge_0.6": true
+  },
+  "per_axis_kappa_weighted": {
+    "faithfulness": {
+      "n": 50,
+      "k": -0.0022889023997709756,
+      "ci95": [
+        -0.057613168724279795,
+        0.0480619566455337
+      ],
+      "k_gt0_ci_excludes_0": false,
+      "binarised_at_floor": {
+        "floor": 4,
+        "raw_agreement": 0.7,
+        "ac1": 0.5973154362416107,
+        "ac1_ci95": [
+          0.3300852618757614,
+          0.7847404927050944
+        ],
+        "n_judge_fired": 2,
+        "n_human_fired": 13
+      }
+    },
+    "answer_relevance": {
+      "n": 65,
+      "k": 0.30703624733475476,
+      "ci95": [
+        0.1831238779174148,
+        0.6494907130017975
+      ],
+      "k_gt0_ci_excludes_0": true,
+      "binarised_at_floor": {
+        "floor": 4,
+        "raw_agreement": 0.9846153846153847,
+        "ac1": 0.9843768777791131,
+        "ac1_ci95": [
+          0.9516668732184905,
+          1.0
+        ],
+        "n_judge_fired": 1,
+        "n_human_fired": 0
+      }
+    },
+    "entity_consistency": {
+      "n": 50,
+      "k": 0.8717948717948718,
+      "ci95": [
+        0.7463987410725093,
+        0.9510392609699769
+      ],
+      "k_gt0_ci_excludes_0": true,
+      "binarised_at_floor": {
+        "floor": 4,
+        "raw_agreement": 0.94,
+        "ac1": 0.895141558895491,
+        "ac1_ci95": [
+          0.7615262321144675,
+          1.0
+        ],
+        "n_judge_fired": 15,
+        "n_human_fired": 16
+      }
+    },
+    "calibration": {
+      "n": 65,
+      "k": 0.04127016963177488,
+      "ci95": [
+        0.011442416100942654,
+        0.07349728548872037
+      ],
+      "k_gt0_ci_excludes_0": true,
+      "binarised_at_floor": {
+        "floor": 4,
+        "raw_agreement": 0.6923076923076923,
+        "ac1": 0.584,
+        "ac1_ci95": [
+          0.3493028244547729,
+          0.7560975609756099
+        ],
+        "n_judge_fired": 0,
+        "n_human_fired": 20
+      }
+    }
+  }
+}

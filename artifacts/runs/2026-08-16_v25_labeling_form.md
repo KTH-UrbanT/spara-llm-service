@@ -10,10 +10,16 @@ Score every block, then ingest with:
 which arm produced the answer, so knowing the loop had a second attempt cannot colour
 the score. The building id given is the one *the system resolved* — it is not the gold
 answer, and it is what `entity_consistency` is defined against: does every figure the
-answer presents as the user's own belong to that building? Leave a score blank to skip
-a block; re-ingesting is idempotent.
+answer presents as the user's own belong to that building?
 
 Scale 0 (worst) – 10 (perfect). `overall_pass` is 0 or 1: would you ship this answer?
+
+**A single axis may be left blank when it does not apply** — about 15 of these blocks
+retrieved no evidence and identify no building, so there is nothing for
+`entity_consistency` (or `faithfulness`) to be checked against. A blank axis is dropped
+from that axis's agreement pool and the rest of the block still counts. `overall_pass`
+is always required. Leaving *every* field blank skips the block entirely, so a partly
+filled form can be ingested as often as you like — re-ingesting is idempotent.
 
 ---
 
@@ -51,12 +57,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: entity 10: every figure (109 D, spec 82, 22 914 kWh, primary 30 552, EPC 2.6 2019-04-11, A2W HP) is attested for BONDEN9-1 elsewhere in the form and coheres internally (82x280≈22 960). faith 9 not 10 only because values beyond the 12 shown fields cannot be positively verified. calib 8: confident where supported.
 
 ---
 
@@ -94,12 +100,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[4]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[3]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[0]`
+- notes: "your latest EPCs" possessively attributes both LEOPARDEN (190/E, correct) and HAELSAN (183/E) to the user, and both carry the same address "Tulegatan 5A" in two different cities. entity 3: user's own figure present and correct, but a second building is claimed as theirs. calib 3: no acknowledgment of the ambiguity it created. pass 0: leaks another property as the user's.
 
 ---
 
@@ -136,12 +142,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named HAELSAN, answers "your building (19-84-LEOPARDEN5-1)". faith 3 not lower: figures are internally coherent (140 353/141 and 101 553/102 both imply ≈995 m²) and match the Arboga record quoted in case-10 style blocks; the false claim is the attribution itself. rel 10 per v24 rule (topic fully addressed). entity 0, calib 2: total confidence in a wrong attribution.
 
 ---
 
@@ -194,12 +200,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[1]`
+- notes: All EPC figures match the resolved FILOSOFEN2-2 (B, 53 primary, ~59 specific, ~28 400 elec ≈ the 28 436 attested in case 30). faith 5 / calib 3: asserts "You already have FTX" and quotes the electricity figure while its own note lists ventilation_type and electricity_use as unconfirmed (2 self-contradictions); windows correctly handled as a conditional. pass 1: entity-correct, advice sound.
 
 ---
 
@@ -227,12 +233,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named HAELSAN, answers RAEFSAN's record (A2W HP, district_heating_use=0 — both attested for RAEFSAN). faith 3: record quoted accurately, attribution false. rel 10: heating question fully answered, just for the wrong building — entity 0 carries that failure.
 
 ---
 
@@ -272,12 +278,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[7]`
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[0]`
+- notes: Three buildings listed with per-building data matching other blocks, and the conditional ending picks the correct one (HAELSAN → district heating, 946 000). entity 7: no false possessive and the right building is conditionally answered. faith 5: all three share the address "Rådmansgatan 31" in three different cities — address copied, not retrieved. calib 6: hedges via "if you are referring to" although the system had already resolved the building. pass 0: a data dump plus a conditional is not a shippable answer to "my building".
 
 ---
 
@@ -321,12 +327,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[4]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[0]`
+- notes: Treats BONDEN's, HAELSAN's and RAEFSAN's certificates as one building's version history and picks "the latest" — false premise, though the conclusion (75/C) is correct for the named RAEFSAN. faith 3: the reasoning chain is fabricated even if each figure is real. entity 4: final attribution correct but two foreign certs presented as candidates for "your" history. pass 0: right answer via reasoning that would misattribute on any other draw.
 
 ---
 
@@ -363,12 +369,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: Matches the HAELSAN 183-family (2016 F → 2020 E, specific 178, primary 133) and correctly explains which class is current. Note: the form also contains a 155/2008 HAELSAN family both claiming "latest"; judging only what is shown, this block is internally coherent, hence faith 8.
 
 ---
 
@@ -410,12 +416,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[7]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[5]`
+- calibration (0–10): `[5]`
+- overall_pass (0 or 1): `[0]`
+- notes: Accurate neutral listing: all three buildings correctly labeled (Räfsan 5 Motala, Bonden 9 Kristinehamn, Hälsan 10 Stockholm — the only multi-building block whose addresses all check out), and the named BONDEN's correct answer (A2W HP) is present. rel 9: the topic is addressed for every candidate; the failure is refusing to commit, which lands on entity (5: labeled, asks, never attributes) and calibration (5: asks about an ambiguity the system had already resolved). pass 0.
 
 ---
 
@@ -449,12 +455,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[1]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: No ID stated but every figure is foreign: "Arboga network", 103 328 + 24 950 kWh, class E at 102 kWh/m² belong to the Arboga record (case-3 figure family), not the named Stockholm building 01-80-HAELSAN10-2. entity 1: swap detectable only via the Arboga mention. calib 2: flat confidence throughout.
 
 ---
 
@@ -525,12 +531,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[6]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[4]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic question, no building. Fridge advice solid except the lead item: EU labels were rescaled to A–G in 2021, so telling a 2026 buyer to seek A+/A++/A+++ is obsolete — faith 6. calib 4: obsolete claim asserted confidently plus an irrelevant building-data note on an appliance question. pass 1 (borderline): the other nine items are accurate and useful.
 
 ---
 
@@ -564,12 +570,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[4]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[3]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[0]`
+- notes: "your latest EPC records" covers three different buildings (155/E, 75/C, 109/D — each attested for its own building). faith 4: figures real, possessive framing false. entity 3: all three presented as the user's. pass 0.
 
 ---
 
@@ -609,12 +615,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[4]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[3]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[0]`
+- notes: "your buildings" presents HAELSAN's 183/133/E beside the named LEOPARDEN's 190/127/E, then summarises them jointly ("both buildings consume roughly 180–190"). entity 3: possessive leak of a second building. calib 3: no hedge about its provenance.
 
 ---
 
@@ -650,12 +656,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: BONDEN answered as BONDEN: 109 D, spec 82, 22 914 kWh, A2W HP — all attested, internally coherent (82x280≈22 960). Clean block.
 
 ---
 
@@ -699,12 +705,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[2]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[1]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap (named BONDEN, answers RAEFSAN v3.0 2024) aggravated by the closing "This is the most recent and correct energy classification for your building". faith 2 / calib 1: asserting correctness of a misattributed record is the worst calibration failure in the form besides case 34.
 
 ---
 
@@ -741,12 +747,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[7]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Energy-performance figures all match RAEFSAN and cohere (75 C, 42, 7 171≈171x42, 12 908). faith 7: "Main heating system: Electric heating (elvärme)" contradicts the air-to-water heat pump this building has in five other blocks. calib 7 for asserting it flatly. pass 1: the asked topic (performance) is answered correctly; heating is ancillary here.
 
 ---
 
@@ -782,12 +788,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[7]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Figures match FILOSOFEN2-4 (60 B, spec 64, 149 478 — reconciles with case-64's DH split plus electricity). faith 7 / calib 7: "well above the Swedish median" is an unsupported and confusingly worded comparison.
 
 ---
 
@@ -815,12 +821,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named HAELSAN, answers RAEFSAN (v3.0 approved 2024-09-19, A2W HP, DH=0 — all attested for RAEFSAN). Coherent record, false attribution. rel 10: topic answered; entity 0 carries the failure.
 
 ---
 
@@ -853,12 +859,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named RAEFSAN, answers "For your building (ID 01-80-HAELSAN10-2)" with HAELSAN's attested 155/E. entity 0, calib 2.
 
 ---
 
@@ -896,12 +902,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[4]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[3]`
+- calibration (0–10): `[5]`
+- overall_pass (0 or 1): `[0]`
+- notes: "you have two buildings recorded" is the same false possessive as cases 2/12/13, so faith 4 and entity 3 to match them — both buildings again at "Tulegatan 5A" in different cities. calib 5: the ask-to-pick is the same hedge as cases 9/48, no better, about an ambiguity the system had resolved. pass 0: answers nothing.
 
 ---
 
@@ -935,12 +941,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[1]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[0]`
+- notes: Named HAELSAN; answers for "17-81-BONDEN9-1 (the first record in your data)" and never addresses the user's building. BONDEN figures mostly attested, but "primärenergital 2020: 112" sits oddly beside 109 (case 60: 30 552/280≈109, and energiprestanda IS the primary figure). entity 1: the "first record" framing is the only thing above 0.
 
 ---
 
@@ -973,12 +979,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: District heating via Stockholm with 819 500/161 300 matches the HAELSAN 2019-cert family (cases 48, 50). calib 7: "No other fuel types ... contribute" is a flat universal, though consistent with the record shown.
 
 ---
 
@@ -1012,12 +1018,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Figures (DH Stockholm, 118 576 space + 45 056 DHW) match FORSKNINGEN1-44 in cases 31 and 47. entity 9 only because the answer never restates the building ID. calib 7 for the flat "No other heating sources" universal.
 
 ---
 
@@ -1053,12 +1059,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[6]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[7]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: All asked-for figures correct for RAEFSAN (C, 75, 42, 7 171, A2W HP), but "Räfsan 5, Kristinehamn" is the wrong municipality: four other blocks say Motala, and the 05- county prefix is Östergötland — Kristinehamn belongs to BONDEN (17-). entity 7 for one borrowed locality. pass 1 is a judgement call: every figure the user asked about is right.
 
 ---
 
@@ -1111,12 +1117,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: no evidence, no building. Sound, well-sequenced generic BRF advice with no invented specifics. calib 6: the trailing "building details may be outdated" note is boilerplate that does not belong on a question that used no building data.
 
 ---
 
@@ -1156,12 +1162,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[6]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Right entity, headline right (155/E; 1 050 964/6 798≈155 coheres). faith 6: the carrier breakdown double-counts — case 28 shows the 946 000 already contains the 113 520 DHW — and 946 000+113 520+12 000=1 071 520 ≠ the stated 1 050 964; "primary energy factor 110" also mislabels primärenergital. calib 7 for asserting the broken breakdown.
 
 ---
 
@@ -1198,12 +1204,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: FILOSOFEN2-3 answered as itself with no warts: 63 primary/B vs 71 delivered correctly distinguished, totals cohere (167 524/71 ≈ 2 360 m² ≈ 149 037/63), a single cert family so "latest" is uncontested, and no universal claims. faith 9 — same tier as cases 1/14/52.
 
 ---
 
@@ -1231,12 +1237,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named RAEFSAN, answers "your property (byggnadsid 01-80-HAELSAN10-2)" with HAELSAN's attested DH figures (946 000 = 832 480+113 520). Coherent record, wrong owner. entity 0.
 
 ---
 
@@ -1279,12 +1285,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[6]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Right entity, rich detail, headline attested (155/E, Atemp 6 798). faith 6: listed carriers (946 000+12 000=958 000) fall ≈95 000 kWh short of 155x6 798≈1 053 690, and the stated reference 110 lies outside its own 116–142 range while index 1.11 implies a ≈140 reference. pass 1 stands on the correct headline figures.
 
 ---
 
@@ -1344,12 +1350,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[4]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[1]`
+- notes: EPC figures match FILOSOFEN2-2, but: the breakdown 59 545+66 600+28 436=154 581 ≠ stated total 158 134; "built 2020" and "You already have FTX" are asserted while the answer's own note lists ventilation and declaration year as unconfirmed; the "42 % hot water" share is computed from the broken total. faith 4, calib 3. pass 1: entity-correct and the advice itself is sound.
 
 ---
 
@@ -1403,12 +1409,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[1]`
+- notes: Consumption split (62/23/15) and figures (79/D, 118 576 DH, ≈28 000 elec) match FORSKNINGEN across blocks. faith 5 / calib 3: asserts "venttyp FTX = Ja", "currently none" for PV, and the electricity figure — all inside its own unconfirmed list; case 55 even reports "ventgrupp godkänd: Nej" for this building, so the FTX claim is doubly doubtful.
 
 ---
 
@@ -1462,12 +1468,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[7]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: no evidence retrieved, none invented — correct behaviour, and the advice is sound. faith 7 for a concrete error: it calls epc_egenatemp "the total heated volume" — Atemp is heated floor AREA — plus raw schema names (epc_egienergiklass, epc_egenatemp) leaked into user-facing prose. calib 6 for presenting field jargon as if the user knew it.
 
 ---
 
@@ -1501,12 +1507,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: definitional question. Accurate on Swedish specifics (accredited inspector, ten-year validity, A–G scale, recommended-measures list). calib 6 for the irrelevant building-data note and one schema-name leak.
 
 ---
 
@@ -1541,12 +1547,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[2]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[1]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap (named HAELSAN, answers RAEFSAN) escalated by invented personal detail: "your detached house in Motala". Coherent RAEFSAN figures do not rescue a confidently personalised misattribution. faith 2, calib 1.
 
 ---
 
@@ -1602,12 +1608,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic EV question. Accurate and complete (static vs dynamic balancing, priority schemes, BMS integration). calib 6 only for the irrelevant trailing building-data note.
 
 ---
 
@@ -1635,12 +1641,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: "ElDirekt" matches this building's record in cases 42/45/59. entity 9: nothing foreign, but no ID restated and no figures offered. calib 7: flat "No district heating, gas, oil, biomass or heat-pump systems" universal.
 
 ---
 
@@ -1675,12 +1681,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: HAELSAN 155-family quoted consistently (155/E, primary 110, DH) and honestly version-stamped "(2010 version)". faith 8 not 9 for exactly one reason: it still calls the 2010 certificate "latest" while case 48 attests a 2019 HAELSAN cert (v2.6, approved 2019-06-02) — the currency claim is contested within the form.
 
 ---
 
@@ -1717,12 +1723,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. 22 kW is a defensible conventional boundary and the DC 50–350 kW range is right. faith 8: "industry consensus" overstates, and the "on AC still up to ~43 kW" aside muddies its own definition. calib 6.
 
 ---
 
@@ -1758,12 +1764,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[6]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[7]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Headline correct for LEOPARDEN (190/E; Flis wood-chip matches case 48), but "total ≈158 000 kWh" equals FILOSOFEN2-2's 158 134 — a foreign total presented as this building's. faith 6, entity 7 for that one borrowed figure. pass 1 on the strength of the asked-for headline.
 
 ---
 
@@ -1791,12 +1797,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named RAEFSAN, answers "your property (byggnadsid 17-81-BONDEN9-1)". The substance (A2W HP, no DH) happens to be true of both buildings, so the user would never notice — which is precisely why entity 0 and pass 0: the pipeline got the right answer by coincidence, not by grounding.
 
 ---
 
@@ -1848,12 +1854,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. The 5 %-per-degree rule is the standard planning figure and the SEK example is framed as illustrative; temperature ranges are sensible. calib 6 for the irrelevant trailing note.
 
 ---
 
@@ -1904,12 +1910,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[4]`
+- overall_pass (0 or 1): `[1]`
+- notes: G-class figures match the record (108 vs reference 55, 23 445 elec heating, 115 DHW). faith 5: asserts "ventilation ... not approved for heat recovery (no FTX)" against its own unconfirmed list, the "95 %" split is really ≈100 %, and "0.5 L/m²·yr" garbles a kWh figure (case 45 has it as kWh). calib 4: one disclaimed assertion, otherwise framed as recommendations.
 
 ---
 
@@ -1958,12 +1964,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. Clean, accurate nätavtal vs elhandelsavtal split including pricing structures and switching rules. calib 6 for the boilerplate note only.
 
 ---
 
@@ -2019,12 +2025,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: no evidence. Best calibration in the form: opens "Even without specific EPC data", stays generic, invents nothing, and the trailing note is for once consistent with the answer's own framing.
 
 ---
 
@@ -2074,12 +2080,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[3]`
+- overall_pass (0 or 1): `[1]`
+- notes: Same building and figures as case 42, coherent (108/55, 23 445, 0.5 kWh/m² tap water). faith 5 / calib 3: asserts both "no heat recovery" and "no on-site renewables installed" while ventilation sits on its own unconfirmed list (two disclaimed assertions vs case 42's one). Recommendations themselves fit a G-class ElDirekt building. pass 1.
 
 ---
 
@@ -2117,12 +2123,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[8]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[5]`
+- overall_pass (0 or 1): `[0]`
+- notes: Entity blank: generic. Conflates the building's EPC class with appliance energy labels — the question is about appliances — and leads with the A+++...A+ tiers retired in 2021; "30–50 % of total energy use" asserted without support. rel 8: answers through the wrong lens. pass 0 (changed on review): unlike case 11, where the obsolete label is one item among nine sound ones, here the conflation is the answer's spine — it would actively mislead a shopper.
 
 ---
 
@@ -2160,12 +2166,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: FORSKNINGEN answered as itself: 79/D, totals cohere (198 495/91 ≈ 2 181 m² ≈ the 2 184 attested in case 55), DH 118 576 attested. faith 8 not 9 for one reason: the "under the previous scheme it was classified as C" claim appears nowhere else in the form and cannot be corroborated.
 
 ---
 
@@ -2203,12 +2209,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[7]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[5]`
+- calibration (0–10): `[5]`
+- overall_pass (0 or 1): `[0]`
+- notes: Accurate neutral listing (LEOPARDEN: Flis, EPC 2.0 2012-02-03, DH 0; HAELSAN: DH 819 500, v2.6 2019-06-02 — all attested), the named building's correct data present, then punts with "let me know which Building ID". Scored identically to case 9, which has the same shape: faith 7, rel 9 (topic addressed for both candidates), entity 5 (labeled, asks, never attributes), calib 5 (asks despite the system's resolution). pass 0.
 
 ---
 
@@ -2268,12 +2274,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. Strong framework (audit → no-regret → maintenance cycles → roadmap → subsidies) with plausible Swedish program names. calib 6 for the boilerplate note.
 
 ---
 
@@ -2301,12 +2307,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: HAELSAN answered as HAELSAN: DH 819 500/161 300 matches the 2019-cert family (case 48's approval date corroborates). faith 9: unlike its sibling heating blocks it makes no "no other fuel types" universal and time-stamps the figures ("In 2019") instead of claiming currency — nothing overclaimed at all.
 
 ---
 
@@ -2339,12 +2345,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[3]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named BONDEN, answers RAEFSAN (75/C, v3.0 2024) as "your building". Coherent record, false attribution. entity 0, calib 2.
 
 ---
 
@@ -2377,12 +2383,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: Exactly the asked figures for the named BONDEN (109/D, 2019 cert, A2W HP) and nothing more — the most cleanly scoped building answer in the form; brevity here is a virtue, not an omission.
 
 ---
 
@@ -2431,12 +2437,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: definitional. Textbook-accurate (sensors → controllers → actuators → protocols → HMI, with BACnet/Modbus/KNX correctly placed). calib 6 for the trailing note.
 
 ---
 
@@ -2474,12 +2480,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[7]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: All figures match RAEFSAN and reconcile (171x42≈7 171). faith 7: calls 75 "specific energy use" and 42 "specific delivered energy" — 75 is the primary-energy figure (energiprestanda), so one label is wrong although both numbers are right.
 
 ---
 
@@ -2537,12 +2543,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[4]`
+- overall_pass (0 or 1): `[1]`
+- notes: Figures match FORSKNINGEN (79/D, 2 184 m², 45 056 DHW, 28 048 elec; breakdown nearly sums: 197 608 vs 198 495), but space-heating DH is given as 124 504 where cases 23/31/47 attest 118 576, and "≈75 kWh/m² target for new school buildings" is an unsupported external benchmark. The "ventgrupp godkänd: Nej" citation also contradicts the unconfirmed-ventilation note. faith 5, calib 4.
 
 ---
 
@@ -2575,12 +2581,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: DH Stockholm 59 545/66 600 matches the FILOSOFEN2-2 family (cases 30/57). entity 9: no ID restated. calib 7 for the flat "No other heating sources" universal.
 
 ---
 
@@ -2616,12 +2622,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: FILOSOFEN2-2 answered as itself; 53 primary/B vs 59 delivered correctly distinguished, and both totals imply the same ≈2 680 m² area (158 134/59 and 141 973/53) — the most internally coherent block in the form, with no universals and no contested currency claims. faith 9 to match that.
 
 ---
 
@@ -2683,12 +2689,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. Useful map of real programs, but the ROT guidance is wrong: ROT covers labour on a member's own dwelling and a BRF cannot claim or pass it on for association envelope work; program percentages stated more precisely than supportable. calib 7: repeatedly tells the reader rules change and to verify with Skatteverket/Boverket — that hedging is why it still passes.
 
 ---
 
@@ -2716,12 +2722,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: ElDirekt with 23 445 + 115 kWh matches cases 36/42/45. "100 % ... electric resistance heaters" is flat but consistent with the record. entity 9: no ID restated.
 
 ---
 
@@ -2759,12 +2765,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[10]`
+- calibration (0–10): `[8]`
+- overall_pass (0 or 1): `[1]`
+- notes: Fullest BONDEN block and internally tight (109x280≈30 552 primary, 82x280≈22 914). faith 8 not 9: "Rådmansgatan 31, Kristinehamn" — the same street address appears under three different buildings in three cities across the form, so the address looks copied rather than retrieved.
 
 ---
 
@@ -2813,12 +2819,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[9]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[6]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. Accurate and more detailed than case 43 on the same question (capacity fees, Nord Pool, why both contracts are needed). calib 6 for the boilerplate note.
 
 ---
 
@@ -2873,12 +2879,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
 - entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: Entity blank: generic. Fair advantage list with honest scope-limiting ("may not fully replace mechanical in all climates") and the hybrid-ventilation caveat; nothing invented.
 
 ---
 
@@ -2916,12 +2922,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[5]`
+- answer_relevance (0–10): `[9]`
+- entity_consistency (0–10): `[4]`
+- calibration (0–10): `[4]`
+- overall_pass (0 or 1): `[0]`
+- notes: Dumps LEOPARDEN and HAELSAN ("Tulegatan 5A" duplicated across cities again) with no designation and no ask. entity 4 not 3: unlike cases 2/12/13/20 it never falsely claims both buildings are the user's — but unlike 9/48 it doesn't even flag the ambiguity, hence calib 4, the lowest of the dump blocks. faith 5 for the duplicated address on otherwise-attested figures. pass 0: the user cannot tell which figures are theirs.
 
 ---
 
@@ -2956,12 +2962,12 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[8]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[9]`
+- calibration (0–10): `[7]`
+- overall_pass (0 or 1): `[1]`
+- notes: DH 53 777/58 800 with class B/60 reconciles with case 17's totals for FILOSOFEN2-4 (112 577 + electricity ≈ 149 478). entity 9: no ID restated. calib 7 for the flat "No other heating sources" line.
 
 ---
 
@@ -2997,11 +3003,11 @@ Note: Some building details may be outdated because I could not confirm how rece
 
 ### Your scores
 
-- faithfulness (0–10): `[ ]`
-- answer_relevance (0–10): `[ ]`
-- entity_consistency (0–10): `[ ]`
-- calibration (0–10): `[ ]`
-- overall_pass (0 or 1): `[ ]`
-- notes:
+- faithfulness (0–10): `[2]`
+- answer_relevance (0–10): `[10]`
+- entity_consistency (0–10): `[0]`
+- calibration (0–10): `[2]`
+- overall_pass (0 or 1): `[0]`
+- notes: Full swap: named BONDEN, answers RAEFSAN in full detail, and adds "latest declaration filed in 2023" where the same record is dated approved 2024-09-19 in five other blocks — a fabricated date on top of the misattribution. faith 2 for that extra invention.
 
 ---

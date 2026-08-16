@@ -302,6 +302,42 @@ def test_form_to_labels_round_trip_keeps_the_two_arms_apart(tmp_path):
     assert ec["n"] == 2 and ec["binarised_at_floor"]["raw_agreement"] == 1.0
 
 
+def test_a_blank_axis_keeps_the_row_instead_of_silently_dropping_it(tmp_path):
+    """15 of the 65 audit rows have no evidence and no identified building, so
+    entity_consistency has nothing to score against. If a blank axis invalidated the
+    whole block, leaving it empty would delete the row from the audit without a word."""
+    wl = _form_worklist(tmp_path)
+    form = tmp_path / "form.md"
+    cmd_form(argparse.Namespace(worklist=wl, form=form, labels=tmp_path / "lb.csv"))
+    filled = (form.read_text(encoding="utf-8")
+              .replace("overall_pass (0 or 1): `[ ]`", "overall_pass (0 or 1): `[1]`")
+              .replace("faithfulness (0–10): `[ ]`", "faithfulness (0–10): `[9]`")
+              .replace("answer_relevance (0–10): `[ ]`", "answer_relevance (0–10): `[9]`")
+              .replace("calibration (0–10): `[ ]`", "calibration (0–10): `[9]`"))
+    form.write_text(filled, encoding="utf-8")     # entity_consistency left blank
+
+    labels = tmp_path / "lb.csv"
+    cmd_ingest_md(argparse.Namespace(form=form, labels=labels, worklist=wl,
+                                     annotator_id="nico"))
+    with labels.open(encoding="utf-8") as f:
+        got = list(csv.DictReader(f))
+    assert len(got) == 2                                   # rows kept
+    assert all(r["entity_consistency"] == "" for r in got)  # blank, not 0
+    assert all(r["calibration"] == "9" for r in got)
+
+    out = tmp_path / "k.json"
+    cmd_kappa(argparse.Namespace(worklist=wl, labels=labels, out=out,
+                                 n_resamples=20, seed=1))
+    axes = json.loads(out.read_text(encoding="utf-8"))["per_axis_kappa_weighted"]
+    assert axes["entity_consistency"]["n"] == 0            # dropped from its pool...
+    assert axes["calibration"]["n"] == 2                   # ...the others still count
+
+
+def test_a_block_with_no_axis_scored_is_still_an_error(tmp_path):
+    from scripts.spotcheck_closed_loop import _validate_label
+    assert _validate_label({"overall_pass": "1"}, V2_AXES) == "no axis scored"
+
+
 def test_binarised_axis_stats_reported_for_the_v2_fallback_gate(tmp_path):
     """V2-fb: at a skewed marginal weighted κ collapses, so the gate falls back to AC1
     on fired/did-not-fire at the 4.0 floor. Both must be present to choose between them."""
