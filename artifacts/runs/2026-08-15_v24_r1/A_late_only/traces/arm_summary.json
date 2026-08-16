@@ -1,0 +1,24 @@
+{
+  "timestamp_utc": "2026-08-15T20:31:57.100734+00:00",
+  "trace_schema_version": 4,
+  "run_id": "v24_r1",
+  "arm": "A_late_only",
+  "n_cases": 88,
+  "n_pass": 52,
+  "case_pass_rate": 0.5909090909090909,
+  "per_stratum_pass_rate": {
+    "generic": 0.8421052631578947,
+    "building_specific": 0.5294117647058824,
+    "combined": 0.0,
+    "clarification": 0.4
+  },
+  "mean_attempts": 1.0795454545454546,
+  "median_attempts": 1,
+  "early_block_exhausted_count": 0,
+  "terminated_without_pass_count": 0,
+  "terminated_router_disallowed_count": 0,
+  "cost_exceeded_count": 14,
+  "total_tokens": 629576,
+  "total_completions": 148,
+  "total_wall_time_s": 1676.2942651409248
+}

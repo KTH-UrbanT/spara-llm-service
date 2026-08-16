@@ -13,8 +13,21 @@ import pytest
 from scripts.spotcheck_closed_loop import (
     _parse_form, _is_blank_label, _validate_label, cmd_ingest_md,
     _ac1, _raw_agreement, _was_judged, cmd_audit_ungrounded, cmd_kappa, cmd_sample,
-    AUDIT_FIELDS, LABEL_FIELDS, WORKLIST_FIELDS,
+    AUDIT_FIELDS, _label_fields, _worklist_fields,
 )
+
+# The v1 rubric this file pins. v25 made the axis list data-derived so both vintages
+# stay readable; these tests are the regression guard for the v1 side.
+V1_AXES = ["faithfulness", "answer_relevance", "question_coverage", "calibration"]
+LABEL_FIELDS = _label_fields(V1_AXES)
+WORKLIST_FIELDS = _worklist_fields(V1_AXES)
+
+
+def _sample_ns(**kw):
+    """cmd_sample Namespace with the v25 sampling options defaulted off."""
+    return argparse.Namespace(
+        source=None, include_rows=None, pad_null=0, pad_scored=0,
+        null_axis="entity_consistency", all_judged=False, **kw)
 
 # One filled case + one fully-blank case. Uses the real form's punctuation:
 # em dash (—) in the heading, en dash (–) in the "(0–10)" labels, backtick-
@@ -87,27 +100,27 @@ def test_parse_extracts_all_five_scores_and_notes():
 
 def test_blank_block_detected():
     blocks = _parse_form(MINI_FORM)
-    assert _is_blank_label(blocks[0]) is False
-    assert _is_blank_label(blocks[1]) is True
+    assert _is_blank_label(blocks[0], V1_AXES) is False
+    assert _is_blank_label(blocks[1], V1_AXES) is True
 
 
 def test_validate_accepts_in_range():
     assert _validate_label({"faithfulness": "10", "answer_relevance": "9",
                             "question_coverage": "8", "calibration": "7",
-                            "overall_pass": "1"}) is None
+                            "overall_pass": "1"}, V1_AXES) is None
 
 
 def test_validate_rejects_out_of_range_axis():
     err = _validate_label({"faithfulness": "12", "answer_relevance": "9",
                            "question_coverage": "8", "calibration": "7",
-                           "overall_pass": "1"})
+                           "overall_pass": "1"}, V1_AXES)
     assert err is not None and "faithfulness" in err
 
 
 def test_validate_rejects_bad_overall_pass():
     err = _validate_label({"faithfulness": "10", "answer_relevance": "9",
                            "question_coverage": "8", "calibration": "7",
-                           "overall_pass": "2"})
+                           "overall_pass": "2"}, V1_AXES)
     assert err is not None and "overall_pass" in err
 
 
@@ -257,8 +270,9 @@ def test_all_judged_takes_the_whole_judged_pool(tmp_path):
             _row("D", {"_fail_open": True, "_error": "boom"})]
     run, ds = _run_dir(tmp_path, rows)
     wl = tmp_path / "wl.csv"
-    cmd_sample(argparse.Namespace(run_dir=run, arm="A_open", dataset=ds, worklist=wl,
-                                  seed=1, all_judged=True))
+    ns = _sample_ns(run_dir=run, arm="A_open", dataset=ds, worklist=wl, seed=1)
+    ns.all_judged = True
+    cmd_sample(ns)
     with wl.open(encoding="utf-8") as f:
         got = list(csv.DictReader(f))
     assert sorted(r["case_id"] for r in got) == ["A", "B"]

@@ -1,0 +1,31 @@
+{
+  "run_id": "v24_r3",
+  "arm": "A_full",
+  "code_sha256": "5c8eafde26fb988de8e294c85893d12775b595e3024484f037c58fded362a0f2",
+  "code_n_files": 92,
+  "git_sha": "",
+  "git_dirty": null,
+  "dataset": "artifacts/datasets/filtered_cases.jsonl",
+  "dataset_sha256": "33782d56ce5e312f2e4836ab3391fd313734963feeb508d92916da1423a9b01f",
+  "env": {
+    "RUN_ARM": "A_full",
+    "EARLY_CHECKPOINT_ENABLED": "true",
+    "LATE_CHECKPOINT_ENABLED": "true",
+    "EVALUATOR_MODE": "off",
+    "CLOSED_LOOP_EARLY_VOTE_K": "3",
+    "ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
+    "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v2.txt",
+    "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": "o4-mini"
+  },
+  "judge_sampling": {
+    "deployment": "o4-mini",
+    "temperature_requested": null,
+    "temperature_unsupported": true,
+    "note": "derived from in_loop_evaluator.is_o_family; see _call"
+  },
+  "constants": {
+    "WALL_BUDGET_S": 300,
+    "MAX_RETRIES": 2,
+    "COST_CAP_MULT": 5.0
+  }
+}
