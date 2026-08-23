@@ -16,18 +16,19 @@ from __future__ import annotations
 import argparse, json, os, sys, time
 from pathlib import Path
 
-_PROMPT_ENV = {"ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v2.txt",
-               # v24 C4: entity_consistency replaces the degenerate question_coverage axis.
-               # Inert in A_open, which fires no checkpoint; the early prompt is unchanged.
-               "ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v2.txt"}
-# CLOSED_LOOP_EARLY_VOTE_K is pinned per arm rather than left to the ambient environment:
-# the early checkpoint exists only in A_full, and an unset variable would let a value leak
-# in from the shell and go unrecorded. k=3 there, k=1 (a no-op) everywhere else.
-_ARM_ENV = {
-    "A_open":      {"RUN_ARM":"A_open",      "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"false","EVALUATOR_MODE":"off","CLOSED_LOOP_EARLY_VOTE_K":"1", **_PROMPT_ENV},
-    "A_late_only": {"RUN_ARM":"A_late_only", "EARLY_CHECKPOINT_ENABLED":"false","LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off","CLOSED_LOOP_EARLY_VOTE_K":"1", **_PROMPT_ENV},
-    "A_full":      {"RUN_ARM":"A_full",      "EARLY_CHECKPOINT_ENABLED":"true", "LATE_CHECKPOINT_ENABLED":"true", "EVALUATOR_MODE":"off","CLOSED_LOOP_EARLY_VOTE_K":"3", **_PROMPT_ENV},
-}
+# One switch per arm. EVALUATOR_MODE is the only activation variable the graph reads:
+#   off  -> no checkpoint      (A_open)
+#   late -> answer quality     (A_late_only)
+#   full -> early + answer     (A_full)
+# This reproduces the old RUN_ARM + EARLY_CHECKPOINT_ENABLED + LATE_CHECKPOINT_ENABLED
+# truth table exactly, with no reachable state where the three could disagree.
+# The per-arm knobs that used to live here — CLOSED_LOOP_EARLY_VOTE_K and the two
+# rubric versions — are now module constants in in_loop_evaluator (EARLY_VOTE_K,
+# ROUTE_PLAUSIBILITY_PROMPT, ANSWER_QUALITY_PROMPT), so they can no
+# longer leak in from the ambient shell and go unrecorded. They are still written to
+# run_record.json, under `constants` instead of `env`.
+_ARM_ENV = {"A_open": "off", "A_late_only": "late", "A_full": "full"}
+
 # Reported as covariates, NOT vetoes: a budget that can only fire in the treatment
 # arms (load_cost_cap returns None without --cache-from) is a confound, not a budget.
 # See plan-eil-v20-fixes.md Fix 2.
@@ -57,8 +58,7 @@ _CACHED_IDENTITY_KEY = "building_identity_check"
 
 
 def setup_environment(arm: str, run_id: str) -> None:
-    for k, v in _ARM_ENV[arm].items():
-        os.environ[k] = v
+    os.environ["EVALUATOR_MODE"] = _ARM_ENV[arm]
     os.environ["EXPERIMENT_RUN_ID"] = run_id
     os.environ["EXPERIMENT_ARM"] = arm
 
@@ -134,7 +134,8 @@ def write_run_record(run_dir: Path, arm: str, run_id: str, dataset: str) -> None
     between-replicate change visible to anyone reading the run directory.
     """
     import hashlib, subprocess
-    from src.evaluation.closed_loop.in_loop_evaluator import is_o_family
+    from src.evaluation.closed_loop.in_loop_evaluator import (
+        is_o_family, EARLY_VOTE_K, ROUTE_PLAUSIBILITY_PROMPT, ANSWER_QUALITY_PROMPT)
     code_sha, n_files = code_fingerprint()
     try:
         # Best-effort only, and empty inside the container: llm-service is a git submodule,
@@ -170,13 +171,15 @@ def write_run_record(run_dir: Path, arm: str, run_id: str, dataset: str) -> None
         "dataset": str(dataset),
         "dataset_sha256": hashlib.sha256(ds.read_bytes()).hexdigest() if ds.exists() else None,
         "env": {k: os.environ.get(k) for k in
-                ("RUN_ARM", "EARLY_CHECKPOINT_ENABLED", "LATE_CHECKPOINT_ENABLED",
-                 "EVALUATOR_MODE", "CLOSED_LOOP_EARLY_VOTE_K",
-                 "ROUTE_PLAUSIBILITY_PROMPT_VERSION", "ANSWER_QUALITY_PROMPT_VERSION",
-                 "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")},
+                ("EVALUATOR_MODE", "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")},
         "judge_sampling": judge_sampling,
+        # The three former env vars are recorded here, not dropped: a new record must carry
+        # at least as much provenance as the frozen v21/v22/v24/v25 records it is compared to.
         "constants": {"WALL_BUDGET_S": WALL_BUDGET_S, "MAX_RETRIES": MAX_RETRIES,
-                      "COST_CAP_MULT": COST_CAP_MULT},
+                      "COST_CAP_MULT": COST_CAP_MULT,
+                      "CLOSED_LOOP_EARLY_VOTE_K": EARLY_VOTE_K,
+                      "ROUTE_PLAUSIBILITY_PROMPT_VERSION": ROUTE_PLAUSIBILITY_PROMPT,
+                      "ANSWER_QUALITY_PROMPT_VERSION": ANSWER_QUALITY_PROMPT},
     }
     p = run_dir / arm / "run_record.json"
     p.parent.mkdir(parents=True, exist_ok=True)

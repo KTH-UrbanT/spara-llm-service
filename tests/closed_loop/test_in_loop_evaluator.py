@@ -356,16 +356,20 @@ def test_a_strictly_lower_answer_relevance_still_reaches_the_router():
                             identified_building=_IDENT).stage_attribution_rule == "router"
 
 
-def test_arms_are_wired_to_a_rubric_that_has_the_new_axis():
-    """C4. A typo in the filename is a FileNotFoundError 88 times per arm at run time; a
-    stale filename is a silently degenerate axis for three replicates."""
-    from pathlib import Path
-    from scripts.run_arm_closed_loop import _ARM_ENV
-    import src.evaluation.closed_loop.in_loop_evaluator as m
-    for arm, env in _ARM_ENV.items():
-        p = Path(m.__file__).parent / "prompts" / env["ANSWER_QUALITY_PROMPT_VERSION"]
-        assert p.exists(), f"{arm} points at a missing rubric: {p.name}"
-        assert "entity_consistency" in p.read_text(), f"{arm} still runs the retired axis"
+def test_a_bare_evaluator_loads_the_v2_rubric_regardless_of_the_environment():
+    """C4. The v1 rubric's question_coverage axis was degenerate. It used to be reachable by
+    default — a bare InLoopEvaluator() read ANSWER_QUALITY_PROMPT_VERSION and fell back to
+    answer_quality_v1.txt — and a silently wrong instrument for three replicates is worse
+    than a crash. The rubric is now a module constant and nothing in the environment moves it."""
+    from src.evaluation.closed_loop.in_loop_evaluator import (
+        ANSWER_QUALITY_PROMPT, ROUTE_PLAUSIBILITY_PROMPT)
+    assert ANSWER_QUALITY_PROMPT == "answer_quality_v2.txt"
+    assert ROUTE_PLAUSIBILITY_PROMPT == "route_plausibility_v2.txt"
+    with patch.dict(os.environ, {"ANSWER_QUALITY_PROMPT_VERSION": "answer_quality_v1.txt",
+                                 "ROUTE_PLAUSIBILITY_PROMPT_VERSION": "route_plausibility_v1.txt"}):
+        ev = _ev("")
+    assert "entity_consistency" in ev._ap, "the answer-quality judge is running the retired axis"
+    assert ev._rp, "the route-plausibility rubric failed to load"
 
 
 def test_v1_question_coverage_keeps_its_stage():

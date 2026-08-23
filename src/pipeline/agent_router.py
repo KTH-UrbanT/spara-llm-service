@@ -8,7 +8,19 @@ from src.agents.cluster_agent import ClusterAgent
 from src.agents.generic_agent import GenericAgent
 from src.agents.aggregator_agent import AggregatorAgent  # imported if you use it elsewhere
 from src.agents.conversationalist_agent import ConversationalAgent
-from src.services.draft_report_service import generate_draft_report_response
+try:
+    from src.services.draft_report_service import generate_draft_report_response
+except ImportError:
+    # draft_report_service is not on this branch: it lives on the unmerged energy-reports
+    # work (ebf1ac9) and additionally needs src/pipeline/response_language.py, also absent.
+    # The import above landed here in af07ed2 (2026-05-14) without either module, which made
+    # `python generation.py` die at boot — one unreachable route taking down the whole
+    # service. Degrade that single route instead. Delete this fallback when the feature merges.
+    def generate_draft_report_response(thread_id, messages, metadata):
+        return {"role": "assistant",
+                "content": "Draft energy reports are not available in this build.",
+                "classification": "draft_energy_report",
+                "agent_answered": "draft_energy_report"}
 from src.services.expert_handoff_email import send_expert_handoff_email
 from src.pipeline.safety_analysis import build_out_of_scope_response, detect_out_of_scope
 

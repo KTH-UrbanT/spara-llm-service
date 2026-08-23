@@ -1,6 +1,6 @@
-# Primary labelling sheet — `2026-05-14_v2`
+# Primary labelling sheet - `2026-05-14_v2`
 
-**40 outputs, shuffled (seed=42, same order `label_outputs.py` would show).** Arm identity is hidden — you only see the `qid` and the response. Cross-reference [decision_aid.md](decision_aid.md) for gold facts + cache anchors + watchlists per qid.
+**40 outputs, shuffled (seed=42, same order `label_outputs.py` would show).** Arm identity is hidden - you only see the `qid` and the response. Cross-reference [decision_aid.md](decision_aid.md) for gold facts + cache anchors + watchlists per qid.
 
 ## How to fill this in
 
@@ -26,7 +26,7 @@ Fill values after the `: `. The parser is strict on this format.
 | `TAGS` | comma-separated | one or more of: `unsupported_claim`, `numeric_mismatch`, `constraint_violation`, `partial_answer`, `overconfident_uncertainty`, `irrelevant_extras`. Leave blank if none. |
 | `NOTES` | free text | one line |
 
-**VS Code tip:** open this file, then use **multi-cursor** (`Cmd+Opt+↓` to add cursors below) on the empty space after `G:` across all sections — type all 40 G values in one pass, then move to C, etc. Should take you ~15-20 min total instead of ~90 min in the terminal.
+**VS Code tip:** open this file, then use **multi-cursor** (`Cmd+Opt+↓` to add cursors below) on the empty space after `G:` across all sections - type all 40 G values in one pass, then move to C, etc. Should take you ~15-20 min total instead of ~90 min in the terminal.
 
 **Blinding note:** the arm (A1/A2) is intentionally hidden. Score each output on its own merits without trying to guess which arm produced it.
 
@@ -168,7 +168,7 @@ NOTES: Correctly states that the EPC data does not contain construction material
 **Gold must_avoid:**
   - silently picking one of several matches and reporting its Atemp as the answer
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -408,7 +408,7 @@ NOTES: Correctly extracts the building type “Gavel” directly from the cache 
 
 **Response:**
 
-> According to the building’s Energy Performance Certificate (EPC), the first year of occupancy (epc_egiforstaarmanad) for the property at Förridargränd 5 is recorded as 1901. By January 2026 the building will therefore be approximately 125 years old—well in excess of 75 years.
+> According to the building’s Energy Performance Certificate (EPC), the first year of occupancy (epc_egiforstaarmanad) for the property at Förridargränd 5 is recorded as 1901. By January 2026 the building will therefore be approximately 125 years old - well in excess of 75 years.
 
 **Scores:**
 ```
@@ -629,7 +629,7 @@ NOTES: Correctly uses the provided construction year (1957) to compute age in 20
   - fabricated heated area for an unspecified building
   - picking an arbitrary building
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -662,7 +662,7 @@ NOTES: Correctly requests clarification instead of fabricating or guessing a hea
   - treating rent as an EPC field
   - guessing a Stockholm-average rent and applying it to this building
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -735,7 +735,7 @@ NOTES: Correctly reports the heated area as 95 m² directly from the EPC cache d
   - fabricated heated area number
   - treating the address as real
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -1000,7 +1000,7 @@ NOTES: Correctly reports Atemp as 152 m² and correctly concludes that it is not
 **Gold must_avoid:**
   - silently picking one of several matches and reporting its Atemp as the answer
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -1072,7 +1072,7 @@ NOTES: Answer correctly uses Atemp = 152 m² from gold data and correctly conclu
   - fabricated heated area number
   - treating the address as real
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -1115,7 +1115,7 @@ NOTES: Correctly identifies absence of building data and avoids fabricating any 
 > 
 > • EPC Atemp (heated floor area): 132 m²
 > 
-> — this is the total heated area as defined in the certificate.
+> - this is the total heated area as defined in the certificate.
 
 **Scores:**
 ```
@@ -1361,7 +1361,7 @@ NOTES: very detailed
   - fabricated heated area for an unspecified building
   - picking an arbitrary building
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 
@@ -1394,7 +1394,7 @@ NOTES: correct question, concise.
   - treating rent as an EPC field
   - guessing a Stockholm-average rent and applying it to this building
 
-**Cache:** *(empty — edge case)*
+**Cache:** *(empty - edge case)*
 
 **Response:**
 

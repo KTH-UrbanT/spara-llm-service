@@ -12,7 +12,7 @@ def env_vars():
         "CONVERSATIONAL_MODEL_DEPLOYMENT_NAME": "gpt-4o-mini",
         "BUILDING_MODEL_DEPLOYMENT_NAME": "gpt-4o-mini",
         "SPECIALIZED_SQL_DEPLOYMENT_NAME": "gpt-4o-mini",
-        "EVALUATOR_MODE": "off", "RUN_ARM": "",
+        "EVALUATOR_MODE": "off",
     }): yield
 
 def test_generic_sql_emits_fields(monkeypatch):

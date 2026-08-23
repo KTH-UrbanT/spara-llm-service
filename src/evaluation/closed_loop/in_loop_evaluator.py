@@ -19,6 +19,20 @@ TAU_HINT_MIN_CHARS = 20  # minimum hint length for "implausible" to fire
 TAU_SEMANTIC = 7.0       # late checkpoint: composite pass threshold
 TAU_AXIS_FLOOR = 4.0     # late checkpoint: any axis below this forces a fail
 
+# k=3 self-consistency on the early judge: a false fire destroys a case permanently while
+# a true fire only probably gains one, so the asymmetry is worth 3x the calls (v21 §2.1).
+# A module constant rather than CLOSED_LOOP_EARLY_VOTE_K: the early checkpoint runs only
+# under EVALUATOR_MODE=full, and every frozen run_record.json agrees A_full always used 3.
+EARLY_VOTE_K = 3
+
+# Rubric files, pinned as module constants rather than read from the environment.
+# The v1 files stay on disk so the frozen pre-v24 runs remain verifiable, but nothing
+# loads them any more: v1's `question_coverage` axis was degenerate (see the _AXIS_ORDER
+# note below) and an env-driven default was how a bare `InLoopEvaluator()` could silently
+# load v1 and invalidate a new run against the v24/v25 evidence.
+ROUTE_PLAUSIBILITY_PROMPT = "route_plausibility_v2.txt"
+ANSWER_QUALITY_PROMPT = "answer_quality_v2.txt"
+
 # On o3/o4 deployments reasoning tokens count against this budget, so a value sized
 # for the JSON alone returns an empty completion — which the fail-open then converts
 # into a silent pass. Sized for reasoning + the verdict.
@@ -216,8 +230,8 @@ class InLoopEvaluator:
         self._api_version = api_version
         self._dep = os.environ["OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME"]
         d = Path(__file__).parent / "prompts"
-        self._rp = (d / os.environ.get("ROUTE_PLAUSIBILITY_PROMPT_VERSION", "route_plausibility_v1.txt")).read_text()
-        self._ap = (d / os.environ.get("ANSWER_QUALITY_PROMPT_VERSION", "answer_quality_v1.txt")).read_text()
+        self._rp = (d / ROUTE_PLAUSIBILITY_PROMPT).read_text()
+        self._ap = (d / ANSWER_QUALITY_PROMPT).read_text()
         self.last_usage: dict = {"total_tokens": 0, "completion_tokens": 0}
 
     def route_plausible(

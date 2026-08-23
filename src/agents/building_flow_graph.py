@@ -16,10 +16,8 @@ from src.agents.generic_sql_layer import SQL_Mapper_Layer
 from src.agents.building_response_prompt import merge_identifier_metadata
 from src.database.vector_client import VectorClient, VectorClientConfig
 from src.agents.openai_agent import OpenAIResponseAgent
-from src.agents.evaluator_agent import EvaluatorAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
 from src.database.hammarby_data import query_address
-from src.evaluation import append_evaluation_trace, build_evaluation_trace, truncate_for_trace
 from src.pipeline.safety_analysis import (
     apply_response_safety_notes,
     assess_building_identity,
@@ -57,10 +55,6 @@ print("[init] VectorClient initialized ✓", flush=True)
 # LLM summarizer (Azure OpenAI)
 llm_summarizer = OpenAIResponseAgent()
 print("[init] OpenAIResponseAgent initialized ✓", flush=True)
-
-# LLM evaluator (Azure OpenAI)
-evaluator_agent = EvaluatorAgent()
-print("[init] EvaluatorAgent initialized ✓", flush=True)
 
 # Load list of addresses available in specialized SQL
 _address_list_raw = query_address()  # may be list[str] or list[dict] with an address field
@@ -556,236 +550,46 @@ def _canonicalize_intent_tokens(parsed_intent) -> Tuple[str, List[str]]:
 GraphState = Annotated[Dict[str, Any], operator.or_]
 
 # Evaluator-related state keys (plain dict keys, no TypedDict schema needed):
-# - eval_verdict: Optional[str] -> "pass" | "fail"
 # - eval_feedback: Optional[str] -> corrective feedback for summarizer retries
-# - eval_retry_count: int -> number of completed retry loops (0 = first attempt,
-#   1 = after one retry). Counts summarizer re-runs that followed a failed
-#   evaluation — NOT the number of evaluator failures themselves.
-# - eval_scores: Optional[dict] -> score bundle + gating metadata
 
 
-def _ensure_evaluator_state_defaults(state: GraphState) -> Dict[str, Any]:
-    """Return a dict of evaluator state keys that are missing or None in `state`.
-
-    LangGraph merges the returned dict into state using `operator.or_`, which means
-    any key we return will OVERWRITE the existing value. We therefore only include
-    keys that are genuinely absent or uninitialized — never returning a key that
-    already has a meaningful value. This is called at node entry to guarantee that
-    downstream code can always read these keys safely without None-checks.
-    """
-    updates: Dict[str, Any] = {}
-    if "eval_retry_count" not in state or state.get("eval_retry_count") is None:
-        updates["eval_retry_count"] = 0
-    if "eval_verdict" not in state:
-        updates["eval_verdict"] = None
-    if "eval_feedback" not in state:
-        updates["eval_feedback"] = None
-    if "eval_scores" not in state:
-        updates["eval_scores"] = None
-    return updates
-
-
-def _build_trace_identifiers(state: GraphState) -> Dict[str, Any]:
-    """Extract experiment identifier fields for the trace.
-
-    These identifiers are how the analysis script joins traces across the four arms.
-    They are sourced from:
-      - question_id: state.metadata["question_id"] — set by the offline runner per question.
-      - dataset_version: state.metadata["dataset_version"] — set by the runner from the gold dataset header.
-      - run_id: EXPERIMENT_RUN_ID env var — set by the runner once per process.
-      - arm: EXPERIMENT_ARM env var — set by the runner once per process.
-      - attempt_index: equals the current eval_retry_count counter at trace-write
-        time (0 for first evaluation, 1 for the post-retry evaluation).
-    Missing values are returned as None so the analysis script can detect non-experimental traces.
-    """
-    md = state.get("metadata") or {}
-    if not isinstance(md, dict):
-        md = {}
-    retry_count = int(state.get("eval_retry_count") or 0)
-    return {
-        "question_id": md.get("question_id"),
-        "dataset_version": md.get("dataset_version"),
-        "run_id": os.getenv("EXPERIMENT_RUN_ID"),
-        "arm": os.getenv("EXPERIMENT_ARM"),
-        "attempt_index": retry_count,
-    }
+# ==========================================================================
+# Closed-loop activation — one switch, one source of truth
+# ==========================================================================
+# EVALUATOR_MODE is the ONLY thing that decides whether a checkpoint runs and
+# how it behaves once running:
+#   off  — no checkpoint (the shipped default)
+#   late — answer-quality checkpoint only
+#   full — early-route + answer-quality checkpoints
+# The A_* labels below are the historical arm names, kept because they are the
+# output-directory names of every frozen run under artifacts/runs/ and are
+# hardcoded in the analysis scripts. They are DERIVED from the mode and never
+# read back out of graph state. Two sources for one fact is how an EVALUATOR_MODE=full run
+# could silently drift: ControllerState.arm defaults to A_open, and with that value
+# handle_early_checkpoint returns "continue" on every implausible verdict (`arm != "A_full"`),
+# while handle_late_checkpoint still rewinds AND no longer blocks router-targeted late rewinds
+# (that guard is keyed on `arm == "A_late_only"`). The result is neither arm — early loop off,
+# late loop on with the router target unlocked — and nothing raises or logs.
+_EVALUATOR_MODES = ("off", "late", "full")
+_MODE_TO_ARM = {"off": "A_open", "late": "A_late_only", "full": "A_full"}
 
 
-def _get_evaluator_prompt_version() -> str:
-    """Return the filename of the evaluator prompt that was actually loaded.
-
-    This is recorded in every trace record so that analysis can group runs by
-    prompt version and detect whether two arms used different rubric wordings.
-    Using the basename of the resolved file path (rather than the env var value)
-    is more reliable because it reflects what the agent actually opened on disk,
-    even if the env var was set to an absolute path. Falls back to the env var
-    or the default filename when the evaluator is mocked in tests and has no
-    real `prompt_path` attribute.
-    """
-    prompt_path = getattr(evaluator_agent, "prompt_path", None)
-    if isinstance(prompt_path, str) and prompt_path:
-        return os.path.basename(prompt_path)
-    return os.getenv("EVALUATOR_PROMPT_VERSION", "evaluator_prompt.txt")
-
-
-def _get_evaluator_deployment_label() -> Optional[str]:
-    """Return the evaluator's Azure deployment name as a plain string for the trace.
-
-    The isinstance guard prevents test MagicMock objects (where any attribute access
-    returns another MagicMock) from leaking into the trace and causing JSON
-    serialization failures. Returns None when the evaluator is mocked or uninitialized.
-    """
-    deployment = getattr(evaluator_agent, "deployment", None)
-    if isinstance(deployment, str) and deployment:
-        return deployment
-    return None
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "yes", "y", "on"}:
-        return True
-    if value in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
-
-
-def _get_evaluator_mode() -> str:
-    """Return evaluator mode from env with compatibility fallbacks.
-
-    Modes:
-    - strict: precision-first thresholds
-    - balanced: moderate thresholds (default)
-    - off: full evaluator bypass
-    """
-    if not _env_bool("EVALUATOR_ENABLED", True):
+def _evaluator_mode() -> str:
+    """Return the validated closed-loop activation mode; 'off' on anything unknown."""
+    raw = (os.getenv("EVALUATOR_MODE") or "off").strip().lower()
+    if raw not in _EVALUATOR_MODES:
+        # print(), not logger: this module emits its diagnostics on stdout via print
+        # ~100 times over. A stderr-only warning would not appear inline in the
+        # per-case logs, and this is the one message you most need to see.
+        print(
+            f"[evaluator_mode] EVALUATOR_MODE={raw!r} is not one of {_EVALUATOR_MODES}"
+            " - treating as 'off'. A stale phase-1 value (strict/balanced) here means"
+            " the closed loop is silently disabled.",
+            flush=True,
+        )
         return "off"
+    return raw
 
-    mode = str(os.getenv("EVALUATOR_MODE", "balanced") or "balanced").strip().lower()
-    if mode not in {"strict", "balanced", "off"}:
-        mode = "balanced"
-    return mode
-
-
-def _is_evaluator_bypassed() -> bool:
-    return _get_evaluator_mode() == "off"
-
-
-def _coerce_score(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    try:
-        score = int(round(float(value)))
-    except Exception:
-        return None
-    if score < 0:
-        return 0
-    if score > 10:
-        return 10
-    return score
-
-
-def _derive_hard_fail_from_issues(issues: List[str]) -> bool:
-    if not issues:
-        return False
-    critical_tokens = (
-        "critical hallucination",
-        "critical unsupported claim",
-        "numeric contradiction",
-        "unmet explicit constraint",
-    )
-    for issue in issues:
-        text = str(issue).lower()
-        if any(token in text for token in critical_tokens):
-            return True
-    return False
-
-
-def _evaluation_profile(mode: str, legacy_threshold: int) -> Dict[str, float]:
-    """Return threshold profile for verdict gating.
-
-    Legacy threshold is preserved as a floor for main per-axis thresholds.
-    """
-    profile = {
-        "strict": {
-            "groundedness_min": 9,
-            "numeric_fidelity_min": 9,
-            "constraint_satisfaction_min": 8,
-            "completeness_min": 8,
-            "composite_min": 8.7,
-            "retry_lower": 7.5,
-        },
-        "balanced": {
-            "groundedness_min": 7,
-            "numeric_fidelity_min": 7,
-            "constraint_satisfaction_min": 7,
-            "completeness_min": 7,
-            "composite_min": 7.2,
-            "retry_lower": 6.0,
-        },
-        "off": {
-            "groundedness_min": 0,
-            "numeric_fidelity_min": 0,
-            "constraint_satisfaction_min": 0,
-            "completeness_min": 0,
-            "composite_min": 0,
-            "retry_lower": 0,
-        },
-    }.get(mode, {})
-
-    floor = max(0, min(10, int(legacy_threshold)))
-    if profile:
-        profile["groundedness_min"] = max(profile["groundedness_min"], floor)
-        profile["numeric_fidelity_min"] = max(profile["numeric_fidelity_min"], floor)
-        profile["constraint_satisfaction_min"] = max(profile["constraint_satisfaction_min"], floor)
-        profile["completeness_min"] = max(profile["completeness_min"], floor)
-    return profile
-
-
-def _compute_composite_score(
-    groundedness: Optional[int],
-    completeness: Optional[int],
-    numeric_fidelity: Optional[int],
-    constraint_satisfaction: Optional[int],
-    uncertainty_calibration: Optional[int],
-) -> Optional[float]:
-    vals = [groundedness, completeness, numeric_fidelity, constraint_satisfaction, uncertainty_calibration]
-    if any(v is None for v in vals):
-        return None
-    composite = (
-        0.35 * float(groundedness)
-        + 0.25 * float(numeric_fidelity)
-        + 0.20 * float(constraint_satisfaction)
-        + 0.15 * float(completeness)
-        + 0.05 * float(uncertainty_calibration)
-    )
-    return round(composite, 2)
-
-
-def _is_retry_candidate(eval_scores: Dict[str, Any]) -> bool:
-    if not isinstance(eval_scores, dict):
-        return False
-    if bool(eval_scores.get("hard_fail")):
-        return False
-
-    explicit = eval_scores.get("retry_candidate")
-    if isinstance(explicit, bool):
-        return explicit
-
-    composite = eval_scores.get("composite_score")
-    if composite is None:
-        return True
-
-    mode = _get_evaluator_mode()
-    profile = _evaluation_profile(mode, legacy_threshold=int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6")))
-    try:
-        comp = float(composite)
-    except Exception:
-        return True
-    return profile.get("retry_lower", 0.0) <= comp < profile.get("composite_min", 10.0)
 
 # ================================
 # Context understanding (UPDATED)
@@ -1669,18 +1473,12 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 
     # If evaluator rejected a prior answer, pass corrective guidance to the summarizer.
     eval_feedback = state.get("eval_feedback")
-    eval_retry_count = int(state.get("eval_retry_count") or 0)
     if eval_feedback:
         prompt += (
             "\n\nPrevious answer was rejected by evaluator. "
             "Fix these issues in your new answer: "
             + str(eval_feedback)
         )
-        # Count retries when we actually perform a corrective summarization pass.
-        # eval_retry_count is the number of completed retry loops, NOT the number
-        # of evaluator failures. Incrementing here (not in the evaluator node)
-        # ensures the counter reflects summarizer re-runs, not eval invocations.
-        eval_retry_count += 1
 
     metadata = state.get("metadata") or {}
     identity_check = metadata.get("building_identity_check") or assess_building_identity(
@@ -1729,22 +1527,9 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     summarizer_meta = getattr(llm_summarizer, "_last_call_meta", None)
     if not isinstance(summarizer_meta, dict):
         summarizer_meta = {}
-    summarizer_latency_ms = summarizer_meta.get("latency_ms")
     summarizer_token_usage = summarizer_meta.get("token_usage")
-    # Read temperature provenance from the side-channel: temperature_requested is
-    # the float we asked for, temperature_unsupported is True when the deployment
-    # rejected it and we fell back to the model default. Both fields are written into
-    # the trace so any downstream reader can tell whether this run was actually
-    # deterministic. Non-numeric and non-bool values (including MagicMock in tests)
-    # are coerced to None / False below so they can be JSON-serialized safely.
-    summarizer_temperature_requested = summarizer_meta.get("temperature_requested")
-    summarizer_temperature_unsupported = bool(summarizer_meta.get("temperature_unsupported"))
-    if not isinstance(summarizer_latency_ms, (int, float)):
-        summarizer_latency_ms = None
     if not isinstance(summarizer_token_usage, dict):
         summarizer_token_usage = None
-    if not isinstance(summarizer_temperature_requested, (int, float)):
-        summarizer_temperature_requested = None
 
     sess = {**(state.get("session_state") or {})}
     sess["metadata"] = metadata
@@ -1755,26 +1540,15 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         sess["last_intent_list"] = ctx.get("intent_list")
 
     out = (state.get("step_out") or []) + ["llm_summarizer ✓"]
-    mode = _get_evaluator_mode()
-    bypassed = mode == "off"
     md = state.get("metadata") or {}
     debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
-    debug = _deep_merge(debug, {
-        "evaluator_mode": mode,
-        "evaluator_bypassed": bypassed,
-    })
 
     print("[llm_summarizer] EXIT", flush=True)
     updates = {
         "final_response": answer,
         "session_state": sess,
         "step_out": out,
-        "eval_retry_count": eval_retry_count,
-        "summarizer_latency_ms": summarizer_latency_ms,
         "summarizer_token_usage": summarizer_token_usage,
-        # Temperature provenance is written to state so the trace node can include it.
-        "summarizer_temperature_requested": summarizer_temperature_requested,
-        "summarizer_temperature_unsupported": summarizer_temperature_unsupported,
         "metadata": _deep_merge(metadata, {"debug": debug}),
     }
     # Closed-loop cost accounting: the open arm fires no checkpoint, so its token
@@ -1783,323 +1557,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     _su_total = int(_su.get("total_tokens") or _su.get("total") or 0)
     updates["eval_total_tokens"] = int(state.get("eval_total_tokens") or 0) + _su_total
     updates["eval_total_completions"] = int(state.get("eval_total_completions") or 0) + 1
-    updates.update(_ensure_evaluator_state_defaults(state))
     return updates
 
-
-def evaluate_response_node(state: GraphState) -> GraphState:
-    """Evaluate summarizer output and store structured verdict and retry metadata.
-
-    When EVALUATOR_MODE=off, the production graph NEVER enters this node —
-    `route_after_summarizer` routes summarizer → END directly (see
-    `build_building_flow_graph`). This means the no-evaluator arm incurs *zero*
-    evaluator overhead in real runs (no extra LLM call, no extra wall-clock time,
-    no trace record from this node).
-
-    The bypass branch below is a defensive fallback that fires only when this
-    function is called *directly* (e.g., in unit tests that bypass the graph
-    router). The offline batch runner writes synthetic bypassed-arm trace records
-    itself rather than relying on this branch, so trace structure is consistent
-    across all arms.
-    """
-    print("[evaluate_response] ENTER", flush=True)
-
-    question = state.get("last_message") or ""
-    aggregated_data = state.get("aggregated_data") or {}
-    answer = state.get("final_response") or ""
-
-    if _is_evaluator_bypassed():
-        # Defensive: only reached on direct calls (tests). Production graph routes
-        # around this node entirely when mode=off.
-        print("[evaluate_response] BYPASSED (mode=off)", flush=True)
-        md = state.get("metadata") or {}
-        debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
-        debug = _deep_merge(debug, {
-            "evaluator_mode": "off",
-            "evaluator_bypassed": True,
-        })
-        print("[evaluate_response] EXIT", flush=True)
-        updates = {
-            **_ensure_evaluator_state_defaults(state),
-            "eval_verdict": "pass",
-            "eval_feedback": None,
-            "eval_scores": {
-                "bypassed": True,
-                "evaluated": False,
-                "evaluation_status": "bypassed",
-            },
-            "metadata": _deep_merge(md, {"debug": debug}),
-        }
-        trace = build_evaluation_trace(
-            **_build_trace_identifiers(state),
-            question=question,
-            answer=answer,
-            # Snapshot the SQL/vector evidence so annotators can verify groundedness
-            # against the same context the (skipped) evaluator would have seen.
-            aggregated_data=truncate_for_trace(aggregated_data),
-            mode="off",
-            verdict="pass",
-            evaluated=False,
-            evaluation_status="bypassed",
-            eval_retry_count=int(state.get("eval_retry_count") or 0),
-            eval_scores=updates["eval_scores"],
-            model_deployment=_get_evaluator_deployment_label(),
-            prompt_version=_get_evaluator_prompt_version(),
-            # Bypass mode never invokes the evaluator, so its latency is 0 and
-            # tokens are None. Summarizer fields are read from state as usual.
-            summarizer_latency_ms=state.get("summarizer_latency_ms"),
-            summarizer_token_usage=state.get("summarizer_token_usage"),
-            evaluator_latency_ms=0,
-            evaluator_token_usage=None,
-            summarizer_temperature_requested=state.get("summarizer_temperature_requested"),
-            summarizer_temperature_unsupported=bool(state.get("summarizer_temperature_unsupported")),
-        )
-        try:
-            append_evaluation_trace(trace)
-        except Exception as trace_error:
-            logger.warning("Failed to append evaluator bypass trace: %s", trace_error)
-        return updates
-    mode = _get_evaluator_mode()
-
-    # Ensure evaluator keys are always available.
-    base_updates = _ensure_evaluator_state_defaults(state)
-    retry_count = int(state.get("eval_retry_count") or 0)
-
-    result = evaluator_agent.evaluate(
-        question=question,
-        aggregated_data=aggregated_data,
-        answer=answer,
-    )
-    evaluator_failed = bool(result.get("evaluator_failed"))
-    evaluator_failure_reason = str(result.get("evaluator_failure_reason") or "").strip()
-
-    # Latency and token usage are attached to the result dict by EvaluatorAgent.
-    # Same defensive coercion as in llm_summarizer_node (guards against MagicMock
-    # values in tests that would otherwise break trace JSON serialization).
-    evaluator_latency_ms = result.get("_latency_ms")
-    evaluator_token_usage = result.get("_token_usage")
-    if not isinstance(evaluator_latency_ms, (int, float)):
-        evaluator_latency_ms = None
-    if not isinstance(evaluator_token_usage, dict):
-        evaluator_token_usage = None
-    summarizer_latency_ms = state.get("summarizer_latency_ms")
-    summarizer_token_usage = state.get("summarizer_token_usage")
-    if not isinstance(summarizer_latency_ms, (int, float)):
-        summarizer_latency_ms = None
-    if not isinstance(summarizer_token_usage, dict):
-        summarizer_token_usage = None
-
-    legacy_threshold = int(os.getenv("EVALUATOR_PASS_THRESHOLD", "6"))
-    profile = _evaluation_profile(mode, legacy_threshold)
-
-    faithfulness = _coerce_score(result.get("faithfulness_score"))
-    groundedness = _coerce_score(result.get("groundedness_score"))
-    completeness = _coerce_score(result.get("completeness_score"))
-    numeric_fidelity = _coerce_score(result.get("numeric_fidelity_score"))
-    constraint_satisfaction = _coerce_score(result.get("constraint_satisfaction_score"))
-    uncertainty_calibration = _coerce_score(result.get("uncertainty_calibration_score"))
-
-    # Track which dimensions were filled by fallback rather than directly scored.
-    # The analysis script uses this list to exclude rows from per-axis breakdowns
-    # where the LLM did not score a dimension independently — a synthesized score
-    # from another axis is not statistically independent and would contaminate
-    # per-axis comparisons. Composite and overall pass rate still include these rows;
-    # only per-axis tables filter on this field.
-    #
-    # faithfulness ↔ groundedness is a prompt-enforced alias, NOT a cross-dimension
-    # synthesis, so we do not record it here — only the three real fallbacks below.
-    score_fallbacks_applied: List[str] = []
-
-    if groundedness is None and faithfulness is not None:
-        groundedness = faithfulness
-    if faithfulness is None and groundedness is not None:
-        faithfulness = groundedness
-    if numeric_fidelity is None and groundedness is not None:
-        numeric_fidelity = groundedness
-        score_fallbacks_applied.append("numeric_fidelity_score")
-    if constraint_satisfaction is None and completeness is not None:
-        constraint_satisfaction = completeness
-        score_fallbacks_applied.append("constraint_satisfaction_score")
-    if uncertainty_calibration is None and completeness is not None:
-        uncertainty_calibration = completeness
-        score_fallbacks_applied.append("uncertainty_calibration_score")
-
-    composite_score = _compute_composite_score(
-        groundedness=groundedness,
-        completeness=completeness,
-        numeric_fidelity=numeric_fidelity,
-        constraint_satisfaction=constraint_satisfaction,
-        uncertainty_calibration=uncertainty_calibration,
-    )
-
-    issues = result.get("issues") if isinstance(result.get("issues"), list) else []
-    feedback = result.get("corrective_feedback") if isinstance(result.get("corrective_feedback"), str) else None
-    hard_fail = bool(result.get("hard_fail")) or _derive_hard_fail_from_issues(issues)
-    hard_fail_reason = str(result.get("hard_fail_reason") or "").strip() or None
-
-    # Normalize verdict and enforce threshold guardrails if scores are present.
-    verdict = str(result.get("verdict") or "pass").lower().strip()
-
-    # Hard fail rules always take precedence.
-    if hard_fail:
-        verdict = "fail"
-
-    # Prefer strict/balanced profile gates when dimensional scores are available.
-    has_dimensional_scores = all(
-        metric is not None
-        for metric in [groundedness, completeness, numeric_fidelity, constraint_satisfaction]
-    )
-    if has_dimensional_scores and composite_score is not None:
-        if (
-            groundedness < profile["groundedness_min"]
-            or numeric_fidelity < profile["numeric_fidelity_min"]
-            or constraint_satisfaction < profile["constraint_satisfaction_min"]
-            or completeness < profile["completeness_min"]
-            or composite_score < profile["composite_min"]
-        ):
-            verdict = "fail"
-    elif faithfulness is not None and completeness is not None:
-        # Backward-compatible guardrail if only legacy scores are returned.
-        if faithfulness < legacy_threshold or completeness < legacy_threshold:
-            verdict = "fail"
-
-    if verdict not in {"pass", "fail"}:
-        verdict = "pass"
-
-    retry_candidate = False
-    if verdict == "fail" and not hard_fail:
-        if composite_score is None:
-            retry_candidate = True
-        else:
-            retry_candidate = profile["retry_lower"] <= composite_score < profile["composite_min"]
-
-    scores = {
-        "mode": mode,
-        "faithfulness_score": faithfulness,
-        "groundedness_score": groundedness,
-        "completeness_score": completeness,
-        "numeric_fidelity_score": numeric_fidelity,
-        "constraint_satisfaction_score": constraint_satisfaction,
-        "uncertainty_calibration_score": uncertainty_calibration,
-        "composite_score": composite_score,
-        "hard_fail": hard_fail,
-        "hard_fail_reason": hard_fail_reason,
-        "retry_candidate": retry_candidate,
-        "issues": issues,
-        "evaluated": not evaluator_failed,
-        "evaluation_status": "failed_open" if evaluator_failed else "evaluated",
-        "evaluator_failed": evaluator_failed,
-        "evaluator_failure_reason": evaluator_failure_reason,
-        # Empty list = every dimension was scored independently by the LLM.
-        # Any entry names an axis that was synthesized from another dimension;
-        # such rows must be excluded from per-axis statistical comparisons.
-        "score_fallbacks_applied": score_fallbacks_applied,
-    }
-
-    md = state.get("metadata") or {}
-    debug = (md.get("debug") or {}) if isinstance(md, dict) else {}
-    debug = _deep_merge(debug, {
-        "evaluator_mode": mode,
-        "evaluator_bypassed": False,
-        "eval_verdict": verdict,
-        "eval_scores": scores,
-        "eval_retry_count": retry_count,
-    })
-    if verdict == "fail":
-        debug["eval_warning"] = "Evaluator failed answer quality check."
-
-    print(f"[evaluate_response] verdict={verdict} retry_count={retry_count}", flush=True)
-    print(
-        "[evaluate_response] "
-        f"mode={mode} faithfulness={faithfulness} groundedness={groundedness} "
-        f"completeness={completeness} numeric={numeric_fidelity} "
-        f"constraint={constraint_satisfaction} uncertainty={uncertainty_calibration} "
-        f"composite={composite_score} hard_fail={hard_fail}",
-        flush=True,
-    )
-    if issues:
-        print(f"[evaluate_response] issues={issues}", flush=True)
-    if feedback:
-        print(f"[evaluate_response] feedback={feedback}", flush=True)
-
-    trace = build_evaluation_trace(
-        **_build_trace_identifiers(state),
-        question=question,
-        answer=answer,
-        # Snapshot the SQL/vector evidence the evaluator actually saw, truncated
-        # per-leaf to keep the JSONL line manageable. Anyone reviewing the trace
-        # can verify groundedness against this evidence without re-running the pipeline.
-        aggregated_data=truncate_for_trace(aggregated_data),
-        mode=mode,
-        verdict=verdict,
-        evaluated=not evaluator_failed,
-        evaluation_status="failed_open" if evaluator_failed else "evaluated",
-        eval_retry_count=retry_count,
-        eval_scores=scores,
-        model_deployment=_get_evaluator_deployment_label(),
-        prompt_version=_get_evaluator_prompt_version(),
-        evaluator_failure_reason=evaluator_failure_reason,
-        # This attempt's latency + tokens. Multi-attempt sequences (retry) produce
-        # one trace record per attempt, each with its own per-call timing.
-        summarizer_latency_ms=summarizer_latency_ms,
-        summarizer_token_usage=summarizer_token_usage,
-        evaluator_latency_ms=evaluator_latency_ms,
-        evaluator_token_usage=evaluator_token_usage,
-        # Temperature provenance is sourced from state, written there by the summarizer node.
-        summarizer_temperature_requested=state.get("summarizer_temperature_requested"),
-        summarizer_temperature_unsupported=bool(state.get("summarizer_temperature_unsupported")),
-    )
-    try:
-        append_evaluation_trace(trace)
-    except Exception as trace_error:
-        logger.warning("Failed to append evaluator trace: %s", trace_error)
-
-    print("[evaluate_response] EXIT", flush=True)
-    return {
-        **base_updates,
-        "eval_verdict": verdict,
-        "eval_feedback": feedback if verdict == "fail" else None,
-        "eval_scores": scores,
-        "eval_retry_count": retry_count,
-        # Persist this attempt's latency/tokens into state so the runner can sum
-        # across attempts (first attempt + retry) when writing per-question totals.
-        "evaluator_latency_ms": evaluator_latency_ms,
-        "evaluator_token_usage": evaluator_token_usage,
-        "metadata": _deep_merge(md, {"debug": debug}),
-    }
-
-
-def route_after_summarizer(state: GraphState) -> str:
-    """Decide what runs after the summarizer.
-
-    Returns:
-        "end" — when EVALUATOR_MODE=off (or EVALUATOR_ENABLED=false). The graph
-        skips evaluate_response_node entirely; the no-evaluator arm incurs zero
-        evaluator overhead. This is a *complete bypass*, not a zero-threshold
-        pass-through: the evaluator node is never invoked at all.
-        "evaluate_response" — for balanced/strict modes (arms A2/A3/A4).
-    """
-    if _is_evaluator_bypassed():
-        print("[route_after_summarizer] evaluator bypass enabled → end", flush=True)
-        return "end"
-    return "evaluate_response"
-
-
-def route_after_evaluation(state: GraphState) -> str:
-    """Route to END on pass or retry cap, otherwise loop back to summarizer once."""
-    if _is_evaluator_bypassed():
-        return "end"
-
-    verdict = str(state.get("eval_verdict") or "pass").lower().strip()
-    retry_count = int(state.get("eval_retry_count") or 0)
-    max_retries = int(os.getenv("EVALUATOR_MAX_RETRIES", "1"))
-
-    if verdict == "pass":
-        return "end"
-
-    if verdict == "fail" and retry_count < max_retries and _is_retry_candidate(state.get("eval_scores") or {}):
-        return "retry_summarizer"
-    return "end"
 
 # ======================
 # Request address & misc
@@ -2151,7 +1610,7 @@ def clarification_node(state: GraphState) -> GraphState:
     }
 
 # =========================================================
-# Closed-loop checkpoint nodes (no-ops unless RUN_ARM set)
+# Closed-loop checkpoint nodes (no-ops unless EVALUATOR_MODE selects late/full)
 # =========================================================
 
 def _make_checkpoint_evaluator():
@@ -2161,12 +1620,14 @@ def _make_checkpoint_evaluator():
 
 def early_route_checkpoint_node(state: GraphState) -> GraphState:
     """Judge the chosen route; in the full arm, rewind the router if implausible."""
-    arm = state.get("eval_arm") or os.environ.get("RUN_ARM", "")
-    if arm != "A_full" or not _env_bool("EARLY_CHECKPOINT_ENABLED", False):
+    mode = _evaluator_mode()
+    if mode != "full":
         return {}
+    arm = _MODE_TO_ARM[mode]
     print(f"[early_route_checkpoint] arm={arm}", flush=True)
     try:
         from src.evaluation.closed_loop.controller import EvaluationController, ControllerState
+        from src.evaluation.closed_loop.in_loop_evaluator import EARLY_VOTE_K
         ev = _make_checkpoint_evaluator()
         ctrl = ControllerState(
             # `or 2` would silently resurrect an exhausted budget, since `0 or 2` is 2.
@@ -2181,10 +1642,7 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
         # a pure read of the state, so we can ask it here and hand the judge the actual
         # pending decision. Not a threshold change: an added input (plan-eil-v20-fixes Fix 5).
         pending_hop = route_after_ambiguity(state)
-        # k=3 self-consistency: a false fire destroys a case permanently while a true fire
-        # only probably gains one, so the asymmetry is worth 3x the early-judge calls
-        # (v21 §2.1). k=1 is the v20 single-call path unchanged.
-        vote_k = max(1, int(os.environ.get("CLOSED_LOOP_EARLY_VOTE_K", "1") or 1))
+        vote_k = EARLY_VOTE_K
         verdict = ev.route_plausible_voted(
             question=str(state.get("last_message") or ""),
             chosen_route=str(state.get("top_route") or "building"),
@@ -2220,9 +1678,10 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
 
 def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
     """Judge the final answer; rewind to the attributed stage on failure."""
-    arm = state.get("eval_arm") or os.environ.get("RUN_ARM", "")
-    if arm not in ("A_late_only", "A_full") or not _env_bool("LATE_CHECKPOINT_ENABLED", False):
+    mode = _evaluator_mode()
+    if mode not in ("late", "full"):
         return {}
+    arm = _MODE_TO_ARM[mode]
     print(f"[answer_quality_checkpoint] arm={arm}", flush=True)
     try:
         from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
@@ -2367,10 +1826,9 @@ def _route_after_early_checkpoint(state: GraphState) -> str:
 
 
 def _route_after_summarizer_with_checkpoint(state: GraphState) -> str:
-    arm = state.get("eval_arm") or os.environ.get("RUN_ARM", "")
-    if arm in ("A_late_only", "A_full") and _env_bool("LATE_CHECKPOINT_ENABLED", False):
+    if _evaluator_mode() in ("late", "full"):
         return "answer_quality_checkpoint"
-    return route_after_summarizer(state)
+    return "end"
 
 
 def _route_after_answer_quality_checkpoint(state: GraphState) -> str:
@@ -2422,12 +1880,11 @@ def build_building_flow_graph() -> StateGraph:
     # Aggregation & summary
     builder.add_node("aggregator", aggregator_node)
     builder.add_node("llm_summarizer", llm_summarizer_node)
-    builder.add_node("evaluate_response", evaluate_response_node)
 
     # Address request
     builder.add_node("request_address", request_address_node)
 
-    # Closed-loop checkpoint + rewind nodes (no-ops unless RUN_ARM selects an arm)
+    # Closed-loop checkpoint + rewind nodes (no-ops unless EVALUATOR_MODE selects late/full)
     builder.add_node("early_route_checkpoint", early_route_checkpoint_node)
     builder.add_node("answer_quality_checkpoint", answer_quality_checkpoint_node)
     builder.add_node("rewind_to_router", rewind_to_router_node)
@@ -2479,7 +1936,6 @@ def build_building_flow_graph() -> StateGraph:
         _route_after_summarizer_with_checkpoint,
         {
             "answer_quality_checkpoint": "answer_quality_checkpoint",
-            "evaluate_response": "evaluate_response",
             "end": END,
         },
     )
@@ -2491,14 +1947,6 @@ def build_building_flow_graph() -> StateGraph:
             "rewind_to_specialists": "rewind_to_specialists",
             "rewind_to_summarizer": "rewind_to_summarizer",
             "end": END,
-        },
-    )
-    builder.add_conditional_edges(
-        "evaluate_response",
-        route_after_evaluation,
-        {
-            "end": END,
-            "retry_summarizer": "llm_summarizer",
         },
     )
 

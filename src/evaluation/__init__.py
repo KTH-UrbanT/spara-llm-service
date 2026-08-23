@@ -15,9 +15,3 @@ from .analysis_filters import (
     pass_rate_evaluated,
     pass_rate_unfiltered,
 )
-from .trace_store import (
-    append_evaluation_trace,
-    build_evaluation_trace,
-    get_trace_paths,
-    truncate_for_trace,
-)

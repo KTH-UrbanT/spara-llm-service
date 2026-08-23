@@ -131,16 +131,18 @@ def test_run_record_pins_the_code_and_config_that_produced_the_traces(tmp_path):
     ds = tmp_path / "cases.jsonl"
     ds.write_text('{"case_id": "X", "question": "q"}\n', encoding="utf-8")
     # setup_environment writes to os.environ for the rest of the process. Unscoped, it
-    # would leave EARLY/LATE_CHECKPOINT_ENABLED=true behind and later test modules would
-    # start invoking the real judge.
+    # would leave EVALUATOR_MODE=full behind and later test modules would start invoking
+    # the real judge.
     with patch.dict(os.environ, {}):
         setup_environment("A_full", "run_1")
         write_run_record(tmp_path, "A_full", "run_1", str(ds))
 
     rec = json.loads((tmp_path / "A_full" / "run_record.json").read_text())
     assert rec["arm"] == "A_full" and rec["run_id"] == "run_1"
-    assert rec["env"]["CLOSED_LOOP_EARLY_VOTE_K"] == "3"          # the vote is on the record
-    assert rec["env"]["ROUTE_PLAUSIBILITY_PROMPT_VERSION"] == "route_plausibility_v2.txt"
+    assert rec["env"]["EVALUATOR_MODE"] == "full"                 # the one activation switch
+    assert rec["constants"]["CLOSED_LOOP_EARLY_VOTE_K"] == 3      # the vote is still on the record
+    assert rec["constants"]["ROUTE_PLAUSIBILITY_PROMPT_VERSION"] == "route_plausibility_v2.txt"
+    assert rec["constants"]["ANSWER_QUALITY_PROMPT_VERSION"] == "answer_quality_v2.txt"
     assert len(rec["dataset_sha256"]) == 64
     assert rec["constants"]["MAX_RETRIES"] == 2
     # The load-bearing field: git is unavailable in the container (submodule .git is a file
@@ -197,10 +199,11 @@ def test_code_fingerprint_changes_when_a_source_byte_changes(tmp_path, monkeypat
     assert m.code_fingerprint()[0] == before               # restored
 
 
-def test_vote_k_is_pinned_per_arm_not_inherited_from_the_shell():
-    """The early checkpoint exists only in A_full; an unset variable would let a stray
-    shell value change the treatment and go unrecorded."""
+def test_arm_activation_is_one_switch_and_vote_k_is_a_constant():
+    """Arm activation is a single mode, and the early vote-k is a module constant: an
+    env-driven value would let a stray shell setting change the treatment and go
+    unrecorded, which is exactly what CLOSED_LOOP_EARLY_VOTE_K used to allow."""
+    from src.evaluation.closed_loop.in_loop_evaluator import EARLY_VOTE_K
     from scripts.run_arm_closed_loop import _ARM_ENV
-    assert _ARM_ENV["A_full"]["CLOSED_LOOP_EARLY_VOTE_K"] == "3"
-    assert _ARM_ENV["A_open"]["CLOSED_LOOP_EARLY_VOTE_K"] == "1"
-    assert _ARM_ENV["A_late_only"]["CLOSED_LOOP_EARLY_VOTE_K"] == "1"
+    assert _ARM_ENV == {"A_open": "off", "A_late_only": "late", "A_full": "full"}
+    assert EARLY_VOTE_K == 3

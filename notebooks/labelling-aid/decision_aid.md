@@ -1,19 +1,19 @@
-# Primary labelling decision aid — `2026-05-14_v2`
+# Primary labelling decision aid - `2026-05-14_v2`
 
-Per-question reference material. **Open this alongside the labelling UI**, look up the question by `qid` (the labeller sees both `output_id` and `qid` — only `arm` is hidden).
+Per-question reference material. **Open this alongside the labelling UI**, look up the question by `qid` (the labeller sees both `output_id` and `qid` - only `arm` is hidden).
 
 Contents of each section:
 - **Question + category + difficulty**
 - **Gold facts / numerics / must_avoid** (what a perfect answer would and would not contain)
-- **Cache anchors** — the key EPC fields and their values, with `epc_egiforstaarmanad`/`epc_egisistaarmanad` already YYMM-decoded so you can tell at a glance whether a date in an answer is correctly interpreted
-- **Watchlist** — specific phrases or numbers that, if present in the response, indicate a trouble pattern
-- **Calibration cue** — a one-line nudge on how to score this question shape
+- **Cache anchors** - the key EPC fields and their values, with `epc_egiforstaarmanad`/`epc_egisistaarmanad` already YYMM-decoded so you can tell at a glance whether a date in an answer is correctly interpreted
+- **Watchlist** - specific phrases or numbers that, if present in the response, indicate a trouble pattern
+- **Calibration cue** - a one-line nudge on how to score this question shape
 
 This file contains **NO arm identification and NO scores**. Your labels are still yours. The intent is to spare you the cache-JSON archaeology, not to anchor your judgment.
 
 ---
 
-## Q001 — `simple_address` / *easy*
+## Q001 - `simple_address` / *easy*
 
 **Question:** What is the heated area (Atemp) of the building at Loviselundsvägen 81?
 
@@ -36,8 +36,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Friliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `C` | energy class |
-| `epc_egiforstaarmanad` | **1702** = **Feb 2017** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1801** = **Jan 2018** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1702** = **Feb 2017** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1801** = **Jan 2018** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any numeric Atemp value that is NOT 270 m² → mismatch (drop NF or G)
@@ -47,7 +47,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q002 — `simple_address` / *easy*
+## Q002 - `simple_address` / *easy*
 
 **Question:** What year was the building at Astrakangatan 180 built?
 
@@ -67,8 +67,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenatemp` | **108** | heated area Atemp (m²) |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **0606** = **Jun 2006** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **0705** = **May 2007** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **0606** = **Jun 2006** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **0705** = **May 2007** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any construction year that is NOT 1957 → mismatch
@@ -79,7 +79,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q003 — `simple_address` / *easy*
+## Q003 - `simple_address` / *easy*
 
 **Question:** What is the heated area (Atemp) of the building at Friherregatan 111?
 
@@ -99,8 +99,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenatemp` | **132** | heated area Atemp (m²) |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **0712** = **Dec 2007** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **0811** = **Nov 2008** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **0712** = **Dec 2007** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **0811** = **Nov 2008** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any numeric Atemp value that is NOT 132 m² → mismatch (drop NF or G)
@@ -110,7 +110,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q004 — `simple_address` / *medium*
+## Q004 - `simple_address` / *medium*
 
 **Question:** How many floors does the building at Förridargränd 5 have?
 
@@ -132,8 +132,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `E` | energy class |
-| `epc_egiforstaarmanad` | **1901** = **Jan 2019** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1912** = **Dec 2019** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1901** = **Jan 2019** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1912** = **Dec 2019** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Floors above ground = 2; any other number is a mismatch
@@ -142,7 +142,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q005 — `simple_address` / *easy*
+## Q005 - `simple_address` / *easy*
 
 **Question:** What is the building type (epc_egenbyggnadstyp) of the building at Friherregatan 138?
 
@@ -161,8 +161,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Gavel` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `G` | energy class |
-| `epc_egiforstaarmanad` | **2001** = **Jan 2020** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **2012** = **Dec 2020** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **2001** = **Jan 2020** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **2012** = **Dec 2020** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Type/category claim that does NOT match the cache value → mismatch (drop G)
@@ -172,7 +172,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q006 — `simple_address` / *medium*
+## Q006 - `simple_address` / *medium*
 
 **Question:** What is the building category (epc_egenbyggnadskat) of Bruntegatan 5, and what year was it built?
 
@@ -193,8 +193,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenatemp` | **115** | heated area Atemp (m²) |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **0802** = **Feb 2008** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **0901** = **Jan 2009** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **0802** = **Feb 2008** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **0901** = **Jan 2009** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Type/category claim that does NOT match the cache value → mismatch (drop G)
@@ -204,7 +204,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q007 — `simple_address` / *medium*
+## Q007 - `simple_address` / *medium*
 
 **Question:** What is the heated area of the building at Förridargränd 9?
 
@@ -226,8 +226,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `F` | energy class |
-| `epc_egiforstaarmanad` | **2004** = **Apr 2020** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **2103** = **Mar 2021** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **2004** = **Apr 2020** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **2103** = **Mar 2021** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any numeric Atemp value that is NOT 95 m² → mismatch (drop NF or G)
@@ -237,7 +237,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q008 — `simple_address` / *easy*
+## Q008 - `simple_address` / *easy*
 
 **Question:** When was the building at Kurirgatan 16 built?
 
@@ -257,8 +257,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenatemp` | **119** | heated area Atemp (m²) |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **0905** = **May 2009** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1004** = **Apr 2010** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **0905** = **May 2009** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1004** = **Apr 2010** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any construction year that is NOT 1957 → mismatch
@@ -269,7 +269,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q009 — `simple_address` / *easy*
+## Q009 - `simple_address` / *easy*
 
 **Question:** What is the heated area (Atemp) of the building at Kurirgatan 11?
 
@@ -290,8 +290,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenantalplan` | 2 | above-ground floors |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **1104** = **Apr 2011** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1203** = **Mar 2012** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1104** = **Apr 2011** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1203** = **Mar 2012** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any numeric Atemp value that is NOT 94 m² → mismatch (drop NF or G)
@@ -301,7 +301,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q010 — `simple_address` / *easy*
+## Q010 - `simple_address` / *easy*
 
 **Question:** What year was the building at Förridargränd 11 built?
 
@@ -322,8 +322,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `F` | energy class |
-| `epc_egiforstaarmanad` | **1701** = **Jan 2017** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1712** = **Dec 2017** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1701** = **Jan 2017** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1712** = **Dec 2017** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any construction year that is NOT 1957 → mismatch
@@ -334,7 +334,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q011 — `edge_case` / *hard*
+## Q011 - `edge_case` / *hard*
 
 **Question:** What construction material (brick, wood, concrete) is the building at Loviselundsvägen 81 made of?
 
@@ -362,8 +362,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Friliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `C` | energy class |
-| `epc_egiforstaarmanad` | **1702** = **Feb 2017** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1801** = **Jan 2018** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1702** = **Feb 2017** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1801** = **Jan 2018** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Any specific material (brick / wood / concrete) claimed → **fabrication**, drop G + add `unsupported_claim`
@@ -373,7 +373,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q012 — `edge_case` / *hard*
+## Q012 - `edge_case` / *hard*
 
 **Question:** When was the building at Astrakangatan 180 last renovated?
 
@@ -399,8 +399,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenatemp` | **108** | heated area Atemp (m²) |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **0606** = **Jun 2006** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **0705** = **May 2007** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **0606** = **Jun 2006** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **0705** = **May 2007** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - "renovated in 2008" or any single renovation year → **YYMM hallucination** (epc_egisistaarmanad=2008 means Aug 2020 of measurement period, NOT a year)
@@ -411,7 +411,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q013 — `constraint_filtering` / *medium*
+## Q013 - `constraint_filtering` / *medium*
 
 **Question:** As of January 2026, is the building at Förridargränd 5 less than 75 years old?
 
@@ -443,19 +443,19 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `E` | energy class |
-| `epc_egiforstaarmanad` | **1901** = **Jan 2019** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1912** = **Dec 2019** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1901** = **Jan 2019** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1912** = **Dec 2019** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Answer that quotes 1957 → CORRECT (epc_egennybyggar)
   - **Answer that quotes 1901 or "approximately 125 years old"** → ⚠️ **YYMM hallucination** (reads epc_egiforstaarmanad=1901 as a year; it's actually Jan 2019)
   - Answer "no" + claims building older than 75 → wrong
 
-**Calibration cue:** CRITICAL CASE: the agent should read 1957 from `epc_egennybyggar`. If it quotes 1901 or claims ~125 years old, that's reading the YYMM field as a year — drop G aggressively (≤2) and tag `unsupported_claim` + flip overall_pass to 0.
+**Calibration cue:** CRITICAL CASE: the agent should read 1957 from `epc_egennybyggar`. If it quotes 1901 or claims ~125 years old, that's reading the YYMM field as a year - drop G aggressively (≤2) and tag `unsupported_claim` + flip overall_pass to 0.
 
 ---
 
-## Q014 — `edge_case` / *easy*
+## Q014 - `edge_case` / *easy*
 
 **Question:** What is the heated area of the building at Nonexistentgatan 999?
 
@@ -480,7 +480,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q015 — `edge_case` / *easy*
+## Q015 - `edge_case` / *easy*
 
 **Question:** What is the heated area?
 
@@ -504,7 +504,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q016 — `edge_case` / *hard*
+## Q016 - `edge_case` / *hard*
 
 **Question:** What is the average rent for the apartments in the building at Loviselundsvägen 81?
 
@@ -533,7 +533,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q017 — `edge_case` / *medium*
+## Q017 - `edge_case` / *medium*
 
 **Question:** What is the heated area of the building at Loviselundsvägen?
 
@@ -557,7 +557,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q018 — `constraint_filtering` / *medium*
+## Q018 - `constraint_filtering` / *medium*
 
 **Question:** Was the building at Loviselundsvägen 81 built before 1970?
 
@@ -587,8 +587,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Friliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `C` | energy class |
-| `epc_egiforstaarmanad` | **1702** = **Feb 2017** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **1801** = **Jan 2018** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **1702** = **Feb 2017** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **1801** = **Jan 2018** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Answer = "yes, built 1947" → correct
@@ -599,7 +599,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q019 — `constraint_filtering` / *medium*
+## Q019 - `constraint_filtering` / *medium*
 
 **Question:** Is the building at Astrakangatan 180 a detached (Friliggande) house?
 
@@ -625,8 +625,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenatemp` | **108** | heated area Atemp (m²) |
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
-| `epc_egiforstaarmanad` | **0606** = **Jun 2006** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **0705** = **May 2007** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **0606** = **Jun 2006** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **0705** = **May 2007** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Answer = "no, the building is Mellanliggande, not Friliggande" → correct
@@ -636,7 +636,7 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 
 ---
 
-## Q020 — `constraint_filtering` / *medium*
+## Q020 - `constraint_filtering` / *medium*
 
 **Question:** Is the heated area of the building at Friherregatan 132 larger than 200 m²?
 
@@ -665,8 +665,8 @@ This file contains **NO arm identification and NO scores**. Your labels are stil
 | `epc_egenbyggnadstyp` | `Mellanliggande` | building type |
 | `epc_egenbyggnadskat` | `En- och tvåbostadshus` | building category |
 | `epc_egienergiklass` | `E` | energy class |
-| `epc_egiforstaarmanad` | **2108** = **Aug 2021** (YYMM) | EPC measurement-period START — **NOT a construction year** |
-| `epc_egisistaarmanad` | **2207** = **Jul 2022** (YYMM) | EPC measurement-period END — **NOT a renovation year** |
+| `epc_egiforstaarmanad` | **2108** = **Aug 2021** (YYMM) | EPC measurement-period START - **NOT a construction year** |
+| `epc_egisistaarmanad` | **2207** = **Jul 2022** (YYMM) | EPC measurement-period END - **NOT a renovation year** |
 
 **Watchlist:**
   - Answer = "no, 152 m² is not > 200" → correct (cache atemp=152)
@@ -696,7 +696,7 @@ Every claim in the answer is in the cache, every part of the question is address
 A claim that a domain expert would call **wrong** (not just suboptimal). Examples: claiming a renovation year that doesn't exist; reading a YYMM as a year; fabricating an Atemp for a nonexistent address; misidentifying the building type.
 
 ### A note on Q015
-Q015 has no address. Both arms produce the identical "Can you please provide the building address?" response by construction. If you score both at exactly the same level, the paired delta on this question is 0 — that is mechanically correct and not a labelling failure.
+Q015 has no address. Both arms produce the identical "Can you please provide the building address?" response by construction. If you score both at exactly the same level, the paired delta on this question is 0 - that is mechanically correct and not a labelling failure.
 
 ### A note on Q012 + Q013 (the case studies)
 These are the two questions where the YYMM-vs-year trap matters most. **Look at every date in the answer and ask: "is this a 4-digit year, or is it a YYMM that the agent misread?"**

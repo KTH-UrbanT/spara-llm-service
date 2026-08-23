@@ -1,13 +1,28 @@
 # Reproducing the SPARA EIL thesis study (v2)
 
+> **ARCHIVED - phase 1, superseded by the closed loop.**
+> The recipe below drove the *phase-1* evaluator (`scripts/run_arm.py`,
+> `scripts/run_experiment.sh`, `scripts/write_run_record.py`, the
+> `evaluate_response` graph node, `EvaluatorAgent`, and the
+> `EVALUATOR_ENABLED` / `EVALUATOR_MAX_RETRIES` / `EVALUATOR_PASS_THRESHOLD` /
+> `EVALUATOR_PROMPT_VERSION` / `RUN_OPTIONAL_ARMS` env vars). All of that was
+> **deleted on 2026-08-22** and is recoverable from `llm-service` git history at
+> **`29d5d8e`** (`git show 29d5d8e:scripts/run_arm.py`, and so on). The frozen
+> phase-1 runs under `artifacts/runs/` are untouched - this document is retained
+> because it records how they were produced.
+>
+> For the current (phase-2 closed-loop) recipe use
+> `python -m scripts.run_arm_closed_loop --arm A_open|A_late_only|A_full`,
+> activated by the single switch `EVALUATOR_MODE = off | late | full`.
+
 This document is the minimal recipe a reviewer needs to reproduce the
 analysis for the master-thesis study described in `plan-eil-v2.md` and
 `experiments/protocol.yaml`.
 
 The experiment is a paired comparison between two arms:
 
-- **A1** — no-evaluator baseline (`EVALUATOR_MODE=off`).
-- **A2** — balanced evaluator-in-the-loop (`EVALUATOR_MODE=balanced`,
+- **A1** - no-evaluator baseline (`EVALUATOR_MODE=off`).
+- **A2** - balanced evaluator-in-the-loop (`EVALUATOR_MODE=balanced`,
   `EVALUATOR_MAX_RETRIES=1`, `evaluator_prompt.txt`).
 
 Two optional ablation arms (A3 strict, A4 prompt-B) are gated by
@@ -24,7 +39,7 @@ export AZURE_ENDPOINT="https://<your-resource>.openai.azure.com/"
 export OPENAI_API_KEY="<key>"
 export OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME="<summariser-deployment>"
 export OPENAI_RESPONSE_MODEL_API_VERSION="<api-version>"
-# Optional — fall back to the OPENAI_RESPONSE_* values if unset.
+# Optional - fall back to the OPENAI_RESPONSE_* values if unset.
 export EVALUATOR_MODEL_DEPLOYMENT_NAME="<evaluator-deployment>"
 export EVALUATOR_MODEL_API_VERSION="<api-version>"
 
@@ -71,7 +86,7 @@ Two layers protect determinism:
 
 1. **Pinned temperatures.** Both summariser and evaluator run at
    `temperature=0.0` (with a logged warning + automatic fallback if the
-   deployment doesn't accept the parameter — see `protocol.yaml`).
+   deployment doesn't accept the parameter - see `protocol.yaml`).
 2. **Calibration replay.** Re-run only A2 with a fresh `--run-id` and the
    same `--cache-from artifacts/runs/<original>/A1`. Verdict counts must
    match within ±1 entry; otherwise see `plan-eil-v2.md §J.5`.
@@ -100,10 +115,10 @@ that any departure from them is visible in code review:
 
 - only A1 and A2 are claimed primary; A3/A4 are descriptive at best;
 - `aggregated_data` is cached after A1 to factor out upstream pipeline
-  noise — this is a methodological choice, not a performance one, and is
+  noise - this is a methodological choice, not a performance one, and is
   declared in Chapter 3 Methods of the thesis;
 - single-annotator design with intra-annotator reliability as the IRR
   proxy.
 
-Anything outside this scope is listed in `plan-eil-v2.md §G — Out of
+Anything outside this scope is listed in `plan-eil-v2.md §G - Out of
 scope` and flagged as Future Work in the thesis.

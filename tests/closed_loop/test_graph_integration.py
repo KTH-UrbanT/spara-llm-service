@@ -58,9 +58,7 @@ def _graph(monkeypatch, arm):
     if arm != "A_open":
         _wire_judge(monkeypatch)
     with patch.dict(os.environ, {
-        "RUN_ARM": arm, "EVALUATOR_MODE": "off",
-        "EARLY_CHECKPOINT_ENABLED": "true" if arm=="A_full" else "false",
-        "LATE_CHECKPOINT_ENABLED": "true" if arm!="A_open" else "false",
+        "EVALUATOR_MODE": {"A_open": "off", "A_late_only": "late", "A_full": "full"}[arm],
     }):
         from src.agents.building_flow_graph import build_building_flow_graph
         return build_building_flow_graph()
@@ -107,9 +105,7 @@ def test_early_checkpoint_sees_the_pending_address_request(base_env, monkeypatch
     ev.last_usage = {"total_tokens": 12, "completion_tokens": 6}
     monkeypatch.setattr("src.evaluation.closed_loop.in_loop_evaluator.InLoopEvaluator", lambda: ev)
 
-    with patch.dict(os.environ, {"RUN_ARM": "A_full", "EVALUATOR_MODE": "off",
-                                 "EARLY_CHECKPOINT_ENABLED": "true",
-                                 "LATE_CHECKPOINT_ENABLED": "true"}):
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "full"}):
         from src.agents.building_flow_graph import build_building_flow_graph
         g = build_building_flow_graph()
         st = _st("A_full")
@@ -134,9 +130,7 @@ def test_early_checkpoint_flag_is_false_when_the_graph_can_answer(base_env, monk
     ev.last_usage = {"total_tokens": 12, "completion_tokens": 6}
     monkeypatch.setattr("src.evaluation.closed_loop.in_loop_evaluator.InLoopEvaluator", lambda: ev)
 
-    with patch.dict(os.environ, {"RUN_ARM": "A_full", "EVALUATOR_MODE": "off",
-                                 "EARLY_CHECKPOINT_ENABLED": "true",
-                                 "LATE_CHECKPOINT_ENABLED": "true"}):
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "full"}):
         from src.agents.building_flow_graph import build_building_flow_graph
         build_building_flow_graph().invoke(_st("A_full"))
 
@@ -296,9 +290,9 @@ def test_forced_route_is_the_safety_net_when_the_parser_re_picks_building(base_e
 
 
 def test_backward_compatible(base_env, monkeypatch):
-    """With RUN_ARM unset, the graph behaves exactly as the production pipeline."""
+    """With EVALUATOR_MODE=off, the graph behaves exactly as the production pipeline."""
     _wire_externals(monkeypatch)
-    with patch.dict(os.environ, {"RUN_ARM": "", "EVALUATOR_MODE": "off"}):
+    with patch.dict(os.environ, {"EVALUATOR_MODE": "off"}):
         from src.agents.building_flow_graph import build_building_flow_graph
         g = build_building_flow_graph()
     assert g.invoke({"last_message": "Atemp?", "messages": [], "metadata": {"address": "T 1"}}).get("final_response")
