@@ -20,11 +20,17 @@ FIELD_NAME_MAP: dict[str, str] = {
 
 
 def check_building_id_match(snapshot: dict, case: dict) -> bool:
+    """Whether the right building was resolved; vacuously true when the case pins none."""
     expected = case.get("expected_building_id")
     return True if expected is None else snapshot.get("resolved_building_id") == expected
 
 
 def check_field_coverage(snapshot: dict, case: dict, tau_field: float = 1.0) -> tuple[bool, float]:
+    """Fraction of the case's expected registry fields the SQL specialists actually used.
+
+    Returns (passed, coverage). tau_field defaults to 1.0 — every expected field must be
+    present, since a partial answer to a fact question is a wrong answer.
+    """
     expected_fields = case.get("expected_fields") or []
     if not expected_fields:
         return True, 1.0
@@ -35,11 +41,13 @@ def check_field_coverage(snapshot: dict, case: dict, tau_field: float = 1.0) -> 
 
 
 def check_must_include(final_answer: str, case: dict) -> bool:
+    """Whether every required substring appears in the answer (case-insensitive)."""
     lo = final_answer.lower()
     return all(str(p).lower() in lo for p in (case.get("must_include") or []))
 
 
 def check_must_not_include(final_answer: str, case: dict) -> bool:
+    """Whether the answer avoided every forbidden substring (case-insensitive)."""
     lo = final_answer.lower()
     return not any(str(p).lower() in lo for p in (case.get("must_not_include") or []))
 
@@ -65,6 +73,7 @@ def check_semantic_judge_pass(answer_verdict: dict | None) -> bool | None:
 
 def run_all_checks(snapshot: dict, final_answer: str, case: dict,
                    answer_verdict: dict | None, tau_field: float = 1.0) -> dict:
+    """Run every gold-grounded check for one case into a single flat dict."""
     fc_pass, fc_val = check_field_coverage(snapshot, case, tau_field)
     return {
         "route_match": route_match(snapshot, case.get("expected_route", "")),
@@ -78,6 +87,12 @@ def run_all_checks(snapshot: dict, final_answer: str, case: dict,
 
 
 def case_pass(checks: dict) -> bool:
+    """Conjunction of all checks — the pass/fail the headline numbers are computed from.
+
+    Default polarity differs per check on purpose: `route_match` and `semantic_judge_pass`
+    default to False (absent means the case was never scored, which is not a pass), while
+    the rest default to True (absent means the case pinned no expectation for them).
+    """
     # semantic_judge_pass is tri-state; None ("not measured") is falsy and so
     # already fails the case. Do not "fix" this into `is not False`.
     return all([

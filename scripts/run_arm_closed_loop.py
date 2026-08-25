@@ -58,33 +58,47 @@ _CACHED_IDENTITY_KEY = "building_identity_check"
 
 
 def setup_environment(arm: str, run_id: str) -> None:
+    """Set the env vars the graph reads to select its arm.
+
+    EVALUATOR_MODE is the single switch the graph branches on; the arm name is derived
+    from it, never the other way round. Set before the graph is built, not after.
+    """
     os.environ["EVALUATOR_MODE"] = _ARM_ENV[arm]
     os.environ["EXPERIMENT_RUN_ID"] = run_id
     os.environ["EXPERIMENT_ARM"] = arm
 
 
 def load_dataset(path: str) -> list[dict]:
+    """Read the filtered case list (one JSON case per line)."""
     with open(path, encoding="utf-8") as f:
         return [json.loads(l) for l in f if l.strip()]
 
 
 def load_completed_case_ids(run_dir: Path, arm: str) -> set[str]:
+    """Case ids already traced for this arm, so an interrupted run can resume."""
     from src.evaluation.closed_loop.trace_schema import load_per_case_traces
     return {t["case_id"] for t in load_per_case_traces(run_dir, arm) if "case_id" in t}
 
 
 def save_case_cache(run_dir: Path, arm: str, case_id: str, bundle: dict) -> None:
+    """Freeze one case's retrieved evidence so later arms can replay it byte-identically.
+
+    This is what makes the arm comparison paired: the closed-loop arms reuse the open
+    arm's evidence instead of re-querying, so any difference is the loop, not retrieval drift.
+    """
     p = run_dir / arm / "case_cache" / f"{case_id}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(bundle, ensure_ascii=False, default=str), encoding="utf-8")
 
 
 def load_case_cache(run_dir: Path, cache_arm: str, case_id: str) -> dict | None:
+    """Read back a frozen evidence bundle; None if this case was never cached."""
     p = run_dir / cache_arm / "case_cache" / f"{case_id}.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
 
 def write_cost_baseline(run_dir: Path, arm: str, per_case_tokens: list[int]) -> None:
+    """Record this arm's mean per-case token spend, for the later arms' cost cap."""
     mean = (sum(per_case_tokens) / len(per_case_tokens)) if per_case_tokens else 0.0
     p = run_dir / arm / "cost_baseline.json"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +107,11 @@ def write_cost_baseline(run_dir: Path, arm: str, per_case_tokens: list[int]) -> 
 
 def load_cost_cap(run_dir: Path, cache_arm: str | None,
                   mult: float = COST_CAP_MULT) -> float | None:
+    """Per-case token ceiling as a multiple of the cached arm's mean; None when uncapped.
+
+    None (no --cache-from) means no cap exists, which is why `cost_exceeded` must never
+    veto a pass on its own — see the note in `run`.
+    """
     if not cache_arm:
         return None
     p = run_dir / cache_arm / "cost_baseline.json"
@@ -235,6 +254,7 @@ def extract_snapshot(final_state: dict) -> dict:
 
 
 def build_initial_state(case: dict, arm: str, cached: dict | None) -> dict:
+    """Seed the graph state for one case, injecting cached evidence when replaying."""
     # The dataset models a known-building context: building/combined cases carry the
     # address (and identifiers) as separate fields, not in the question text. Seed them
     # into metadata so the pipeline can retrieve instead of asking for the address.
@@ -312,6 +332,7 @@ def resolve_scoring_verdict(snap: dict, case: dict, get_scorer) -> dict:
 
 
 def run_case(graph, case: dict, arm: str, cached: dict | None) -> dict:
+    """Invoke the graph on one case and return its state snapshot, timed and fail-safe."""
     start = time.monotonic()
     try:
         # The rewind cycles add supersteps; raise the limit above LangGraph's default of 25.
@@ -334,6 +355,7 @@ def run_case(graph, case: dict, arm: str, cached: dict | None) -> dict:
 
 
 def parse_args(argv=None):
+    """CLI: --arm selects the evaluator mode, --cache-from replays a prior arm's evidence."""
     p = argparse.ArgumentParser()
     p.add_argument("--arm", required=True, choices=["A_open", "A_late_only", "A_full"])
     p.add_argument("--dataset", required=True)
@@ -350,6 +372,11 @@ def parse_args(argv=None):
 
 
 def run(args) -> int:
+    """Run every case in the dataset through one arm, writing traces as it goes.
+
+    Traces are appended per case rather than at the end, so an interrupted run keeps
+    everything it finished and `load_completed_case_ids` can resume from it.
+    """
     run_id = args.run_id or f"run_{int(time.time())}"
     run_dir = Path(args.run_dir)
     print(f"[run_arm] arm={args.arm} run_id={run_id}")
@@ -375,6 +402,7 @@ def run(args) -> int:
 
     _scorer: dict = {}
     def _get_scorer():  # lazy: only the open arm instantiates it
+        """The judge used to score the open arm offline, built on first use."""
         if "s" not in _scorer:
             from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
             _scorer["s"] = InLoopEvaluator()
@@ -401,6 +429,11 @@ def run(args) -> int:
         cp = passed(checks)
         n_pass += int(cp); n_total += 1
         flags = snap.get("controller_flags") or {}
+        # The per-case trace row: the sole input to every downstream analysis script, so it
+        # is written flat and self-contained. Four groups follow — what the dataset asked
+        # for (expected_*), what the pipeline did (final_*), how the loop behaved
+        # (attempts and controller flags), and the cost covariates — then the individual
+        # check results are spliced in via **checks alongside the overall case_pass.
         row = {
             "run_id": run_id, "arm": args.arm, "case_id": cid,
             "case_type": case.get("case_type"), "source": case.get("source"),
@@ -422,6 +455,8 @@ def run(args) -> int:
             "request_address_fired": bool(snap.get("request_address_fired")),
             "forced_route_applied": bool(snap.get("forced_route_applied")),
             "evidence_present": any(bool(v) for v in (snap.get("aggregated_data") or {}).values()),
+            # Attempts made, recovered from what the budget has left: the graph never
+            # counts attempts directly, it only ever decrements the budget.
             "total_attempts": 1 + (MAX_RETRIES - snap["retry_budget"]),  # 1 = no retry
             "early_block_exhausted": flags.get("early_block_exhausted", False),
             "closed_loop_terminated_without_pass": flags.get("closed_loop_terminated_without_pass", False),
@@ -469,6 +504,7 @@ def run(args) -> int:
 
 
 def main(argv=None):
+    """Entry point; exit status is `run`'s return code."""
     sys.exit(run(parse_args(argv)))
 
 if __name__ == "__main__":

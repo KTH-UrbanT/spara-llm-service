@@ -9,6 +9,7 @@ from scripts.axis_census import LATE, OPEN, build, collect, summarise
 
 
 def _rec(pool, axes, run="v24_r1", arm="A_open"):
+    """One census record with the given axis scores."""
     return {"pool": pool, "run": run, "arm": arm, "case_id": "C", "axes": axes}
 
 
@@ -21,6 +22,7 @@ def test_constant_axis_is_flagged_degenerate():
 
 
 def test_varying_axis_is_not_flagged():
+    """An axis with real spread is informative and must not be called degenerate."""
     recs = ([_rec(LATE, {"entity_consistency": 10})] * 40
             + [_rec(LATE, {"entity_consistency": 0})] * 10)
     s = summarise(recs, "entity_consistency", 98.0)
@@ -47,6 +49,7 @@ def test_absent_axis_differs_from_null_axis():
 
 
 def test_pools_are_reported_separately_and_pooled():
+    """Late and open pools are reported both apart and together."""
     recs = [_rec(LATE, {"faithfulness": 10}), _rec(OPEN, {"faithfulness": 0})]
     c = build(recs, 98.0)
     assert c["pools"][LATE]["axes"]["faithfulness"]["n_scored"] == 1
@@ -55,6 +58,7 @@ def test_pools_are_reported_separately_and_pooled():
 
 
 def test_per_group_split_tracks_run_and_arm():
+    """Per-group counts keep run and arm distinct, so pooling cannot hide drift."""
     recs = [_rec(LATE, {"entity_consistency": 0}, run="v24_r1", arm="A_full"),
             _rec(LATE, {"entity_consistency": 10}, run="v24_r2", arm="A_full")]
     g = summarise(recs, "entity_consistency", 98.0)["per_group"]
@@ -63,6 +67,7 @@ def test_per_group_split_tracks_run_and_arm():
 
 
 def test_collect_reads_late_attempts_and_open_finals(tmp_path):
+    """Each pool is read from its correct trace file: attempts for late, finals for open."""
     import json
     run = tmp_path / "v24_r1"
     for arm, fname, rows in [

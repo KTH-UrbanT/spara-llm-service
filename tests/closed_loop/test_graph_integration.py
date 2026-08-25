@@ -1,8 +1,10 @@
+"""End-to-end graph wiring: all three arms reach an answer, and rewinds behave."""
 import os, pytest
 from unittest.mock import MagicMock, patch
 
 @pytest.fixture()
 def base_env():
+    """Fake Azure/deployment env so the graph imports without real credentials."""
     with patch.dict(os.environ, {
         "OPENAI_API_KEY": "test", "AZURE_ENDPOINT": "https://x.openai.azure.com/",
         "OPENAI_API_VERSION": "2023-05-15",
@@ -16,6 +18,7 @@ def base_env():
     }): yield
 
 def _wire_externals(monkeypatch):
+    """Stub SQL and vector backends so the graph runs with no database."""
     import src.agents.building_flow_graph as m
     sql = MagicMock()
     sql.execute.return_value = {
@@ -37,11 +40,13 @@ def _wire_externals(monkeypatch):
     monkeypatch.setattr(m, "parse_intent_agent", parser)
 
 def _plausible():
+    """A passing early verdict, so the route is never rewound."""
     return MagicMock(verdict="plausible",
                      axes={"intent_consistency": 9, "precondition_satisfied": 9},
                      corrective_hint=None)
 
 def _wire_judge(monkeypatch):
+    """Stub the judge with passing verdicts, so only the wiring is under test."""
     ev = MagicMock()
     # The node calls the voting wrapper (v21 §2.1); `route_plausible` is what the wrapper
     # calls k times internally, so a mocked evaluator must stub the wrapper.
@@ -54,6 +59,7 @@ def _wire_judge(monkeypatch):
     monkeypatch.setattr("src.evaluation.closed_loop.in_loop_evaluator.InLoopEvaluator", lambda: ev)
 
 def _graph(monkeypatch, arm):
+    """Build the compiled graph with EVALUATOR_MODE set for the given arm."""
     _wire_externals(monkeypatch)
     if arm != "A_open":
         _wire_judge(monkeypatch)
@@ -64,18 +70,22 @@ def _graph(monkeypatch, arm):
         return build_building_flow_graph()
 
 def _st(arm):
+    """A minimal initial graph state for one building question."""
     return {"last_message": "Atemp of T 1?", "messages": [], "metadata": {"address": "T 1"},
             "eval_arm": arm, "retry_budget": 2, "checkpoint_history": [],
             "controller_flags": {}, "attempt_records": [],
             "corrective_hint": None, "hint_target": None}
 
 def test_open_runs(base_env, monkeypatch):
+    """The open arm reaches a final answer — the graph is wired identically in all arms."""
     assert _graph(monkeypatch, "A_open").invoke(_st("A_open")).get("final_response")
 
 def test_late_only_runs(base_env, monkeypatch):
+    """The late-only arm reaches a final answer with the late checkpoint live."""
     assert _graph(monkeypatch, "A_late_only").invoke(_st("A_late_only")).get("final_response")
 
 def test_full_runs(base_env, monkeypatch):
+    """The full arm reaches a final answer with both checkpoints live."""
     assert _graph(monkeypatch, "A_full").invoke(_st("A_full")).get("final_response")
 
 def _wire_generic_question_without_address(monkeypatch):
@@ -210,6 +220,7 @@ def _wire_vector_only_reparse(monkeypatch):
 
 
 def test_router_rewind_records_the_rejected_route(base_env, monkeypatch):
+    """The rewind records the rejected route so the router cannot re-promote it (v21 §2.2)."""
     import src.agents.building_flow_graph as m
     out = m.rewind_to_router_node({"top_route": "building", "corrective_hint": "Go generic."})
     assert out["rejected_route"] == "building"

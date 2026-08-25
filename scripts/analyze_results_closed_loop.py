@@ -21,20 +21,28 @@ CHECKS = ["route_match","agent_match","building_id_match","field_coverage_pass",
 
 
 def _load(path: Path) -> list[dict]:
+    """Read a JSONL trace file; empty list if the arm never ran."""
     # split('\n') (not splitlines) so embedded U+2028/U+2029 in a value can't split a record.
     return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()] if path.exists() else []
 
 
 def _rate(t: list[dict]) -> float:
+    """Overall case-pass rate: the headline number for an arm."""
     return sum(1 for x in t if x.get("case_pass")) / len(t) if t else 0.0
 
 
 def _first_attempt_rate(t: list[dict]) -> float:
+    """Pass rate over cases the loop never retried.
+
+    The closed-loop arms are only comparable to the open arm on this subset when the
+    loop stayed idle, so a gap here would mean the arms diverged before any rewind fired.
+    """
     fa = [x for x in t if (x.get("total_attempts") or 1) <= 1]
     return sum(1 for x in fa if x.get("case_pass")) / len(fa) if fa else 0.0
 
 
 def _strat(t: list[dict]) -> dict:
+    """Pass counts grouped by the case's expected route."""
     by: dict[str, list] = {}
     for x in t:
         by.setdefault(x.get("expected_route","?"), []).append(x)
@@ -43,10 +51,21 @@ def _strat(t: list[dict]) -> dict:
 
 
 def _mcnemar(ta: dict, tb: dict) -> dict:
+    """Paired significance test on the same cases run through two arms.
+
+    Paired, not two-sample: both arms answer an identical case list, so the test only
+    looks at cases where the arms DISAGREED. n01 = arm A failed and B passed (B better),
+    n10 = A passed and B failed (B broke it). The concordant cells carry no information
+    about which arm is better and drop out of the statistic entirely.
+
+    exact=True uses the binomial test rather than the chi-square approximation: with the
+    handful of discordant pairs this study produces, the asymptotic form is not valid.
+    """
     shared = sorted(set(ta) & set(tb))
     a = np.array([int(bool(ta[c].get("case_pass"))) for c in shared])
     b = np.array([int(bool(tb[c].get("case_pass"))) for c in shared])
     n01 = int(((a==0)&(b==1)).sum()); n10 = int(((a==1)&(b==0)).sum())
+    # Table laid out as [[n00, n01], [n10, n11]] — statsmodels reads the off-diagonal.
     r = _mc(np.array([[int(((a==0)&(b==0)).sum()),n01],[n10,int(((a==1)&(b==1)).sum())]]), exact=True)
     return {"n_discordant": n01+n10, "n_b_better": n01, "n_a_better": n10, "p_value": float(r.pvalue)}
 
@@ -76,6 +95,7 @@ def _hint_eff(attempts: list[dict]) -> dict:
 
 
 def run(args) -> int:
+    """Build the whole analysis report for a run directory and print or write it."""
     if not _HAS:
         print("ERROR: numpy + statsmodels required", file=sys.stderr); return 1
     rd = Path(args.run_dir)
@@ -96,12 +116,20 @@ def run(args) -> int:
         ta = {t["case_id"]: t for t in traces[aa]}; tb = {t["case_id"]: t for t in traces[ab]}
         if len(set(ta)&set(tb)) < 2: continue
         results.append(((aa, ab), _mcnemar(ta, tb)))
+    # Holm-Bonferroni step-down over the m pairwise tests. Sort p-values ascending and
+    # test each against a threshold that relaxes as tests are consumed: 0.05/m, then
+    # 0.05/(m-1), ... Controls the family-wise error rate while being uniformly more
+    # powerful than plain Bonferroni, which would hold every test to 0.05/m.
     m = len(results)
     order = sorted(range(m), key=lambda i: results[i][1]["p_value"])
     holm, still = {}, True
     for rank, idx in enumerate(order):
         thr = 0.05 / (m - rank)
         rej = still and results[idx][1]["p_value"] < thr
+        # `still` is the step-down stop: once one test fails to clear its threshold, every
+        # test after it (which has a LARGER p-value) must also fail, regardless of its own
+        # threshold. Dropping this would let a later test be "significant" while an earlier,
+        # stronger one was not — the non-monotonicity Holm exists to prevent.
         if not rej: still = False
         holm[idx] = (rej, thr)
     for idx, ((aa, ab), r) in enumerate(results):
@@ -159,6 +187,7 @@ def run(args) -> int:
 
 
 def parse_args(argv=None):
+    """CLI: --run-dir is required, --out defaults to stdout."""
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", required=True)
     p.add_argument("--out", default=None)
@@ -166,6 +195,7 @@ def parse_args(argv=None):
 
 
 def main(argv=None):
+    """Entry point; exit status is `run`'s return code."""
     sys.exit(run(parse_args(argv)))
 
 if __name__ == "__main__":

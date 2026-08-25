@@ -35,6 +35,7 @@ SEVERITY = ("stale-gold", "version-slice", "record-choice", "indirect", "single-
 
 
 def _rows(agg: dict) -> list[dict]:
+    """Flatten an aggregated_data bundle into its individual evidence rows."""
     return [r for v in (agg or {}).values() if isinstance(v, list)
             for r in v if isinstance(r, dict)]
 
@@ -51,10 +52,14 @@ def _versions(rows: list[dict]) -> set[str]:
 
 
 class _Caches:
+    """Lazy, memoised reader for the frozen per-case evidence bundles."""
+
     def __init__(self, cache_dir: Path):
+        """Point at a case_cache directory; nothing is read until `get`."""
         self.dir, self._mem = cache_dir, {}
 
     def get(self, case_id: str) -> tuple[str | None, list[dict]]:
+        """(final_answer, evidence_rows) for one case, read from disk once."""
         if case_id not in self._mem:
             p = self.dir / f"{case_id}.json"
             if not p.exists():
@@ -66,6 +71,11 @@ class _Caches:
 
 
 def audit(dataset: Path, run_dir: Path) -> list[dict]:
+    """Check every case's must_include labels against the evidence actually retrieved.
+
+    Read-only triage: flags gold labels that no run could ever satisfy, so a systematic
+    labelling error is not mistaken for a system failure.
+    """
     cases = [json.loads(l) for l in dataset.read_text(encoding="utf-8").split("\n") if l.strip()]
     caches = _Caches(run_dir / "case_cache")
     tr = run_dir / "traces" / "per_case.jsonl"
@@ -124,6 +134,7 @@ def audit(dataset: Path, run_dir: Path) -> list[dict]:
 
 
 def report(findings: list[dict]) -> str:
+    """Render findings as markdown, worst severity first, one row per case."""
     rank = {c: i for i, c in enumerate(SEVERITY)}
     worst: dict[str, dict] = {}
     for f in findings:
@@ -147,6 +158,7 @@ def report(findings: list[dict]) -> str:
 
 
 def main(argv=None):
+    """CLI entry point; prints or writes the audit report."""
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default="artifacts/datasets/filtered_cases.jsonl")
     p.add_argument("--run-dir", default="artifacts/runs/2026-08-13_v21_r1/A_open")

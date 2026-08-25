@@ -69,14 +69,25 @@ def _axis_order(axes: dict) -> list[str]:
 
 @dataclass
 class RouteVerdict:
+    """The early judge's reading of the chosen route.
+
+    `ambiguous` is not a third opinion the rubric emits — it is the downgrade
+    `route_plausible` applies when an `implausible` verdict fails its evidence guard.
+    Only `implausible` is actionable by the controller.
+    """
+
     verdict: Literal["plausible", "implausible", "ambiguous"]
     axes: dict
+    # Free text shown to the router on rewind; must clear TAU_HINT_MIN_CHARS to fire.
     corrective_hint: str | None
+    # The judge's unparsed reply, kept so a verdict can be re-derived offline.
     raw_json: dict = field(default_factory=dict)
 
 
 @dataclass
 class AnswerVerdict:
+    """The late judge's reading of the final answer, plus where to blame a failure."""
+
     verdict: Literal["pass", "fail"]
     axes: dict
     composite: float
@@ -96,6 +107,11 @@ class AnswerVerdict:
 
 
 def _parse(content: str) -> dict | None:
+    """Strip a ```json fence if present and parse; None on anything unparseable.
+
+    Returning None rather than raising lets each caller decide — both turn it into an
+    explicit fail-open with the raw text attached, instead of a bare JSONDecodeError.
+    """
     c = re.sub(r"^```(?:json)?\s*", "", content.strip())
     c = re.sub(r"\s*```$", "", c)
     try:
@@ -213,7 +229,15 @@ def is_o_family(deployment: str | None) -> bool:
 
 
 class InLoopEvaluator:
+    """Azure OpenAI client wrapping the two rubrics, one public method per checkpoint.
+
+    Every public method fails open — a judge crash returns a permissive verdict tagged
+    `_fail_open` rather than raising, so an outage degrades the loop to the open arm
+    instead of killing the run. Analysis must exclude those rows (`analysis_filters`).
+    """
+
     def __init__(self) -> None:
+        """Build the client and read both rubric files off disk once per instance."""
         # o3/o4 deployments require api-version 2024-12-01-preview or later. The
         # repo's global OPENAI_API_VERSION may be older (2023-05-15), so prefer
         # a judge-specific override and fall back to a version that supports o4.
@@ -359,9 +383,11 @@ class InLoopEvaluator:
                                  stage_attribution_rule="unknown", corrective_hint=None)
 
     def _is_o4_family(self) -> bool:
+        """Whether this deployment needs the o-family parameter set (see `is_o_family`)."""
         return is_o_family(self._dep)
 
     def _call(self, system: str, user: str) -> str:
+        """One chat completion, returning raw text and recording usage in `last_usage`."""
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         params: dict = {"model": self._dep, "messages": messages}
         if self._is_o4_family():

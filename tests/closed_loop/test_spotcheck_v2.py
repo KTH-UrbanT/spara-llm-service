@@ -26,6 +26,7 @@ V2_AXES = ["faithfulness", "answer_relevance", "entity_consistency", "calibratio
 
 
 def _sample_ns(**kw):
+    """CLI namespace for the sample sub-command; kwargs override defaults."""
     base = dict(run_dir=None, arm="A_open", source=None, include_rows=None,
                 pad_null=0, pad_scored=0, null_axis="entity_consistency",
                 seed=1, all_judged=False)
@@ -34,6 +35,7 @@ def _sample_ns(**kw):
 
 
 def _row(cid, axes, run="v24_r1", arm="A_open", verdict="pass", **kw):
+    """A trace row carrying the given axis scores."""
     return {"case_id": cid, "run_id": run, "arm": arm, "expected_route": "building_specific",
             "final_answer": f"answer {cid}", "final_building_id_resolved": "19-84-LEOPARDEN5-1",
             "answer_quality_verdict": {"verdict": verdict, "axes": axes, "composite": 8.0},
@@ -58,6 +60,7 @@ def _frame(tmp_path, spec):
 
 
 def _worklist_rows(path):
+    """Read a worklist CSV back as dicts."""
     with open(path, encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
@@ -65,6 +68,7 @@ def _worklist_rows(path):
 # --- axis derivation ------------------------------------------------------------------
 
 def test_axes_follow_the_traces_not_a_hardcoded_list():
+    """Axes are discovered from the data, so a rubric change cannot silently drop one."""
     v2 = _axes_from_traces([_row("A", {"faithfulness": 10, "answer_relevance": 9,
                                        "entity_consistency": 0, "calibration": 9})])
     assert v2 == V2_AXES
@@ -80,12 +84,14 @@ def test_axis_derivation_ignores_marker_keys():
 
 
 def test_axes_recovered_from_either_vintage_of_worklist_header():
+    """Both v1 and v2 worklist headers round-trip, so frozen files stay readable."""
     assert _axes_from_worklist(_worklist_fields(V2_AXES)) == V2_AXES
     assert "question_coverage" in _axes_from_worklist(
         _worklist_fields(["faithfulness", "question_coverage"]))
 
 
 def test_non_axis_judge_columns_are_not_mistaken_for_axes():
+    """`judge_*` bookkeeping columns must not be parsed as rubric axes."""
     for f in ("judge_verdict", "judge_composite", "judge_semantic_judge_pass",
               "judge_fail_open", "judge_evidence_present"):
         assert f[len("judge_"):] not in _axes_from_worklist(_worklist_fields(V2_AXES))
@@ -94,6 +100,7 @@ def test_non_axis_judge_columns_are_not_mistaken_for_axes():
 # --- row identity ---------------------------------------------------------------------
 
 def test_row_id_separates_the_same_case_in_different_arms():
+    """One case_id recurs across arm-runs, so `row_id` is what keys a worklist."""
     a = _row("C1", {"calibration": 9}, run="v24_r1", arm="A_open")
     b = _row("C1", {"calibration": 9}, run="v24_r1", arm="A_full")
     assert _row_id(a) != _row_id(b)
@@ -101,6 +108,7 @@ def test_row_id_separates_the_same_case_in_different_arms():
 
 
 def test_key_falls_back_to_case_id_for_pre_v25_files():
+    """Files predating `row_id` still key on case_id, so old worklists keep working."""
     assert _key({"case_id": "C1"}) == "C1"
     assert _key({"case_id": "C1", "row_id": ""}) == "C1"
     assert _key({"case_id": "C1", "row_id": "C1@v24_r2:A_full"}) == "C1@v24_r2:A_full"
@@ -109,6 +117,7 @@ def test_key_falls_back_to_case_id_for_pre_v25_files():
 # --- sampling -------------------------------------------------------------------------
 
 def test_sample_spans_multiple_arm_runs_without_collapsing_duplicates(tmp_path):
+    """The same case in two arms yields two rows — collapsing them would lose an arm."""
     sources, ds = _frame(tmp_path, {
         ("v24_r1", "A_open"): [_row("C1", {"entity_consistency": 0}, arm="A_open")],
         ("v24_r1", "A_full"): [_row("C1", {"entity_consistency": 10}, arm="A_full")],
@@ -125,6 +134,7 @@ def test_sample_spans_multiple_arm_runs_without_collapsing_duplicates(tmp_path):
 
 
 def test_missing_mandatory_row_is_a_hard_error(tmp_path):
+    """A mandatory row absent from the frame fails loudly, never silently."""
     sources, ds = _frame(tmp_path, {("v24_r1", "A_open"): [_row("C1", {"calibration": 9})]})
     inc = tmp_path / "inc.txt"
     inc.write_text("C1@v24_r1:A_open\nGHOST@v24_r9:A_full\n", encoding="utf-8")
@@ -151,6 +161,7 @@ def test_pads_split_on_the_null_axis(tmp_path):
 
 
 def test_sample_needs_exactly_one_frame_source(tmp_path):
+    """Zero or two frame sources is an error — the sampling frame must be unambiguous."""
     sources, ds = _frame(tmp_path, {("v24_r1", "A_open"): [_row("C1", {"calibration": 9})]})
     for kw in ({}, {"source": sources, "run_dir": tmp_path / "v24_r1"}):
         with pytest.raises(SystemExit, match="exactly one"):
@@ -175,6 +186,7 @@ def test_worklist_shows_resolved_building_but_no_gold(tmp_path):
 # --- kappa ----------------------------------------------------------------------------
 
 def _csv(path, fields, rows):
+    """Write rows to a CSV with the given header."""
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
@@ -184,6 +196,7 @@ def _csv(path, fields, rows):
 
 
 def _kappa(tmp_path, wl_rows, lb_rows, axes=V2_AXES):
+    """Run the kappa sub-command over a worklist/labels pair and return its output."""
     out = tmp_path / "kappa.json"
     cmd_kappa(argparse.Namespace(
         worklist=_csv(tmp_path / "wl.csv", _worklist_fields(axes), wl_rows),
@@ -259,6 +272,7 @@ def test_form_headings_are_opaque_and_hide_the_arm(tmp_path):
 
 
 def test_opaque_form_refuses_to_ingest_without_the_worklist(tmp_path):
+    """The form is opaque by design: without its worklist it cannot be ingested."""
     wl = _form_worklist(tmp_path)
     form = tmp_path / "form.md"
     cmd_form(argparse.Namespace(worklist=wl, form=form, labels=tmp_path / "lb.csv"))
@@ -270,6 +284,7 @@ def test_opaque_form_refuses_to_ingest_without_the_worklist(tmp_path):
 
 
 def test_form_to_labels_round_trip_keeps_the_two_arms_apart(tmp_path):
+    """A round trip preserves which arm each label belongs to."""
     wl = _form_worklist(tmp_path)
     form = tmp_path / "form.md"
     cmd_form(argparse.Namespace(worklist=wl, form=form, labels=tmp_path / "lb.csv"))
@@ -334,6 +349,7 @@ def test_a_blank_axis_keeps_the_row_instead_of_silently_dropping_it(tmp_path):
 
 
 def test_a_block_with_no_axis_scored_is_still_an_error(tmp_path):
+    """An overall verdict with no axis scored is incomplete, not a valid label."""
     from scripts.spotcheck_closed_loop import _validate_label
     assert _validate_label({"overall_pass": "1"}, V2_AXES) == "no axis scored"
 

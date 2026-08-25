@@ -174,6 +174,7 @@ def cohens_kappa(rater1: Sequence[Any],
 # Data loading.
 # ---------------------------------------------------------------------------
 def _iter_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
+    """Yield each JSON record from a JSONL file; yields nothing if it is absent."""
     if not path.exists():
         return
     with path.open(encoding="utf-8") as f:
@@ -188,14 +189,17 @@ def _iter_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
 
 
 def discover_arms(run_dir: Path) -> List[str]:
+    """Which arms actually produced results in this run directory."""
     return [a for a in ARMS if (run_dir / a / "results.jsonl").exists()]
 
 
 def load_results(run_dir: Path, arms: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Per-arm result rows, keyed by arm."""
     return {a: list(_iter_jsonl(run_dir / a / "results.jsonl")) for a in arms}
 
 
 def load_traces(run_dir: Path, arms: Sequence[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """Per-arm evaluation traces, keyed by arm."""
     return {
         a: list(_iter_jsonl(run_dir / a / "traces" / "evaluation_traces.jsonl"))
         for a in arms
@@ -203,6 +207,7 @@ def load_traces(run_dir: Path, arms: Sequence[str]) -> Dict[str, List[Dict[str, 
 
 
 def load_questions(path: Path) -> Dict[str, Dict[str, Any]]:
+    """Load the gold question set, keyed by question_id; {} if absent."""
     if not path.exists():
         return {}
     with path.open(encoding="utf-8") as f:
@@ -250,6 +255,7 @@ def load_deployments(run_dir: Path) -> Dict[str, Optional[str]]:
 
 
 def _yaml_strip(value: str) -> Optional[str]:
+    """Normalise a YAML scalar, mapping the null spellings to None."""
     value = value.strip()
     if value in ("null", "~", ""):
         return None
@@ -262,6 +268,7 @@ def _yaml_strip(value: str) -> Optional[str]:
 # Master DataFrame join.
 # ---------------------------------------------------------------------------
 def _output_id(qid: str, arm: str) -> str:
+    """Short stable id for one (question, arm) output — the blinding key for labelling."""
     return hashlib.sha1(f"{qid}|{arm}".encode("utf-8")).hexdigest()[:8]
 
 
@@ -346,6 +353,7 @@ def build_master_dataframe(
 
     # Composite human quality (mean of 4 ordinal axes). NaN if any axis missing.
     def _composite(row):
+        """Mean of the human axes for one row; NaN when none were scored."""
         vals = [row.get(a) for a in HUMAN_AXES]
         try:
             nums = [float(v) for v in vals if v is not None and v == v]
@@ -363,6 +371,7 @@ def build_master_dataframe(
 # Per-table writers.
 # ---------------------------------------------------------------------------
 def _pricing_for(deployment: Optional[str]) -> Dict[str, float]:
+    """Per-1k-token prices for a deployment, falling back to the default table."""
     if deployment and deployment in PRICING_PER_1K_TOKENS:
         return PRICING_PER_1K_TOKENS[deployment]
     if deployment:
@@ -375,6 +384,7 @@ def _pricing_for(deployment: Optional[str]) -> Dict[str, float]:
 
 
 def _sum_token_usage(series, key: str) -> int:
+    """Total one token-usage field across a column of usage dicts, skipping nulls."""
     total = 0
     for usage in series.dropna():
         if isinstance(usage, dict):
@@ -387,10 +397,12 @@ def _sum_token_usage(series, key: str) -> int:
 
 
 def write_summary_table(df, deployments: Dict[str, Optional[str]], out: Path) -> None:
+    """Write the headline per-arm table: quality, pass rate, latency and cost."""
     import pandas as pd
     from src.evaluation import analysis_filters as af
 
     def _per_arm(group_df) -> Dict[str, Any]:
+        """Summary statistics for one arm's slice of the master dataframe."""
         n = len(group_df)
         composite = group_df["composite_human_quality"].dropna().tolist()
         mean_q = sum(composite) / len(composite) if composite else float("nan")
@@ -487,6 +499,11 @@ def _single_arm_ci(values: Sequence[float], n_iters: int = 2000,
 
 def write_pairwise_deltas(df, baseline: str, out: Path,
                           n_iters: int, seed: int) -> None:
+    """Write each arm's quality delta against the baseline with bootstrap CIs.
+
+    Bootstrapped rather than a t-test: the composite quality score is bounded and
+    skewed, so a normal approximation would misstate the interval at this sample size.
+    """
     import pandas as pd
     arms = sorted(df["arm"].unique())
     if baseline not in arms:
@@ -556,6 +573,7 @@ def write_per_axis_clean(df, out: Path) -> None:
 
 
 def write_failure_taxonomy(df, out: Path) -> None:
+    """Write per-arm counts of each failure mode."""
     import pandas as pd
     rows = []
     for arm, group in df.groupby("arm"):
@@ -577,6 +595,7 @@ def write_failure_taxonomy(df, out: Path) -> None:
 
 
 def write_latency_table(df, out: Path) -> None:
+    """Write per-arm latency percentiles."""
     import pandas as pd
     rows = []
     for arm, group in df.groupby("arm"):
@@ -605,6 +624,7 @@ def write_latency_table(df, out: Path) -> None:
 
 
 def write_category_breakdown(df, out: Path) -> None:
+    """Write per-arm quality and pass rate split by question category."""
     import pandas as pd
     rows = []
     for (arm, cat), group in df.groupby(["arm", "category"], dropna=False):
@@ -653,6 +673,7 @@ def write_intra_annotator_reliability(run_dir: Path, out: Path) -> None:
 # Plotting (matplotlib Agg backend; tests skip these paths).
 # ---------------------------------------------------------------------------
 def _setup_matplotlib():
+    """Import pyplot with the headless Agg backend — the container has no display."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -660,6 +681,7 @@ def _setup_matplotlib():
 
 
 def plot_quality_by_arm(df, out: Path) -> None:
+    """Bar chart of mean composite quality per arm, with CI whiskers."""
     plt = _setup_matplotlib()
     grouped = df.groupby("arm")["composite_human_quality"]
     means, lows, highs, arms = [], [], [], []
@@ -685,6 +707,7 @@ def plot_quality_by_arm(df, out: Path) -> None:
 
 
 def plot_per_axis_by_arm(df, out: Path) -> None:
+    """Grouped bar chart of mean score per human axis, per arm."""
     import numpy as np
     plt = _setup_matplotlib()
     arms = sorted(df["arm"].unique())
@@ -706,6 +729,7 @@ def plot_per_axis_by_arm(df, out: Path) -> None:
 
 
 def plot_latency_quality_scatter(df, out: Path) -> None:
+    """Scatter of latency against quality, one series per arm — the cost/benefit view."""
     plt = _setup_matplotlib()
     fig, ax = plt.subplots(figsize=(6, 4))
     for arm, group in df.groupby("arm"):
@@ -756,6 +780,7 @@ def plot_retry_rescue(df, out: Path) -> None:
 # CLI driver.
 # ---------------------------------------------------------------------------
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """CLI: --run-dir in, analysis tables and plots written to <run-dir>/analysis."""
     p = argparse.ArgumentParser(description="Analyse a SPARA EIL run directory.")
     p.add_argument("--run-dir", required=True, type=Path)
     p.add_argument("--questions", type=Path,
@@ -768,10 +793,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def count_error_rows(results: Dict[str, List[Dict[str, Any]]]) -> int:
+    """Rows that recorded an error, across every arm."""
     return sum(1 for rows in results.values() for r in rows if "error" in r)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Build every table and plot for a run directory; non-zero on failure."""
     args = parse_args(argv)
     run_dir = Path(args.run_dir)
     out = run_dir / "analysis"

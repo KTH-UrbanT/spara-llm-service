@@ -65,11 +65,17 @@ def rescore_rows(rows: list[dict], cases: dict[str, dict]) -> list[dict]:
 
 
 def rescore_replicate(run_dir: Path, cases: dict[str, dict]) -> dict:
+    """Re-score all three arms of one replicate run, keyed by arm."""
     return {arm: rescore_rows(_load(run_dir / arm / "traces" / "per_case.jsonl"), cases)
             for arm in ARMS}
 
 
 def flips(reps: dict[str, dict]) -> list[dict]:
+    """Rows whose recomputed must-include verdict disagrees with the stored one.
+
+    These are the cases where the frozen trace and a fresh re-score diverge, i.e. the
+    ones any claim about the stored numbers has to account for.
+    """
     return [{"run": rd, "arm": arm, **x}
             for rd, byarm in reps.items() for arm, rows in byarm.items()
             for x in rows if x["mi_re"] != x["mi_stored"]]
@@ -103,6 +109,7 @@ def consensus(reps: dict[str, dict], key: str) -> dict:
 
 
 def report(reps: dict[str, dict]) -> list[str]:
+    """Render the stored-vs-recomputed comparison as markdown lines."""
     md = ["# Recomputed deterministic re-score", "",
           f"Replicates: {', '.join(reps)}", "",
           "## Per-arm counts, stored vs recomputed (n per arm)", "",
@@ -151,6 +158,7 @@ def report(reps: dict[str, dict]) -> list[str]:
 
 
 def main(argv=None):
+    """CLI entry point; --run-dir repeats once per replicate."""
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", action="append", required=True, dest="run_dirs")
     p.add_argument("--dataset", required=True)

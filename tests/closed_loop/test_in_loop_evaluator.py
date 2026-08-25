@@ -1,8 +1,10 @@
+"""The judge: the no-gold invariant, the pass rule, attribution, and fail-open behaviour."""
 import inspect, json, os, pytest
 from unittest.mock import MagicMock, patch
 
 @pytest.fixture(autouse=True)
 def env_vars():
+    """Fake Azure env so `InLoopEvaluator` constructs without real credentials."""
     with patch.dict(os.environ, {
         "OPENAI_API_KEY": "test", "AZURE_ENDPOINT": "https://x.openai.azure.com/",
         "OPENAI_API_VERSION": "2023-05-15",
@@ -10,11 +12,13 @@ def env_vars():
     }): yield
 
 def _client(s):
+    """A stub Azure client whose single completion returns `s`."""
     c = MagicMock()
     c.chat.completions.create.return_value.choices = [MagicMock(message=MagicMock(content=s))]
     return c
 
 def _ev(s):
+    """An evaluator wired to a stub client that always replies with `s`."""
     from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
     with patch("src.evaluation.closed_loop.in_loop_evaluator.AzureOpenAI", return_value=_client(s)):
         return InLoopEvaluator()
@@ -35,11 +39,13 @@ def test_no_gold_in_public_methods():
                 assert not p.startswith(prefix), f"InLoopEvaluator.{name} has gold param {p!r}"
 
 def test_route_plausible():
+    """A plausible verdict parses through with its axis scores intact."""
     r = _ev(json.dumps({"verdict":"plausible","axes":{"intent_consistency":8,"precondition_satisfied":9},"corrective_hint":None}))
     v = r.route_plausible("q?", "building", True, None)
     assert v.verdict == "plausible" and v.axes["intent_consistency"] == 8
 
 def test_route_implausible():
+    """Low axes plus a long enough hint survive the guard as `implausible`."""
     r = _ev(json.dumps({"verdict":"implausible","axes":{"intent_consistency":3,"precondition_satisfied":2},"corrective_hint":"Route to generic instead of building."}))
     assert r.route_plausible("q?", "building", False, None).verdict == "implausible"
 
@@ -49,25 +55,34 @@ def test_route_short_hint_downgrades():
     assert r.route_plausible("q?", "building", False, None).verdict == "ambiguous"
 
 def test_route_fail_open():
+    """Unparseable output fails open to `plausible`, tagged so analysis can drop it.
+
+    Failing open keeps an outage from killing the run; the `_fail_open` tag is what
+    stops it from being counted as a real passing verdict.
+    """
     r = _ev("not json {{")
     v = r.route_plausible("q?", "building", True, None)
     assert v.verdict == "plausible" and v.axes.get("_fail_open")
 
 def test_answer_pass():
+    """A composite above TAU_SEMANTIC with no axis under the floor passes."""
     r = _ev(json.dumps({"verdict":"pass","axes":{"faithfulness":9,"answer_relevance":8,"question_coverage":8,"calibration":9},"composite":8.5,"stage_attribution":"summarizer","corrective_hint":None}))
     v = r.answer_quality("q?", _EV, "answer")
     assert v.verdict == "pass" and v.evidence_present is True
 
 def test_answer_fail():
+    """An axis below TAU_AXIS_FLOOR fails the answer and blames its stage."""
     r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":3,"answer_relevance":8,"question_coverage":7,"calibration":8},"composite":6.5,"stage_attribution":"summarizer","corrective_hint":"Fix numbers."}))
     v = r.answer_quality("q?", _EV, "wrong")
     assert v.verdict == "fail" and v.stage_attribution_rule == "summarizer"
 
 def test_attribution_router():
+    """`answer_relevance` lowest attributes the failure to the router."""
     r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":8,"answer_relevance":2,"question_coverage":7,"calibration":8},"composite":6.25,"stage_attribution":"router","corrective_hint":"Off topic."}))
     assert r.answer_quality("q?", _EV, "a").stage_attribution_rule == "router"
 
 def test_attribution_specialists():
+    """`question_coverage` lowest attributes to specialists (retired axis, frozen traces)."""
     r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":8,"answer_relevance":7,"question_coverage":2,"calibration":8},"composite":6.25,"stage_attribution":"specialists","corrective_hint":"Missing."}))
     assert r.answer_quality("q?", _EV, "a").stage_attribution_rule == "specialists"
 
@@ -173,6 +188,7 @@ def _ev_seq(*responses):
 
 
 def test_vote_fires_on_a_majority():
+    """2 of 3 implausible votes fire, and the hint comes from the first such vote."""
     r = _ev_seq(_IMPL, _PLAUS, _IMPL)
     v = r.route_plausible_voted("q?", "building", False, None, True, k=3)
     assert v.verdict == "implausible"
@@ -193,6 +209,7 @@ def test_vote_counts_post_guard_verdicts_only():
 
 
 def test_vote_sums_usage_across_calls():
+    """`last_usage` is the sum over the k votes, not the last vote's alone."""
     r = _ev_seq(_PLAUS, _PLAUS, _PLAUS)
     r.route_plausible_voted("q?", "building", False, None, True, k=3)
     assert r.last_usage["total_tokens"] == 30 and r.last_usage["completion_tokens"] == 12
@@ -208,6 +225,7 @@ def test_vote_k1_is_the_single_call_path():
 
 
 def test_vote_makes_exactly_k_calls():
+    """k votes cost exactly k calls — the self-consistency budget must not drift."""
     r = _ev_seq(_PLAUS, _PLAUS, _PLAUS)
     r.route_plausible_voted("q?", "building", False, None, True, k=3)
     assert r._client.chat.completions.create.call_count == 3
@@ -225,6 +243,7 @@ def test_diagnostic_names_the_retrieval_outage():
 
 
 def test_diagnostic_keeps_the_stage_name_when_evidence_was_present():
+    """`retrieval_starved` applies only with no evidence; otherwise the stage name stands."""
     r = _ev(json.dumps({"verdict":"fail","axes":{"faithfulness":8,"answer_relevance":9,"question_coverage":9,"calibration":3},"composite":7.25,"stage_attribution":"summarizer","corrective_hint":"Hedge."}))
     v = r.answer_quality("q?", _EV, "overclaiming")
     assert v.attribution_diagnostic == "summarizer"
@@ -264,6 +283,7 @@ def _v2(**axes):
 
 
 def _payload(r):
+    """The JSON the judge was actually sent — used to assert what it can and cannot see."""
     return json.loads(r._client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
 
 

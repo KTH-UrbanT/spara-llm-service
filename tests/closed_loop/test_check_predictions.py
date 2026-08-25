@@ -9,15 +9,18 @@ from scripts.check_predictions import (_det_pass, _det_view, _fix5, _judged, _n7
 
 
 def _case(cid, **kw):
+    """A trace row for one case; kwargs set the fields under test."""
     return {"case_id": cid, "expected_route": kw.pop("route", "generic"), **kw}
 
 
 def test_n77_drops_only_combined():
+    """The n=77 frame excludes exactly the `combined` cases — nothing else."""
     rows = [_case("a"), _case("b", route="combined"), _case("c", route="clarification")]
     assert [r["case_id"] for r in _n77(rows)] == ["a", "c"]
 
 
 def test_judged_excludes_short_circuits_and_fail_opens():
+    """Only genuinely scored attempts count — crashes and short-circuits are not data."""
     att = [{"evaluator_axes_json": {"faithfulness": 8}},
            {"evaluator_axes_json": {"_fail_open": True}},
            {"evaluator_axes_json": {"_short_circuit": True}},
@@ -38,6 +41,7 @@ def test_fix5_counts_only_conversions_not_prior_passes():
 
 
 def test_fix5_guards_must_still_request_address():
+    """The Fix 5 guard cases must keep asking for an address; losing one is a regression."""
     full = [_case(c, request_address_fired=True) for c in FIX5_GUARDS]
     assert len(_fix5({"A_open": [], "A_full": full})["guards_held"]) == 2
     full[0]["request_address_fired"] = False
@@ -55,6 +59,7 @@ def test_fix5_tracks_ekr_gen_030_without_counting_it():
 
 
 def _rep(**kw):
+    """One synthetic replicate; kwargs move individual counts off their conforming values."""
     arm = {"evidence_absent": kw.get("ev", 61), "pass_77": (kw.get("p77", 34), 77),
            "pass_88": (kw.get("p88", 34), 88), "late_rewind": kw.get("lr", 5),
            "attrib_fail": kw.get("attr", {"router": 3})}
@@ -68,15 +73,18 @@ def _rep(**kw):
 
 
 def _verdict_for(n, reps):
+    """Whether pre-registered prediction `n` passes over these replicates."""
     return [v for v in verdicts(reps) if v["n"] == n][0]["verdict"] == "PASS"
 
 
 def test_all_five_pass_on_a_conforming_replicate():
+    """All five predictions pass on replicates built to conform."""
     reps = [_rep(), _rep(), _rep()]
     assert all(_verdict_for(n, reps) for n in (1, 2, 3, 4, 5))
 
 
 def test_prediction_2_fails_outside_the_band():
+    """Prediction 2 is a band, not a floor — overshooting fails it too."""
     assert not _verdict_for(2, [_rep(p77=49)])
 
 
@@ -86,6 +94,7 @@ def test_prediction_3_fails_when_attribution_is_still_summarizer():
 
 
 def test_prediction_5_needs_two_of_three():
+    """Prediction 5 needs a majority of replicates, so one lucky run cannot carry it."""
     assert _verdict_for(5, [_rep(full88=40), _rep(full88=40), _rep(full88=10)])
     assert not _verdict_for(5, [_rep(full88=40), _rep(full88=10), _rep(full88=10)])
 
@@ -153,6 +162,7 @@ def test_consensus_majority_cancels_churn_but_keeps_reproducible_flips(tmp_path,
     ids = ["STEADY", "CHURN", "REAL", "LOST"]
 
     def fake_traces(rd, arm, kind):
+        """Serve per-replicate rows keyed by the run directory's index."""
         idx = int(str(rd))
         return [{"case_id": c, "case_pass": bool(per_rep[idx][arm].get(c))} for c in ids]
 
@@ -165,6 +175,7 @@ def test_consensus_majority_cancels_churn_but_keeps_reproducible_flips(tmp_path,
 
 
 def _det_row(cid, **kw):
+    """A trace row with every check passing; kwargs flip individual ones."""
     row = {"case_id": cid, "route_match": True, "agent_match": True,
            "building_id_match": True, "field_coverage_pass": True,
            "must_include_pass": True, "must_not_include_pass": True,
@@ -184,6 +195,7 @@ def test_det_pass_is_case_pass_minus_the_judge_bit():
 
 
 def test_det_view_is_shaped_for_mcnemar():
+    """The deterministic view re-keys by case_id and recomputes case_pass without the judge."""
     view = _det_view([_det_row("A", semantic_judge_pass=False, case_pass=False),
                       _det_row("B", route_match=False)])
     assert view["A"]["case_pass"] is True and view["B"]["case_pass"] is False
@@ -195,6 +207,7 @@ def test_consensus_det_scoring_ignores_the_judge_verdict(monkeypatch):
     from scripts import check_predictions as m
 
     def fake_traces(rd, arm, kind):
+        """Serve rows where only A_full passes the gold checks."""
         ok = arm == "A_full"
         return [_det_row("C", route_match=ok, semantic_judge_pass=False, case_pass=False)]
 

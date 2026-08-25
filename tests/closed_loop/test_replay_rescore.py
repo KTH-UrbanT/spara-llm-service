@@ -7,6 +7,7 @@ _CHECKS_OK = {"route_match": True, "agent_match": True, "building_id_match": Tru
 
 
 def _row(**kw) -> dict:
+    """A passing trace row; keyword args override individual fields."""
     d = {**_CHECKS_OK, "expected_route": "generic", "semantic_judge_pass": True,
          "final_sql_fields_used": [], "final_vector_chunks_retrieved": []}
     d.update(kw)
@@ -14,6 +15,7 @@ def _row(**kw) -> dict:
 
 
 def test_short_circuit_detected_by_absent_axes():
+    """A verdict with no axes never reached the judge, however it is spelled."""
     assert _was_short_circuit(_row(answer_quality_verdict={"verdict": "pass"})) is True
     assert _was_short_circuit(_row(answer_quality_verdict={"verdict": "pass", "axes": {}})) is True
 
@@ -26,6 +28,7 @@ def test_fail_open_is_not_mistaken_for_a_short_circuit():
 
 
 def test_fix3_short_circuit_follows_the_gold_route():
+    """A short-circuited case is scored against its gold route, not assumed to pass."""
     v = {"verdict": "pass"}
     wrong = rescore(_row(answer_quality_verdict=v, expected_route="generic"), True, False)
     right = rescore(_row(answer_quality_verdict=v, expected_route="clarification"), True, False)
@@ -55,11 +58,13 @@ def test_post_fix_sentinel_rows_are_recognised_as_short_circuits():
 
 
 def test_no_answer_sentinel_is_also_a_short_circuit():
+    """`_no_answer` is a short-circuit too, even though it carries a fail verdict."""
     v = {"verdict": "fail", "axes": {"_no_answer": True}, "composite": 0.0}
     assert _was_short_circuit(_row(answer_quality_verdict=v)) is True
 
 
 def test_fix4_drops_faithfulness_when_no_evidence_was_retrieved():
+    """With no evidence, faithfulness has no input and must not be scored 0 (§1.2)."""
     axes = {"faithfulness": 0, "answer_relevance": 9, "question_coverage": 9, "calibration": 9}
     row = _row(answer_quality_verdict={"verdict": "fail", "axes": axes})
     out = rescore(row, fix3=True, fix4=True)

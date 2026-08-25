@@ -26,6 +26,7 @@ def _axes_of(row: dict) -> dict | None:
 
 
 def _composite_of(row: dict) -> float | None:
+    """Composite score for a row, or None when the judge never genuinely scored it."""
     v = row.get("answer_quality_verdict") or {}
     if any((v.get("axes") or {}).get(m) for m in _NOT_JUDGED):
         return None
@@ -54,6 +55,7 @@ def _row_mean(rows: list[dict], axis: str) -> float | None:
 
 
 def main(argv=None):
+    """Print per-axis statistics grouped by expected route and by case-id prefix."""
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", required=True, type=Path)
     p.add_argument("--arm", default="A_open")

@@ -6,6 +6,7 @@ from scripts.rescore_deterministic import consensus, flips, rescore_rows
 
 
 def _row(cid, answer, mi, schema=3, **kw):
+    """A stored trace row at the given schema version."""
     # schema=3 is what every frozen 2026-08-13 trace carries: final_answer stored [:1000].
     others = dict(route_match=True, agent_match=True, building_id_match=True,
                   field_coverage_pass=True, must_not_include_pass=True,
@@ -17,6 +18,7 @@ def _row(cid, answer, mi, schema=3, **kw):
 
 
 def test_unchanged_dataset_reproduces_stored_values():
+    """Re-scoring an unchanged dataset reproduces the stored verdicts exactly."""
     cases = {"c1": {"must_include": ["B", "53"]}, "c2": {"must_include": ["189"]}}
     rows = rescore_rows([_row("c1", "class B, 53 kWh", True),
                          _row("c2", "class B, 53 kWh", False)], cases)
@@ -64,6 +66,7 @@ def test_v4_rows_are_conclusive_because_the_answer_is_stored_whole():
 
 
 def test_judge_none_stays_falsy_in_judge_inclusive_view():
+    """An unmeasured judge stays falsy after a re-score, matching `case_pass`."""
     # deterministic_checks.case_pass: an unmeasured judge (None) is not a passing case.
     cases = {"c1": {"must_include": []}}
     rows = rescore_rows([_row("c1", "x", True, semantic_judge_pass=None)], cases)
@@ -75,6 +78,7 @@ def test_consensus_majority_and_direction():
     land in `gained` for the b arm."""
     cases = {"conc": {"must_include": ["53"]}, "conv": {"must_include": ["ok"]}}
     def rep(open_ans, full_ans):
+        """A two-arm replicate differing only in the answer text."""
         return {"A_open": rescore_rows([_row("conc", "53", False), _row("conv", open_ans, False)], cases),
                 "A_full": rescore_rows([_row("conc", "53", False), _row("conv", full_ans, False)], cases)}
     reps = {f"r{i}": rep("no", "ok") for i in (1, 2, 3)}   # conc flips everywhere, conv converts

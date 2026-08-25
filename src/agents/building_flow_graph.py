@@ -1614,6 +1614,7 @@ def clarification_node(state: GraphState) -> GraphState:
 # =========================================================
 
 def _make_checkpoint_evaluator():
+    """Build the judge lazily, so importing this module never needs Azure credentials."""
     from src.evaluation.closed_loop.in_loop_evaluator import InLoopEvaluator
     return InLoopEvaluator()
 
@@ -1642,6 +1643,7 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
         # a pure read of the state, so we can ask it here and hand the judge the actual
         # pending decision. Not a threshold change: an added input (plan-eil-v20-fixes Fix 5).
         pending_hop = route_after_ambiguity(state)
+        # Judge the route: k independent votes, majority-fires (see EARLY_VOTE_K).
         vote_k = EARLY_VOTE_K
         verdict = ev.route_plausible_voted(
             question=str(state.get("last_message") or ""),
@@ -1649,7 +1651,9 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
             has_address_flag=bool((state.get("metadata") or {}).get("address")),
             about_to_request_address=(pending_hop == "request_address"),
             dialogue_summary=None, k=vote_k)
+        # Verdict -> action. The controller mutates `ctrl` (budget, history) in place.
         decision = EvaluationController().handle_early_checkpoint(verdict, ctrl)
+        # One per-attempt trace row; written by the harness, never read back by the graph.
         rec = {"checkpoint_fired": "early",
                "route_picked_this_attempt": state.get("top_route"),
                "evaluator_verdict_json": {"verdict": verdict.verdict, "axes": verdict.axes},
@@ -1657,6 +1661,9 @@ def early_route_checkpoint_node(state: GraphState) -> GraphState:
                "forced_route_applied": bool(state.get("forced_route_applied")),
                "controller_action": decision.action,
                "corrective_hint_passed": decision.corrective_hint}
+        # Write the spent budget and the judge's token cost back into the graph state. The
+        # eval_* counters are accumulated separately from the pipeline's own token usage so
+        # the cost of evaluation can be reported as its own overhead.
         u = getattr(ev, "last_usage", {}) or {}
         updates: dict = {
             "retry_budget": ctrl.retry_budget_remaining,
@@ -1700,7 +1707,9 @@ def answer_quality_checkpoint_node(state: GraphState) -> GraphState:
             # just upstream. Without it the judge sees several records under one address and
             # cannot tell which one is the user's, so citing either scores as faithful.
             identified_building=(state.get("metadata") or {}).get("building_identity_check"))
+        # Verdict -> action: pass terminates, fail rewinds to the attributed stage.
         decision = EvaluationController().handle_late_checkpoint(verdict, ctrl)
+        # Which specialists ran this attempt, recovered from the graph's invoked_* flags.
         specs = [a for a, f in [("generic_sql_agent", "invoked_generic_sql"),
                                 ("specialized_sql_agent", "invoked_specialized_sql"),
                                 ("vector_db_agent", "invoked_vector")] if state.get(f)]
@@ -1820,18 +1829,30 @@ def rewind_to_summarizer_node(state: GraphState) -> GraphState:
 
 
 def _route_after_early_checkpoint(state: GraphState) -> str:
+    """Rewind the router if the checkpoint asked for it, else take the normal hop.
+
+    `hint_target` is the only channel the checkpoint uses to request a rewind, and it is
+    cleared on every error path, so an unset target always falls through to normal routing.
+    """
     if state.get("hint_target") == "understand_context":
         return "rewind_to_router"
     return route_after_ambiguity(state)
 
 
 def _route_after_summarizer_with_checkpoint(state: GraphState) -> str:
+    """Send the draft to the late judge in the late/full arms; end the run in the open arm."""
     if _evaluator_mode() in ("late", "full"):
         return "answer_quality_checkpoint"
     return "end"
 
 
 def _route_after_answer_quality_checkpoint(state: GraphState) -> str:
+    """Map the controller's rewind target to its graph node; end when there is none.
+
+    The "end" fallthrough covers every terminate case alike — passed, out of budget,
+    unattributable, or router-disallowed in the late-only arm. Which one applied is
+    recorded in `controller_flags`, not re-derived here.
+    """
     target = state.get("hint_target")
     if target == "understand_context":
         return "rewind_to_router"
@@ -1846,15 +1867,23 @@ def _route_after_answer_quality_checkpoint(state: GraphState) -> str:
 # Graph wiring (NEW)
 # ====================
 def _identity(state: GraphState) -> GraphState:
+    """No-op node, used where the graph needs a join point with no behaviour."""
     print("[identity] passthrough", flush=True)
     return {}
 
 def _route_after_agent(state: GraphState) -> str:
+    """After a specialist: the parallel barrier if a fan-out is active, else the aggregator."""
     hop = "join_sql_vector" if state.get("parallel", {}).get("active") else "aggregator"
     print(f"[route_after_agent] → {hop}", flush=True)
     return hop
 
 def build_building_flow_graph() -> StateGraph:
+    """Wire every node and edge, including the closed-loop checkpoints and rewind cycles.
+
+    The graph is built identically in all three arms — the checkpoint nodes are always
+    present and simply return `{}` when EVALUATOR_MODE is off. One graph shape for every
+    arm is what keeps the open arm a true baseline rather than a differently-wired system.
+    """
     print("[build_graph] wiring graph ...", flush=True)
     builder = StateGraph(GraphState)
 
@@ -1950,7 +1979,11 @@ def build_building_flow_graph() -> StateGraph:
         },
     )
 
-    # Closed-loop rewind edges (cycles bounded by the retry budget)
+    # Closed-loop rewind edges (cycles bounded by the retry budget). These are the only
+    # back-edges in the graph: each rewind node clears the state its target will re-derive,
+    # then hands control back upstream. Termination is guaranteed by the controller, not by
+    # the graph — `retry_budget_remaining` and the anti-thrash history both gate every
+    # rewind, so a cycle can fire at most twice per case.
     builder.add_edge("rewind_to_router", "understand_context")
     builder.add_edge("rewind_to_specialists", "maintain_history")
     builder.add_edge("rewind_to_summarizer", "llm_summarizer")

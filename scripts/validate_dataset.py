@@ -89,10 +89,12 @@ CheckResult = Tuple[bool, List[str]]   # (passed, list_of_error_strings)
 
 
 def _fail(msg: str) -> CheckResult:
+    """A failing check result carrying one error message."""
     return False, [msg]
 
 
 def _ok() -> CheckResult:
+    """A passing check result with no errors."""
     return True, []
 
 
@@ -100,6 +102,7 @@ def _ok() -> CheckResult:
 # Check 1 — JSON well-formed + required top-level keys.
 # ============================================================================
 def check_top_level(data: Any) -> CheckResult:
+    """Check 1: the file is a JSON object with the expected top-level keys."""
     if not isinstance(data, dict):
         return _fail("dataset top-level is not a JSON object")
     errors: List[str] = []
@@ -115,6 +118,7 @@ def check_top_level(data: Any) -> CheckResult:
 # Check 2 — Per-record required fields.
 # ============================================================================
 def check_required_fields(records: List[Dict[str, Any]]) -> CheckResult:
+    """Check 2: every record carries all mandatory fields."""
     errors: List[str] = []
     for rec in records:
         qid = rec.get("question_id", "<unknown>")
@@ -143,6 +147,7 @@ def _is_iso_8601_utc(s: str) -> bool:
 
 
 def check_field_types(records: List[Dict[str, Any]]) -> CheckResult:
+    """Check 3: every field holds the right type and an allowed value."""
     errors: List[str] = []
     for rec in records:
         qid = rec.get("question_id", "<unknown>")
@@ -192,6 +197,7 @@ def check_field_types(records: List[Dict[str, Any]]) -> CheckResult:
 # Check 4 — question_id uniqueness and pattern.
 # ============================================================================
 def check_question_ids(records: List[Dict[str, Any]]) -> CheckResult:
+    """Check 4: question ids are unique — a duplicate would double-count a case."""
     errors: List[str] = []
     seen: Dict[str, int] = {}
     for rec in records:
@@ -212,6 +218,7 @@ def check_question_ids(records: List[Dict[str, Any]]) -> CheckResult:
 # Check 5 — Category counts match the experimental design.
 # ============================================================================
 def check_category_counts(records: List[Dict[str, Any]]) -> CheckResult:
+    """Check 5: per-category counts match the pre-registered composition."""
     errors: List[str] = []
     counts: Dict[str, int] = {}
     for rec in records:
@@ -234,6 +241,7 @@ def check_category_counts(records: List[Dict[str, Any]]) -> CheckResult:
 # Check 6 — Difficulty distribution sanity.
 # ============================================================================
 def check_difficulty_distribution(records: List[Dict[str, Any]]) -> CheckResult:
+    """Check 6: the difficulty mix matches the pre-registered distribution."""
     errors: List[str] = []
     counts: Dict[str, int] = {}
     for rec in records:
@@ -300,6 +308,11 @@ def check_db_resolvability(records: List[Dict[str, Any]]) -> CheckResult:
 # ============================================================================
 def check_smoke_subset(full_records: List[Dict[str, Any]],
                       smoke_records: List[Dict[str, Any]]) -> CheckResult:
+    """Check 7: the smoke set is a true subset, with records identical to the full set.
+
+    A smoke record that has drifted from its full-set twin means smoke runs are
+    exercising a dataset the real run will never see.
+    """
     errors: List[str] = []
     full_by_id = {r["question_id"]: r for r in full_records if isinstance(r.get("question_id"), str)}
 
@@ -321,6 +334,7 @@ def check_smoke_subset(full_records: List[Dict[str, Any]],
 # Driver
 # ============================================================================
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """CLI: --dataset in, optional --smoke to cross-check the smoke subset."""
     p = argparse.ArgumentParser(description="Validate the SPARA gold dataset.")
     p.add_argument("--dataset", required=True, type=Path,
                    help="Path to questions.json (or any candidate dataset file).")
@@ -334,6 +348,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def _load_json_file(path: Path) -> Any:
+    """Read and parse one JSON file."""
     with path.open(encoding="utf-8") as f:
         return json.load(f)
 
@@ -439,6 +454,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Entry point; exit status is `run`'s return code."""
     return run(parse_args(argv))
 
 

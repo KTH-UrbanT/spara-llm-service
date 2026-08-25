@@ -37,16 +37,23 @@ NOT_JUDGED = ("_fail_open", "_short_circuit", "_no_answer")
 
 
 def _traces(run_dir: Path, arm: str, kind: str) -> list[dict]:
+    """Load one arm's per_case or per_attempt trace file."""
     return _load(run_dir / arm / "traces" / f"{kind}.jsonl")
 
 
 def _by_id(rows: list[dict]) -> dict:
+    """Index trace rows by case_id, for pairing the same case across arms."""
     return {r["case_id"]: r for r in rows}
 
 
 # v22 R1: the six gold checks, i.e. case_pass minus `semantic_judge_pass` — the one term the
 # treatment arms retry until it flips. Defaults mirror deterministic_checks.case_pass.
 def _det_pass(r: dict) -> bool:
+    """Deterministic-core pass: every gold check EXCEPT the LLM judge.
+
+    The judge-free view of the same row, so a result can be reported without the
+    judge in the loop — the reviewer objection that the judge marks its own homework.
+    """
     return all([r.get("route_match", False), r.get("agent_match", True),
                 r.get("building_id_match", True), r.get("field_coverage_pass", True),
                 r.get("must_include_pass", True), r.get("must_not_include_pass", True)])
@@ -64,14 +71,21 @@ def _n77(rows: list[dict]) -> list[dict]:
 
 
 def _rate(rows: list[dict], key: str = "case_pass") -> tuple[int, int]:
+    """(passes, total) for one boolean column."""
     return sum(1 for r in rows if r.get(key)), len(rows)
 
 
 def _fmt(n: int, d: int) -> str:
+    """Format a count as "n/d = rate", tolerating d == 0."""
     return f"{n}/{d} = {(n / d if d else 0.0):.3f}"
 
 
 def _judged(attempts: list[dict]) -> list[dict]:
+    """Attempts the judge genuinely scored — no short-circuits, no fail-opens.
+
+    Any rate computed over unfiltered attempts silently counts a crashed judge as a
+    pass; see `NOT_JUDGED` and `analysis_filters`.
+    """
     out = []
     for a in attempts:
         ax = a.get("evaluator_axes_json") or {}
@@ -81,6 +95,7 @@ def _judged(attempts: list[dict]) -> list[dict]:
 
 
 def _verdict(a: dict) -> str | None:
+    """The judge's verdict string on one attempt, or None if it never ran."""
     return (a.get("evaluator_verdict_json") or {}).get("verdict")
 
 
@@ -153,6 +168,7 @@ def replicate(run_dir: Path) -> dict:
 
 
 def _tally(rows: list[dict], key: str) -> dict:
+    """Count distinct values of one column, most frequent first."""
     out: dict[str, int] = {}
     for r in rows:
         out[str(r.get(key))] = out.get(str(r.get(key)), 0) + 1
@@ -160,6 +176,7 @@ def _tally(rows: list[dict], key: str) -> dict:
 
 
 def _strata(rows: list[dict]) -> dict:
+    """(passes, total) per expected route."""
     by: dict[str, list] = {}
     for r in rows:
         by.setdefault(r.get("expected_route", "?"), []).append(r)
@@ -238,6 +255,7 @@ def consensus_mcnemar(run_dirs: list[Path], a: str = "A_open", b: str = "A_full"
 
 
 def _sd(vals: list[float]) -> float:
+    """Sample SD, or 0.0 when there is only one replicate to compare."""
     return statistics.stdev(vals) if len(vals) > 1 else 0.0
 
 
@@ -260,6 +278,11 @@ def _consensus_md(cons: dict) -> list[str]:
 
 
 def report(reps: list[dict]) -> list[str]:
+    """Render the full cross-replicate markdown report.
+
+    Covers per-arm rates with their between-replicate SD, the deterministic-core view,
+    per-stratum breakdowns, and the pre-registered prediction verdicts.
+    """
     md = ["# Pre-registered prediction check", "",
           f"Replicates: {len(reps)} — " + ", ".join(r["run_dir"] for r in reps), ""]
 
@@ -398,6 +421,7 @@ def verdicts(reps: list[dict]) -> list[dict]:
 
 
 def _verdicts(reps: list[dict]) -> list[str]:
+    """Render `verdicts` as a markdown table of prediction vs observed."""
     out = ["| # | prediction | observed | verdict |", "|---|---|---|---|"]
     for v in verdicts(reps):
         obs = v["observed"]
@@ -415,6 +439,7 @@ def _verdicts(reps: list[dict]) -> list[str]:
 
 
 def main(argv=None):
+    """CLI entry point; --run-dir repeats once per replicate."""
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", action="append", required=True, dest="run_dirs")
     p.add_argument("--out", default=None)

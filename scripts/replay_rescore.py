@@ -25,6 +25,7 @@ _DETERMINISTIC = ["route_match", "agent_match", "building_id_match",
 
 
 def _load(path: Path) -> list[dict]:
+    """Read a JSONL trace file; empty list if it is absent."""
     if not path.exists():
         return []
     return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()]
@@ -83,10 +84,12 @@ def rescore(row: dict, fix3: bool, fix4: bool) -> dict:
 
 
 def _fmt(n: int, d: int) -> str:
+    """Format a count as "n/d = rate", tolerating d == 0."""
     return f"{n}/{d} = {(n / d if d else 0.0):.3f}"
 
 
 def run(args) -> int:
+    """Re-score every arm in a run directory and print the stored-vs-replayed table."""
     rd = Path(args.run_dir)
     arms = [a for a in ARMS if (rd / a).exists()]
     if not arms:
@@ -146,12 +149,14 @@ def run(args) -> int:
 
 
 def parse_args(argv=None):
+    """CLI: --run-dir is the only argument."""
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", required=True)
     return p.parse_args(argv)
 
 
 def main(argv=None):
+    """Entry point; exit status is `run`'s return code."""
     sys.exit(run(parse_args(argv)))
 
 

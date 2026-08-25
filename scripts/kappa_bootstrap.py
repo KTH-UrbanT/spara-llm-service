@@ -31,6 +31,7 @@ AXIS_BINARY = "overall_pass"
 
 
 def load_pairs(run_dir: Path):
+    """Pair each re-labelled output with its original label, keyed by output id."""
     primary = {}
     with (run_dir / "human_labels.csv").open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
@@ -56,11 +57,17 @@ def load_pairs(run_dir: Path):
 
 
 def kappa(pairs, weights):
+    """Cohen's kappa over the paired labels, with the given weighting scheme."""
     a, b = zip(*pairs)
     return float(cohen_kappa_score(a, b, weights=weights))
 
 
 def bootstrap(pairs, weights, n_resamples, rng):
+    """Bootstrap distribution of kappa, resampling annotator pairs with replacement.
+
+    With n = 8 pairs the analytic standard error is not trustworthy, so the CI is
+    resampled instead.
+    """
     n = len(pairs)
     out = np.empty(n_resamples)
     for i in range(n_resamples):
@@ -74,6 +81,7 @@ def bootstrap(pairs, weights, n_resamples, rng):
 
 
 def main():
+    """CLI entry point; prints kappa with its bootstrap CI."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", required=True, type=Path)
     ap.add_argument("--n-resamples", type=int, default=10000)

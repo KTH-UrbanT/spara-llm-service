@@ -84,11 +84,13 @@ Some fluent answer.
 
 
 def test_parse_extracts_case_ids_in_order():
+    """Form blocks parse in document order, so labels line up with their worklist rows."""
     blocks = _parse_form(MINI_FORM)
     assert [b["case_id"] for b in blocks] == ["EKR_GEN_006", "DEMO_EXTRA_BRF_002"]
 
 
 def test_parse_extracts_all_five_scores_and_notes():
+    """Every scored field and the free-text note survive parsing."""
     b0 = _parse_form(MINI_FORM)[0]
     assert b0["faithfulness"] == "10"
     assert b0["answer_relevance"] == "9"
@@ -99,18 +101,21 @@ def test_parse_extracts_all_five_scores_and_notes():
 
 
 def test_blank_block_detected():
+    """An unfilled block is recognised as blank, so it is skipped rather than scored 0."""
     blocks = _parse_form(MINI_FORM)
     assert _is_blank_label(blocks[0], V1_AXES) is False
     assert _is_blank_label(blocks[1], V1_AXES) is True
 
 
 def test_validate_accepts_in_range():
+    """A fully scored, in-range block validates clean."""
     assert _validate_label({"faithfulness": "10", "answer_relevance": "9",
                             "question_coverage": "8", "calibration": "7",
                             "overall_pass": "1"}, V1_AXES) is None
 
 
 def test_validate_rejects_out_of_range_axis():
+    """An out-of-range axis is rejected and the error names the offending axis."""
     err = _validate_label({"faithfulness": "12", "answer_relevance": "9",
                            "question_coverage": "8", "calibration": "7",
                            "overall_pass": "1"}, V1_AXES)
@@ -118,6 +123,7 @@ def test_validate_rejects_out_of_range_axis():
 
 
 def test_validate_rejects_bad_overall_pass():
+    """`overall_pass` must be 0 or 1."""
     err = _validate_label({"faithfulness": "10", "answer_relevance": "9",
                            "question_coverage": "8", "calibration": "7",
                            "overall_pass": "2"}, V1_AXES)
@@ -125,6 +131,7 @@ def test_validate_rejects_bad_overall_pass():
 
 
 def test_ingest_md_writes_only_filled_cases(tmp_path):
+    """Only filled blocks reach the labels CSV; blanks are not written as rows."""
     form = tmp_path / "form.md"
     form.write_text(MINI_FORM, encoding="utf-8")
     labels = tmp_path / "labels.csv"
@@ -169,11 +176,13 @@ def test_ac1_is_stable_exactly_where_kappa_collapses():
 
 
 def test_ac1_degenerate_inputs_do_not_crash():
+    """AC1 handles the zero-variance edges that make kappa undefined."""
     assert _ac1([]) == 0.0
     assert _ac1([(1, 1)] * 5) == 1.0        # perfect agreement, zero variance
 
 
 def _worklist(tmp_path, rows):
+    """Write a worklist CSV and return its path."""
     p = tmp_path / "worklist.csv"
     with p.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=WORKLIST_FIELDS)
@@ -184,6 +193,7 @@ def _worklist(tmp_path, rows):
 
 
 def _labels(tmp_path, rows):
+    """Write a labels CSV and return its path."""
     p = tmp_path / "labels.csv"
     with p.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=LABEL_FIELDS)
@@ -201,6 +211,7 @@ _HUMAN = {"answer_relevance": 9, "question_coverage": 9, "calibration": 9,
 
 
 def _kappa(tmp_path, worklist_rows, label_rows):
+    """Run the kappa sub-command over a worklist/labels pair and return its output."""
     out = tmp_path / "kappa.json"
     cmd_kappa(argparse.Namespace(worklist=_worklist(tmp_path, worklist_rows),
                                  labels=_labels(tmp_path, label_rows),
@@ -222,6 +233,7 @@ def test_kappa_keeps_judged_rows_whose_faithfulness_is_null(tmp_path):
 
 
 def test_kappa_drops_only_fail_open_rows(tmp_path):
+    """Fail-open rows are excluded from agreement; genuinely judged rows are kept."""
     wl = [dict(_JUDGED_AXES, case_id="C0", judge_faithfulness=8),
           dict(_JUDGED_AXES, case_id="C1", judge_faithfulness="", judge_fail_open=True)]
     lb = [dict(_HUMAN, case_id="C0"), dict(_HUMAN, case_id="C1")]
@@ -230,6 +242,11 @@ def test_kappa_drops_only_fail_open_rows(tmp_path):
 
 
 def test_kappa_reports_gates_and_flags_kappa_as_ungated(tmp_path):
+    """Gates are reported on agreement and AC1; kappa itself is explicitly ungated.
+
+    On a skewed label distribution kappa collapses even at near-total agreement, so
+    gating on it would fail a panel that is in fact consistent.
+    """
     wl = [dict(_JUDGED_AXES, case_id=f"C{i}", judge_faithfulness=9) for i in range(10)]
     lb = [dict(_HUMAN, case_id=f"C{i}") for i in range(10)]
     out = _kappa(tmp_path, wl, lb)
@@ -240,6 +257,7 @@ def test_kappa_reports_gates_and_flags_kappa_as_ungated(tmp_path):
 # --- sampling -------------------------------------------------------------------------
 
 def _run_dir(tmp_path, rows):
+    """Lay out a run directory containing one arm's per-case trace."""
     d = tmp_path / "run" / "A_open" / "traces"
     d.mkdir(parents=True)
     (d / "per_case.jsonl").write_text(
@@ -251,12 +269,14 @@ def _run_dir(tmp_path, rows):
 
 
 def _row(cid, axes, **kw):
+    """A judged, passing trace row carrying the given axis scores."""
     return {"case_id": cid, "expected_route": "generic", "final_answer": f"answer {cid}",
             "answer_quality_verdict": {"verdict": "pass", "axes": axes, "composite": 8.0},
             "semantic_judge_pass": True, **kw}
 
 
 def test_was_judged_excludes_short_circuits_and_fail_opens():
+    """Only genuinely scored attempts count as judged — not short-circuits or crashes."""
     assert _was_judged(_row("a", {"calibration": 9}))
     assert not _was_judged(_row("b", {"_fail_open": True}))
     assert not _was_judged(_row("c", {"_short_circuit": True}))
@@ -264,6 +284,7 @@ def test_was_judged_excludes_short_circuits_and_fail_opens():
 
 
 def test_all_judged_takes_the_whole_judged_pool(tmp_path):
+    """Sampling "all judged" takes every judged row, not a subsample of it."""
     rows = [_row("A", {"calibration": 9, "faithfulness": None}),
             _row("B", {"calibration": 8}),
             _row("C", {"_short_circuit": True}),
@@ -282,11 +303,13 @@ def test_all_judged_takes_the_whole_judged_pool(tmp_path):
 # --- audit-ungrounded -----------------------------------------------------------------
 
 def _audit_ns(run, ds, sheet, n=20):
+    """CLI namespace for the audit sub-command."""
     return argparse.Namespace(run_dir=run, arm="A_open", dataset=ds, sheet=sheet,
                               n=n, seed=1)
 
 
 def test_audit_samples_only_evidence_absent_answers(tmp_path):
+    """The evidence-absent audit must not pull in rows that did have evidence."""
     rows = [_row("A", {"calibration": 9}, evidence_present=False),
             _row("B", {"calibration": 9}, evidence_present=True),
             _row("C", {"calibration": 9}, evidence_present=False)]

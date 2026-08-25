@@ -43,6 +43,7 @@ OPEN = "open_final"
 
 
 def _iter_jsonl(path: Path):
+    """Yield each JSON record from a JSONL file; yields nothing if it is absent."""
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -72,6 +73,11 @@ def collect(run_dirs: list[Path]) -> list[dict]:
 
 
 def _axis_names(records: list[dict]) -> list[str]:
+    """Axis names discovered from the traces themselves, in first-seen order.
+
+    Read from the data rather than hardcoded so a rubric change shows up as a new axis
+    instead of being silently dropped from the census.
+    """
     seen: list[str] = []
     for r in records:
         for k in r["axes"]:
@@ -124,6 +130,10 @@ def summarise(records: list[dict], axis: str, degenerate_pct: float) -> dict:
 
 
 def build(records: list[dict], degenerate_pct: float) -> dict:
+    """Score-distribution census per axis, flagging any axis that is near-constant.
+
+    A degenerate axis carries no information — this is what retired `question_coverage`.
+    """
     axes = _axis_names(records)
     pools = {}
     for pool in (LATE, OPEN):
@@ -141,6 +151,7 @@ def build(records: list[dict], degenerate_pct: float) -> dict:
 
 
 def to_md(census: dict) -> str:
+    """Render the census as a markdown report."""
     L = ["# Axis census — plan-eil-v25 Step 3", "",
          f"Degeneracy flag: ≥ {census['degenerate_pct_threshold']:.0f} % of *scored* values "
          f"on one point. Sub-floor = score < {census['axis_floor']} (the axis fired).", ""]
@@ -167,6 +178,7 @@ def to_md(census: dict) -> str:
 
 
 def main(argv=None):
+    """CLI entry point; --run-dir repeats to pool several runs."""
     p = argparse.ArgumentParser()
     p.add_argument("--run-dir", action="append", required=True, type=Path,
                    help="Repeatable. A study run dir containing per-arm subdirectories.")

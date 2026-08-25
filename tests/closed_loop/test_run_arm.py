@@ -1,7 +1,9 @@
+"""The harness: snapshot assembly, evidence caching, resume, and offline scoring."""
 import json, pytest
 from pathlib import Path
 
 def test_snapshot_assembles_union_and_specialists():
+    """The snapshot unions both SQL agents' fields and lists every specialist invoked."""
     from scripts.run_arm_closed_loop import extract_snapshot
     final = {
         "top_route": "building", "clarification_fired": False, "request_address_fired": False,
@@ -20,10 +22,12 @@ def test_snapshot_assembles_union_and_specialists():
     assert snap["total_tokens"] == 42
 
 def test_completed_empty(tmp_path):
+    """A run directory with no traces has nothing completed to resume from."""
     from scripts.run_arm_closed_loop import load_completed_case_ids
     assert load_completed_case_ids(tmp_path, "A_open") == set()
 
 def test_completed_from_trace(tmp_path):
+    """Completed ids come from the traces on disk, so an interrupted run resumes."""
     from scripts.run_arm_closed_loop import load_completed_case_ids
     from src.evaluation.closed_loop.trace_schema import append_per_case_trace
     append_per_case_trace({"case_id": "Q001"}, tmp_path, "A_open")
@@ -31,6 +35,7 @@ def test_completed_from_trace(tmp_path):
     assert load_completed_case_ids(tmp_path, "A_open") == {"Q001", "Q002"}
 
 def test_cache_roundtrip(tmp_path):
+    """Evidence survives save/load byte-identically — the paired comparison depends on it."""
     from scripts.run_arm_closed_loop import save_case_cache, load_case_cache
     bundle = {"aggregated_data": {"generic_sql": [{"byggnadsid": "B1"}]},
               "invoked_generic_sql": True, "sql_fields_generic": ["byggnadsid"]}
@@ -38,6 +43,7 @@ def test_cache_roundtrip(tmp_path):
     assert load_case_cache(tmp_path, "A_open", "Q001") == bundle
 
 def test_cache_miss(tmp_path):
+    """An uncached case returns None rather than raising, so the arm re-runs it."""
     from scripts.run_arm_closed_loop import load_case_cache
     assert load_case_cache(tmp_path, "A_open", "Q999") is None
 
@@ -56,6 +62,7 @@ def test_resolve_clarification_fails_when_gold_expects_an_answer():
     assert resolve_scoring_verdict(snap, case, None)["verdict"] == "fail"
 
 def test_resolve_request_address_fails_when_gold_expects_an_answer():
+    """Bouncing for an address when gold expects an answer is a fail, not an unscored case."""
     from scripts.run_arm_closed_loop import resolve_scoring_verdict
     snap = {"request_address_fired": True, "answer_quality_verdict": None, "final_answer": "Address?"}
     case = {"question": "q", "expected_route": "building_specific"}
@@ -70,6 +77,10 @@ def test_resolve_short_circuit_beats_a_stale_in_loop_verdict():
     assert resolve_scoring_verdict(snap, case, None)["verdict"] == "fail"
 
 def test_resolve_reuses_in_loop_verdict():
+    """The closed-loop arms reuse the verdict already computed in the graph.
+
+    Re-judging offline would both double the cost and let the two verdicts disagree.
+    """
     from scripts.run_arm_closed_loop import resolve_scoring_verdict
     snap = {"clarification_fired": False, "request_address_fired": False,
             "answer_quality_verdict": {"verdict": "fail"}, "final_answer": "x"}
@@ -86,6 +97,7 @@ def test_cache_keys_exclude_this_arms_decision_flags():
     assert "identity_gate_blocked" in _CACHE_KEYS
 
 def test_identity_gate_flag_round_trips_into_the_cached_arm():
+    """The identity-gate flag survives into a cached replay, so the arms stay comparable."""
     from scripts.run_arm_closed_loop import extract_snapshot, build_initial_state
     snap = extract_snapshot({"top_route": "building", "identity_gate_blocked": True,
                              "final_response": "Could not find that building."})
@@ -93,6 +105,7 @@ def test_identity_gate_flag_round_trips_into_the_cached_arm():
     assert state["identity_gate_blocked"] is True
 
 def test_resolve_open_arm_scores_once():
+    """The open arm has no in-loop verdict, so it is judged offline exactly once."""
     from unittest.mock import MagicMock
     from scripts.run_arm_closed_loop import resolve_scoring_verdict
     scorer = MagicMock()
@@ -161,6 +174,7 @@ def test_run_record_pins_the_judge_sampling_actually_requested(tmp_path):
     ds.write_text('{"case_id": "X", "question": "q"}\n', encoding="utf-8")
 
     def sampling_for(dep):
+        """The sampling params recorded for a given deployment name."""
         with patch.dict(os.environ, {"OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": dep}):
             if not dep:
                 os.environ.pop("OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")

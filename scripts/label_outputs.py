@@ -91,6 +91,7 @@ def discover_arms(run_dir: Path) -> List[str]:
 
 
 def _iter_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
+    """Yield each JSON record from a JSONL file; yields nothing if it is absent."""
     if not path.exists():
         return
     with path.open(encoding="utf-8") as f:
@@ -204,6 +205,7 @@ def _ask(prompt: str) -> str:
 
 
 def ask_int_in_range(label: str, low: int, high: int) -> int:
+    """Prompt until the annotator enters an integer inside [low, high]."""
     while True:
         raw = _ask(f"  {label} ({low}-{high}): ").strip()
         if not raw.isdigit() and not (raw.startswith("-") and raw[1:].isdigit()):
@@ -230,6 +232,7 @@ def ask_failure_tags() -> str:
 
 
 def ask_notes() -> str:
+    """Prompt for the optional free-text note on a label."""
     return _ask("  notes (one line): ").strip()
 
 
@@ -261,6 +264,11 @@ def render_output(idx: int, total: int, output: Dict[str, Any]) -> str:
 # Mode: label
 # ---------------------------------------------------------------------------
 def run_label_mode(args: argparse.Namespace) -> int:
+    """Label every unlabelled output, blinded to which arm produced it.
+
+    Blinding is the point: the annotator sees `_output_id`, never the arm name, so
+    knowing which system is under test cannot bias the score.
+    """
     run_dir = Path(args.run_dir)
     csv_path = run_dir / LABELS_FILENAME
     questions = load_questions(args.questions)
@@ -371,6 +379,7 @@ def _print_summary(csv_path: Path) -> None:
 # Mode: relabel (intra-annotator reliability).
 # ---------------------------------------------------------------------------
 def run_relabel_mode(args: argparse.Namespace) -> int:
+    """Re-label a sample of already-labelled outputs, for intra-annotator agreement."""
     run_dir = Path(args.run_dir)
     labels_path = run_dir / LABELS_FILENAME
     relabels_path = run_dir / RELABELS_FILENAME
@@ -511,6 +520,7 @@ def _print_relabel_diagnostics(labels_path: Path, relabels_path: Path) -> None:
 # CLI driver.
 # ---------------------------------------------------------------------------
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """CLI: --mode label or relabel, over a run directory."""
     p = argparse.ArgumentParser(
         description="Single-annotator blinded labelling for SPARA EIL outputs.",
     )
@@ -530,6 +540,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Entry point dispatching label / relabel mode."""
     args = parse_args(argv)
     if args.mode == "relabel":
         return run_relabel_mode(args)

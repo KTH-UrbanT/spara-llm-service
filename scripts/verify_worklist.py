@@ -33,6 +33,7 @@ GOLD_MARKERS = ("expected_building", "must_include", "must_not_include",
 
 
 def main(argv=None):
+    """Run every structural check over a worklist CSV; exit non-zero on any failure."""
     p = argparse.ArgumentParser()
     p.add_argument("--worklist", required=True, type=Path)
     p.add_argument("--include-rows", type=Path)
@@ -50,6 +51,7 @@ def main(argv=None):
     fails: list[str] = []
 
     def check(ok: bool, msg: str):
+        """Record one pass/fail line; failures accumulate into the exit status."""
         print(f"[{'ok  ' if ok else 'FAIL'}] {msg}")
         if not ok:
             fails.append(msg)

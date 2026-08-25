@@ -35,6 +35,7 @@ SCHEMES = {
 
 
 def composite(row, weights):
+    """Weighted composite score for one labelled row."""
     s = 0.0
     for axis, w in weights.items():
         try:
@@ -45,6 +46,11 @@ def composite(row, weights):
 
 
 def main():
+    """Recompute per-arm results under each weighting scheme.
+
+    A conclusion that only holds under one arbitrary axis weighting is not a result;
+    this is the sensitivity check for that.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--labels", required=True, type=Path,
                     help="Path to human_labels.csv")

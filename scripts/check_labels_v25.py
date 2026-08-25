@@ -28,6 +28,11 @@ BID = re.compile(r"\b\d{2}-\d{2,3}-[A-Z0-9ÅÄÖ]+-\d+\b")
 
 
 def main(argv=None):
+    """Run the structural and coherence checks over a labels CSV.
+
+    Deliberately reports no agreement statistic — this must pass BEFORE kappa is
+    computed, so a malformed file cannot masquerade as annotator disagreement.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--worklist", required=True, type=Path)
     p.add_argument("--labels", required=True, type=Path)

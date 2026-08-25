@@ -9,6 +9,7 @@ ARMS = ["A2_judge_A", "A2_judge_B", "A2_judge_C"]
 
 
 def load_verdicts(arm: str) -> dict[str, str]:
+    """One prompt variant's verdict per question, keyed by question id."""
     out = {}
     for line in (RUN_DIR / arm / "results.jsonl").read_text().splitlines():
         r = json.loads(line)

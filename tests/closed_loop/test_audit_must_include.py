@@ -7,6 +7,7 @@ from scripts.audit_must_include import audit, bounded
 
 
 def test_bounded_rejects_longer_number_and_word():
+    """Token matching is boundary-anchored: "155" must not match inside "155406"."""
     assert bounded("155", "value: 155,")
     assert not bounded("155", "eginormkorrgd: 155406")
     assert not bounded("155", "x: 155.4")
@@ -15,6 +16,7 @@ def test_bounded_rejects_longer_number_and_word():
 
 def _write(tmp: Path, cases: list[dict], caches: dict[str, dict],
            traces: list[dict] = ()) -> tuple[Path, Path]:
+    """Lay out a dataset plus a matching case cache on disk."""
     ds = tmp / "cases.jsonl"
     ds.write_text("\n".join(json.dumps(c) for c in cases), encoding="utf-8")
     run = tmp / "run"
@@ -30,10 +32,12 @@ def _write(tmp: Path, cases: list[dict], caches: dict[str, dict],
 
 
 def _classes(findings):
+    """Index findings by (case_id, token) so a test can assert one token's class."""
     return {(f["case_id"], str(f["token"])): f["class"] for f in findings}
 
 
 def test_audit_classifies_the_three_r2_defect_classes(tmp_path):
+    """Each defect class is recognised: absent, wrong-record, and unit-mismatch tokens."""
     epc = lambda perf: {"energy_performance": perf, "energy_class": "B"}
     cases = [
         # stale-gold: 189 in no retrieval of BLD-A, sibling included
@@ -75,6 +79,7 @@ def test_audit_downgrades_a_translated_token_to_indirect_not_stale_gold(tmp_path
 
 
 def test_audit_marks_a_clean_token_ok(tmp_path):
+    """A token genuinely present in the evidence is not flagged."""
     cases = [{"case_id": "GOOD", "expected_building_id": "BLD",
               "must_include": ["fjärrvärme"]}]
     caches = {"GOOD": {"generic_sql": [{"heating_system": "Fjärrvärme"}]}}

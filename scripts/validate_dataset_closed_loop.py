@@ -45,6 +45,7 @@ def filter_cases(cases: list[dict]) -> list[dict]:
 
 
 def write_manifest(filtered: list[dict], out_jsonl: Path, out_manifest: Path) -> None:
+    """Write the filtered case list plus a CSV manifest of what survived filtering."""
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
     out_manifest.parent.mkdir(parents=True, exist_ok=True)
     with open(out_jsonl, "w", encoding="utf-8") as f:
@@ -60,6 +61,10 @@ def write_manifest(filtered: list[dict], out_jsonl: Path, out_manifest: Path) ->
 
 
 def validate_counts(filtered: list[dict]) -> list[str]:
+    """Check per-route case counts against the pre-registered dataset composition.
+
+    Returns a list of human-readable errors; empty means the dataset is as designed.
+    """
     errors = []
     by_route: dict[str, int] = {}
     for c in filtered:
@@ -92,6 +97,7 @@ def check_field_mapping_completeness(filtered: list[dict]) -> list[str]:
 
 
 def parse_args(argv=None):
+    """CLI: --dataset in, --out-jsonl/--out-manifest out, --strict to fail on warnings."""
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", required=True)
     p.add_argument("--out-jsonl", default="artifacts/datasets/filtered_cases.jsonl")
@@ -101,6 +107,7 @@ def parse_args(argv=None):
 
 
 def run(args) -> int:
+    """Filter the dataset, validate it, and write the artifacts; non-zero on failure."""
     path = Path(args.dataset)
     if not path.exists():
         print(f"ERROR: {path} not found", file=sys.stderr); return 1
@@ -126,6 +133,7 @@ def run(args) -> int:
 
 
 def main(argv=None):
+    """Entry point; exit status is `run`'s return code."""
     sys.exit(run(parse_args(argv)))
 
 if __name__ == "__main__":

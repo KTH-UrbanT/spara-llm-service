@@ -47,6 +47,7 @@ AXES = ("groundedness", "completeness",
 # emit — produce the fillable form.
 # ---------------------------------------------------------------------------
 def cmd_emit(args: argparse.Namespace) -> int:
+    """Generate the fillable markdown relabel form from a stratified sample."""
     run_dir = Path(args.run_dir)
     labels_path = run_dir / LABELS_FILENAME
     if not labels_path.exists():
@@ -93,6 +94,7 @@ def cmd_emit(args: argparse.Namespace) -> int:
 
 def _render_form(selected: List[Dict[str, Any]], subset: int, seed: int,
                  cat_counts: Dict[str, int]) -> str:
+    """Render the whole form: header, sampling provenance, then one block per output."""
     parts: List[str] = []
     parts.append(f"""# Intra-annotator relabel form
 
@@ -124,6 +126,11 @@ That appends to `artifacts/runs/2026-05-14_v2/intra_annotator_relabels.csv` (res
 
 
 def _render_one(idx: int, total: int, output: Dict[str, Any]) -> str:
+    """Render one output's block: evidence, answer, and the blank score fields.
+
+    Identified by `output_id` only — the arm is never shown, keeping the relabel as
+    blinded as the original labelling pass.
+    """
     agg = output.get("aggregated_data") or {}
     agg_str = json.dumps(agg, ensure_ascii=False, indent=2) if agg else "(no evidence captured)"
     return f"""## Output {idx} of {total} — output_id: `{output['output_id']}`
@@ -171,6 +178,7 @@ KV_RE = re.compile(r"^([a-z_]+)\s*:\s*(.*?)(?:\s*#.*)?$")
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
+    """Parse the filled-in form back into the relabels CSV, validating every block."""
     run_dir = Path(args.run_dir)
     labels_path = run_dir / LABELS_FILENAME
     relabels_path = run_dir / RELABELS_FILENAME
@@ -235,6 +243,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def _parse_block(block: str) -> Optional[Dict[str, str]]:
+    """Parse one filled-in markdown block into field/value pairs; None if left blank."""
     out: Dict[str, str] = {}
     for raw in block.splitlines():
         line = raw.strip()
@@ -255,6 +264,7 @@ def _is_blank(parsed: Dict[str, str]) -> bool:
 
 def _build_row(parsed: Dict[str, str], meta: Dict[str, Any],
                annotator_id: str) -> Dict[str, Any]:
+    """Combine a parsed block with its worklist metadata into a labels CSV row."""
     return {
         "output_id": meta["output_id"],
         "annotator_id": annotator_id,
@@ -273,6 +283,7 @@ def _build_row(parsed: Dict[str, str], meta: Dict[str, Any],
 
 
 def _validate_row(row: Dict[str, Any]) -> Optional[str]:
+    """Return the first validation error in a row, or None if it is well-formed."""
     for axis in AXES:
         val = str(row[axis]).strip()
         if not val.isdigit() or not (0 <= int(val) <= 4):
@@ -293,6 +304,11 @@ def _validate_row(row: Dict[str, Any]) -> Optional[str]:
 # CLI
 # ---------------------------------------------------------------------------
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """CLI for the emit / ingest sub-commands.
+
+    NOTE: the module docstring is this parser's help text (RawDescriptionHelpFormatter),
+    so editing it changes what `--help` prints.
+    """
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -318,6 +334,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Entry point dispatching emit (make the form) and ingest (read it back)."""
     args = parse_args(argv)
     if args.cmd == "emit":
         return cmd_emit(args)

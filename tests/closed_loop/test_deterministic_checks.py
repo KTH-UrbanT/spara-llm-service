@@ -1,3 +1,4 @@
+"""Gold-grounded checks, and the tri-state judge rule that decides what counts as measured."""
 import pytest
 from src.evaluation.closed_loop.deterministic_checks import (
     check_building_id_match, check_field_coverage, check_must_include,
@@ -5,6 +6,7 @@ from src.evaluation.closed_loop.deterministic_checks import (
 )
 
 def _s(**kw) -> dict:
+    """A default building-route snapshot; keyword args override individual fields."""
     d = {"top_route": "building", "clarification_fired": False,
          "request_address_fired": False, "specialists_invoked": ["generic_sql_agent"],
          "resolved_building_id": "01-80-TEST-1",
@@ -12,37 +14,73 @@ def _s(**kw) -> dict:
          "vector_chunks_retrieved": []}
     d.update(kw); return d
 
-def test_bid_absent(): assert check_building_id_match(_s(), {}) is True
-def test_bid_pass(): assert check_building_id_match(_s(), {"expected_building_id": "01-80-TEST-1"}) is True
-def test_bid_fail(): assert check_building_id_match(_s(), {"expected_building_id": "OTHER"}) is False
+def test_bid_absent():
+    """A case pinning no building id matches vacuously."""
+    assert check_building_id_match(_s(), {}) is True
 
-def test_fc_empty(): p, v = check_field_coverage(_s(), {}); assert p is True and v == 1.0
+def test_bid_pass():
+    """The resolved id equals the expected one."""
+    assert check_building_id_match(_s(), {"expected_building_id": "01-80-TEST-1"}) is True
+
+def test_bid_fail():
+    """Resolving the wrong building fails, even though a building was resolved."""
+    assert check_building_id_match(_s(), {"expected_building_id": "OTHER"}) is False
+
+def test_fc_empty():
+    """A case expecting no fields scores full coverage."""
+    p, v = check_field_coverage(_s(), {}); assert p is True and v == 1.0
+
 def test_fc_full():
+    """Every expected field was used; extra fields do not penalise."""
     f = FIELD_NAME_MAP.get("energy_performance", "energy_performance")
     p, v = check_field_coverage(_s(sql_fields_used=[f, "byggnadsid"]),
                                  {"expected_fields": ["energy_performance"]})
     assert p is True and v == pytest.approx(1.0)
+
 def test_fc_partial():
+    """Half the expected fields fails at the default tau of 1.0.
+
+    A partial answer to a fact question is a wrong answer, so coverage must be total.
+    """
     ef = FIELD_NAME_MAP.get("energy_performance", "energy_performance")
     p, v = check_field_coverage(_s(sql_fields_used=[ef]),
                                  {"expected_fields": ["energy_performance", "heating_system"]},
                                  tau_field=1.0)
     assert p is False and v == pytest.approx(0.5)
+
 def test_fc_vector_excluded():
+    """Vector chunks never count toward field coverage — they are not typed registry fields."""
     p, v = check_field_coverage(
         _s(sql_fields_used=[], vector_chunks_retrieved=[{"source": "g.pdf"}]),
         {"expected_fields": ["energy_performance"]})
     assert p is False
 
-def test_must_include_pass(): assert check_must_include("Atemp is 114.", {"must_include": ["Atemp","114"]}) is True
-def test_must_include_ci(): assert check_must_include("the atemp is 114.", {"must_include": ["Atemp"]}) is True
-def test_must_include_fail(): assert check_must_include("Unknown.", {"must_include": ["114"]}) is False
-def test_must_not_include_pass(): assert check_must_not_include("114 m2.", {"must_not_include": ["guaranteed"]}) is True
-def test_must_not_include_fail(): assert check_must_not_include("Guaranteed!", {"must_not_include": ["guaranteed"]}) is False
+def test_must_include_pass():
+    """Every required substring is present."""
+    assert check_must_include("Atemp is 114.", {"must_include": ["Atemp","114"]}) is True
+
+def test_must_include_ci():
+    """Matching is case-insensitive, so casing differences are not failures."""
+    assert check_must_include("the atemp is 114.", {"must_include": ["Atemp"]}) is True
+
+def test_must_include_fail():
+    """A missing required substring fails."""
+    assert check_must_include("Unknown.", {"must_include": ["114"]}) is False
+
+def test_must_not_include_pass():
+    """No forbidden substring appears."""
+    assert check_must_not_include("114 m2.", {"must_not_include": ["guaranteed"]}) is True
+
+def test_must_not_include_fail():
+    """A forbidden substring fails, case-insensitively."""
+    assert check_must_not_include("Guaranteed!", {"must_not_include": ["guaranteed"]}) is False
 
 def test_judge_pass_true():
+    """A genuinely scored passing verdict is True."""
     assert check_semantic_judge_pass({"verdict": "pass", "axes": {"calibration": 9}}) is True
+
 def test_judge_pass_false():
+    """A genuinely scored failing verdict is False."""
     assert check_semantic_judge_pass({"verdict": "fail", "axes": {"calibration": 2}}) is False
 
 def test_judge_pass_without_axes_is_not_measured():
@@ -57,14 +95,18 @@ def test_judge_pass_fail_open_is_not_measured():
     assert check_semantic_judge_pass(v) is None
 
 def test_case_pass_treats_not_measured_as_not_passing():
+    """None is falsy, so an unmeasured case fails — this is what closed the §1.6a hole."""
     checks = {k: True for k in ["route_match","agent_match","building_id_match",
         "field_coverage_pass","must_include_pass","must_not_include_pass"]}
     assert case_pass({**checks, "semantic_judge_pass": None}) is False
 
 def test_case_pass_all_true():
+    """Every check passing is a case pass."""
     assert case_pass({k: True for k in ["route_match","agent_match","building_id_match",
         "field_coverage_pass","must_include_pass","must_not_include_pass","semantic_judge_pass"]}) is True
+
 def test_case_pass_one_false():
+    """`case_pass` is a conjunction: any single failing check fails the case."""
     checks = {k: True for k in ["route_match","agent_match","building_id_match",
         "field_coverage_pass","must_include_pass","must_not_include_pass","semantic_judge_pass"]}
     checks["building_id_match"] = False

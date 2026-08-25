@@ -62,6 +62,7 @@ def _axes_from_worklist(fieldnames) -> list[str]:
 
 
 def _worklist_fields(axes: list[str]) -> list[str]:
+    """Column order for the worklist CSV the annotator fills in."""
     return [
         # `row_id` first: the same case_id recurs in up to 9 arm-runs of one study, so
         # case_id alone cannot key a worklist drawn from more than one of them.
@@ -83,6 +84,7 @@ def _worklist_fields(axes: list[str]) -> list[str]:
 
 
 def _label_fields(axes: list[str]) -> list[str]:
+    """Column order for the human-labels CSV; axes vary by rubric vintage."""
     return ["row_id", "case_id", "annotator_id", "timestamp_utc",
             *axes, "overall_pass", "notes"]
 
@@ -149,6 +151,7 @@ NOT_JUDGED = ("_fail_open", "_short_circuit", "_no_answer")
 
 
 def _axes(row: dict) -> dict:
+    """The judge's per-axis scores on a trace row, or {} if it was never judged."""
     return ((row.get("answer_quality_verdict") or {}).get("axes") or {})
 
 
@@ -164,6 +167,7 @@ def _was_judged(row: dict) -> bool:
 
 
 def _load_trace(run_dir, arm: str) -> list[dict]:
+    """Load one arm's per-case trace, back-filling run_id/arm onto each row."""
     trace = Path(run_dir) / arm / "traces" / "per_case.jsonl"
     rows = [json.loads(l) for l in trace.read_text(encoding="utf-8").split("\n") if l.strip()]
     for r in rows:
@@ -321,6 +325,7 @@ def cmd_sample(args):
 
 
 def _ask_int(label: str, lo: int, hi: int) -> int:
+    """Prompt until the annotator enters an integer inside [lo, hi]."""
     while True:
         s = input(f"  {label} [{lo}-{hi}]: ").strip()
         if s.isdigit() and lo <= int(s) <= hi:
@@ -451,6 +456,11 @@ def _kappa_binary(pairs: list[tuple[int, int]]) -> float:
 
 
 def _raw_agreement(pairs: list[tuple[int, int]]) -> float:
+    """Percent agreement — reported next to kappa, never instead of it.
+
+    Raw agreement ignores agreement expected by chance, so on a skewed label
+    distribution it looks high exactly where kappa reveals it is uninformative.
+    """
     return (sum(1 for a, b in pairs if a == b) / len(pairs)) if pairs else 0.0
 
 
@@ -831,6 +841,7 @@ def cmd_ingest_md(args):
 
 
 def main(argv=None):
+    """CLI entry point dispatching the sample / ingest / kappa sub-commands."""
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
 
