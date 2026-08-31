@@ -1,0 +1,130 @@
+# Pre-registered prediction check
+
+Replicates: 3 — artifacts/runs/2026-08-15_v24_r1, artifacts/runs/2026-08-15_v24_r2, artifacts/runs/2026-08-15_v24_r3
+
+## Arm rates across replicates
+
+| arm | pass n=88 (mean ± SD) | pass n=77 (mean ± SD) | per replicate (n=77) |
+|---|---|---|---|
+| A_open | 0.545 ± 0.000 | 0.623 ± 0.000 | 48/77, 48/77, 48/77 |
+| A_late_only | 0.587 ± 0.007 | 0.671 ± 0.007 | 52/77, 52/77, 51/77 |
+| A_full | 0.636 ± 0.011 | 0.727 ± 0.013 | 55/77, 56/77, 57/77 |
+
+## Dual scoring (v22 R1): judge-inclusive vs deterministic-core
+
+Deterministic-core drops `semantic_judge_pass` — the one `case_pass` term the treatment retries until it flips — and keeps the six gold checks.
+
+| replicate | arm | judge-inclusive n=88 | deterministic-core n=88 |
+|---|---|---|---|
+| 2026-08-15_v24_r1 | A_open | 48/88 = 0.545 | 48/88 = 0.545 |
+| 2026-08-15_v24_r1 | A_late_only | 52/88 = 0.591 | 52/88 = 0.591 |
+| 2026-08-15_v24_r1 | A_full | 55/88 = 0.625 | 56/88 = 0.636 |
+| 2026-08-15_v24_r2 | A_open | 48/88 = 0.545 | 51/88 = 0.580 |
+| 2026-08-15_v24_r2 | A_late_only | 52/88 = 0.591 | 52/88 = 0.591 |
+| 2026-08-15_v24_r2 | A_full | 56/88 = 0.636 | 56/88 = 0.636 |
+| 2026-08-15_v24_r3 | A_open | 48/88 = 0.545 | 50/88 = 0.568 |
+| 2026-08-15_v24_r3 | A_late_only | 51/88 = 0.580 | 51/88 = 0.580 |
+| 2026-08-15_v24_r3 | A_full | 57/88 = 0.648 | 58/88 = 0.659 |
+
+## Evidence and short-circuit summary (per replicate)
+
+| replicate | arm | evidence absent | clarification | request_address | rewound |
+|---|---|---:|---:|---:|---:|
+| 2026-08-15_v24_r1 | A_open | 61/88 | 14 | 7 | 0 |
+| 2026-08-15_v24_r1 | A_late_only | 61/88 | 14 | 7 | 7 |
+| 2026-08-15_v24_r1 | A_full | 61/88 | 14 | 4 | 11 |
+| 2026-08-15_v24_r2 | A_open | 61/88 | 14 | 7 | 0 |
+| 2026-08-15_v24_r2 | A_late_only | 61/88 | 14 | 7 | 4 |
+| 2026-08-15_v24_r2 | A_full | 61/88 | 14 | 3 | 8 |
+| 2026-08-15_v24_r3 | A_open | 61/88 | 14 | 7 | 0 |
+| 2026-08-15_v24_r3 | A_late_only | 61/88 | 14 | 7 | 6 |
+| 2026-08-15_v24_r3 | A_full | 61/88 | 14 | 4 | 12 |
+
+## Checkpoint firing rates
+
+| replicate | arm | attempts | early fired | early→rewind | late fired | late→rewind | judge pass/fail | attribution on failures |
+|---|---|---:|---:|---:|---:|---:|---|---|
+| 2026-08-15_v24_r1 | A_open | 0 | 0 | 0 | 0 | 0 | 0/0 | — |
+| 2026-08-15_v24_r1 | A_late_only | 74 | 0 | 0 | 74 | 7 | 67/7 | {'summarizer': 7} |
+| 2026-08-15_v24_r1 | A_full | 169 | 93 | 5 | 76 | 6 | 69/7 | {'summarizer': 7} |
+| 2026-08-15_v24_r2 | A_open | 0 | 0 | 0 | 0 | 0 | 0/0 | — |
+| 2026-08-15_v24_r2 | A_late_only | 71 | 0 | 0 | 71 | 4 | 67/4 | {'summarizer': 4} |
+| 2026-08-15_v24_r2 | A_full | 167 | 92 | 4 | 75 | 4 | 71/4 | {'summarizer': 4} |
+| 2026-08-15_v24_r3 | A_open | 0 | 0 | 0 | 0 | 0 | 0/0 | — |
+| 2026-08-15_v24_r3 | A_late_only | 73 | 0 | 0 | 73 | 6 | 67/6 | {'summarizer': 6} |
+| 2026-08-15_v24_r3 | A_full | 170 | 93 | 5 | 77 | 7 | 69/8 | {'summarizer': 8} |
+
+## Capped-rate sensitivity (Fix 2 disclosure)
+
+Fix 2 removed the cost/wall vetoes from `case_pass` because they applied to the treatment arms only. This is what the rate would have been had they been kept — the confound, quantified.
+
+| replicate | arm | uncapped | capped | cost_exceeded | wall_exceeded |
+|---|---|---|---|---:|---:|
+| 2026-08-15_v24_r1 | A_open | 48/88 = 0.545 | 48/88 = 0.545 | 0 | 0 |
+| 2026-08-15_v24_r1 | A_late_only | 52/88 = 0.591 | 42/88 = 0.477 | 14 | 0 |
+| 2026-08-15_v24_r1 | A_full | 55/88 = 0.625 | 48/88 = 0.545 | 17 | 0 |
+| 2026-08-15_v24_r2 | A_open | 48/88 = 0.545 | 48/88 = 0.545 | 0 | 0 |
+| 2026-08-15_v24_r2 | A_late_only | 52/88 = 0.591 | 44/88 = 0.500 | 12 | 0 |
+| 2026-08-15_v24_r2 | A_full | 56/88 = 0.636 | 48/88 = 0.545 | 16 | 0 |
+| 2026-08-15_v24_r3 | A_open | 48/88 = 0.545 | 48/88 = 0.545 | 0 | 0 |
+| 2026-08-15_v24_r3 | A_late_only | 51/88 = 0.580 | 42/88 = 0.477 | 13 | 0 |
+| 2026-08-15_v24_r3 | A_full | 57/88 = 0.648 | 50/88 = 0.568 | 17 | 0 |
+
+## McNemar (exact), n=88 and n=77
+
+| replicate | contrast | n | discordant | b better | a better | p |
+|---|---|---:|---:|---:|---:|---:|
+| 2026-08-15_v24_r1 | A_open vs A_late_only | 88 | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r1 | A_open vs A_late_only | 77 | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r1 | A_open vs A_late_only | 88 det | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r1 | A_open vs A_full | 88 | 9 | 8 | 1 | 0.0391 |
+| 2026-08-15_v24_r1 | A_open vs A_full | 77 | 9 | 8 | 1 | 0.0391 |
+| 2026-08-15_v24_r1 | A_open vs A_full | 88 det | 8 | 8 | 0 | 0.0078 |
+| 2026-08-15_v24_r1 | A_late_only vs A_full | 88 | 5 | 4 | 1 | 0.3750 |
+| 2026-08-15_v24_r1 | A_late_only vs A_full | 77 | 5 | 4 | 1 | 0.3750 |
+| 2026-08-15_v24_r1 | A_late_only vs A_full | 88 det | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r2 | A_open vs A_late_only | 88 | 6 | 5 | 1 | 0.2188 |
+| 2026-08-15_v24_r2 | A_open vs A_late_only | 77 | 6 | 5 | 1 | 0.2188 |
+| 2026-08-15_v24_r2 | A_open vs A_late_only | 88 det | 3 | 2 | 1 | 1.0000 |
+| 2026-08-15_v24_r2 | A_open vs A_full | 88 | 10 | 9 | 1 | 0.0215 |
+| 2026-08-15_v24_r2 | A_open vs A_full | 77 | 10 | 9 | 1 | 0.0215 |
+| 2026-08-15_v24_r2 | A_open vs A_full | 88 det | 7 | 6 | 1 | 0.1250 |
+| 2026-08-15_v24_r2 | A_late_only vs A_full | 88 | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r2 | A_late_only vs A_full | 77 | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r2 | A_late_only vs A_full | 88 det | 4 | 4 | 0 | 0.1250 |
+| 2026-08-15_v24_r3 | A_open vs A_late_only | 88 | 7 | 5 | 2 | 0.4531 |
+| 2026-08-15_v24_r3 | A_open vs A_late_only | 77 | 7 | 5 | 2 | 0.4531 |
+| 2026-08-15_v24_r3 | A_open vs A_late_only | 88 det | 5 | 3 | 2 | 1.0000 |
+| 2026-08-15_v24_r3 | A_open vs A_full | 88 | 9 | 9 | 0 | 0.0039 |
+| 2026-08-15_v24_r3 | A_open vs A_full | 77 | 9 | 9 | 0 | 0.0039 |
+| 2026-08-15_v24_r3 | A_open vs A_full | 88 det | 8 | 8 | 0 | 0.0078 |
+| 2026-08-15_v24_r3 | A_late_only vs A_full | 88 | 8 | 7 | 1 | 0.0703 |
+| 2026-08-15_v24_r3 | A_late_only vs A_full | 77 | 8 | 7 | 1 | 0.0703 |
+| 2026-08-15_v24_r3 | A_late_only vs A_full | 88 det | 7 | 7 | 0 | 0.0156 |
+
+## The five pre-registered predictions
+
+| # | prediction | observed | verdict |
+|---|---|---|---|
+| 1 | `evidence_present == false` on ≥45 of 88 A_open | [61, 61, 61] | PASS |
+| 2 | A_open `case_pass` in 30–38 of 77 | [48, 48, 48] | FAIL |
+| 3 | late rewinds < 20 **and** top attribution ≠ summarizer | late_rewinds [7, 6, 4, 4, 6, 7], top_attribution ['summarizer', 'summarizer', 'summarizer', 'summarizer', 'summarizer', 'summarizer'] | FAIL |
+| 4 | Fix 5 fires ≥3 of 4, ≥2 convert, both guards hold | fired [4, 4, 4], converted [3, 4, 4], guards_held [2, 2, 2], tracked_fired [[], [], []] | PASS |
+| 5 | A_full ≥ A_open in ≥2 of 3 replicates | 3 of 3 | PASS |
+
+Per-replicate Fix 5 detail:
+
+- `2026-08-15_v24_r1` fired=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] converted=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019'] guards_held=['DEMO_EXTRA_CLAR_001', 'DEMO_EXTRA_CLAR_002'] tracked=[] forced_route=[]
+- `2026-08-15_v24_r2` fired=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] converted=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] guards_held=['DEMO_EXTRA_CLAR_001', 'DEMO_EXTRA_CLAR_002'] tracked=[] forced_route=[]
+- `2026-08-15_v24_r3` fired=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] converted=['EKR_GEN_017', 'EKR_GEN_018', 'EKR_GEN_019', 'DEMO_EXTRA_GEN_001'] guards_held=['DEMO_EXTRA_CLAR_001', 'DEMO_EXTRA_CLAR_002'] tracked=[] forced_route=[]
+
+## Consensus McNemar (pre-registered §4), both scorings
+
+| contrast | scoring | gained | lost | p |
+|---|---|---|---|---|
+| A_open vs A_late_only | judge-inclusive | 4: BRF_ODEN_10_RADMANSGATAN_31_001_HEATING, BRF_ODEN_10_RADMANSGATAN_31_002_PERFORMANCE, BRF_ODEN_10_RADMANSGATAN_31_004_HEATING, BRF_ODEN_10_RADMANSGATAN_31_004_PERFORMANCE | 1: DEMO_EXTRA_GEN_006 | 0.3750 |
+| A_open vs A_full | judge-inclusive | 9: BRF_ODEN_10_RADMANSGATAN_31_001_HEATING, BRF_ODEN_10_RADMANSGATAN_31_002_PERFORMANCE, BRF_ODEN_10_RADMANSGATAN_31_004_HEATING, BRF_ODEN_10_RADMANSGATAN_31_004_PERFORMANCE, CLAR_001, DEMO_EXTRA_GEN_001, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 2: BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE, DEMO_EXTRA_GEN_006 | 0.0654 |
+| A_late_only vs A_full | judge-inclusive | 5: CLAR_001, DEMO_EXTRA_GEN_001, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 1: BRF_ODEN_10_RADMANSGATAN_31_001_PERFORMANCE | 0.2188 |
+| A_open vs A_late_only | deterministic-core | 2: BRF_ODEN_10_RADMANSGATAN_31_002_PERFORMANCE, BRF_ODEN_10_RADMANSGATAN_31_004_PERFORMANCE | 1: DEMO_EXTRA_GEN_006 | 1.0000 |
+| A_open vs A_full | deterministic-core | 7: BRF_ODEN_10_RADMANSGATAN_31_002_PERFORMANCE, BRF_ODEN_10_RADMANSGATAN_31_004_PERFORMANCE, CLAR_001, DEMO_EXTRA_GEN_001, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 1: DEMO_EXTRA_GEN_006 | 0.0703 |
+| A_late_only vs A_full | deterministic-core | 5: CLAR_001, DEMO_EXTRA_GEN_001, EKR_GEN_017, EKR_GEN_018, EKR_GEN_019 | 0: — | 0.0625 |
