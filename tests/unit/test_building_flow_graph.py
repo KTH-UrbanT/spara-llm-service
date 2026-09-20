@@ -1,3 +1,5 @@
+import pytest
+
 from tests.support import fresh_import, stub_module
 
 
@@ -43,6 +45,7 @@ def import_building_flow_graph_module():
     graph_module = stub_module("langgraph.graph", StateGraph=DummyStateGraph, START="START", END="END")
     stub_module("langgraph", graph=graph_module)
     stub_module("src.agents.parse_intent_agent", ParseIntentAgent=DummyParseIntentAgent)
+    stub_module("src.agents.clarification_agent", generate_clarification=lambda **kwargs: {"question": kwargs["fallback"], "status": "disabled"})
     stub_module("src.agents.generic_sql_layer", SQL_Mapper_Layer=DummySQLMapperLayer)
     stub_module(
         "src.database.vector_client",
@@ -2628,6 +2631,7 @@ def test_llm_summarizer_adds_freshness_and_uncertainty_metadata():
             "aggregated_data": {
                 "generic_sql": {
                     "building_id": "uuid-1",
+                    "byggnadsid": "01-80-TESTA1-1",
                     "energy_declaration_year": 2016,
                     "heating_system": "district heating",
                 }
@@ -2863,6 +2867,12 @@ def test_llm_summarizer_translates_oden_heating_fields_for_beginners():
 
 def test_llm_summarizer_gives_focused_ftx_explanation_for_ventilation_measures():
     module = import_building_flow_graph_module()
+    focused_answer = (
+        "FTX ventilation means mechanical supply and exhaust ventilation with heat recovery. "
+        "Commission the FTX system if checks show imbalanced airflow or poor recovery. "
+        "What prompted the question: draughts, noise, or higher electricity use?"
+    )
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: focused_answer
 
     result = module.llm_summarizer_node(
         {
@@ -2893,10 +2903,17 @@ def test_llm_summarizer_gives_focused_ftx_explanation_for_ventilation_measures()
     assert "Energy class:" not in result["final_response"]
     assert "Electricity consumption:" not in result["final_response"]
     assert "renovation_information" not in result["final_response"]
+    assert focused_answer in result["final_response"]
+    assert "response_fallback" not in result["metadata"]
+    assert "Renewable energy" not in result["final_response"]
 
 
 def test_llm_summarizer_treats_epc_ventilation_electricity_and_date_as_confirmed():
     module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: (
+        "The record reports FT ventilation. Check current operation before ranking measures; "
+        "what changes have been made since the 2009 declaration?"
+    )
 
     result = module.llm_summarizer_node(
         {
@@ -2938,12 +2955,109 @@ def test_llm_summarizer_treats_epc_ventilation_electricity_and_date_as_confirmed
     assert "ventilation_type" not in uncertainty["missing_facts"]
     assert "electricity_use" not in uncertainty["missing_facts"]
     assert "energy_declaration_year" not in uncertainty["missing_facts"]
-    assert uncertainty["missing_facts"] == ["renovation_information"]
-    assert result["metadata"]["response_fallback"]["reason"] == "ecm_response_missing_recommendations"
+    assert facts["specific_energy_use"] == 199
+    assert "energy_performance" not in facts
+    assert uncertainty["missing_facts"] == ["energy_performance", "renovation_information"]
+    assert "response_fallback" not in result["metadata"]
     assert result["metadata"]["building_match"]["building_id"] == "01-80-LISSABON2-2"
     assert result["metadata"]["retrieved_facts"]["address"] == "Öregrundsgatan 9"
-    assert "Energy Conservation Measures (ECMs)" in result["final_response"]
-    assert "1. Energy conservation / reduce demand and waste" in result["final_response"]
-    assert "2. Energy efficiency / improve equipment and building systems" in result["final_response"]
-    assert "3. Energy management measures / controls, monitoring, and routines" in result["final_response"]
-    assert "4. Renewable energy / add supply after demand is reduced" in result["final_response"]
+    assert "what changes have been made since the 2009 declaration?" in result["final_response"]
+
+
+def _window_advice_state():
+    return {
+        "last_message": "Should we replace the windows to reduce heating costs?",
+        "messages": [
+            {"role": "user", "content": "We need to improve comfort without major works this year."},
+            *[{"role": "assistant", "content": f"Earlier discussion {i}"} for i in range(8)],
+            {"role": "user", "content": "Should we replace the windows to reduce heating costs?"},
+        ],
+        "context": {
+            "parsed_intent": "SQL database ; vector database",
+            "intent_list": ["SQL database", "vector database"],
+        },
+        "metadata": {"address": "Examplegatan 1"},
+        "aggregated_data": {
+            "generic_sql": [{
+                "byggnadsid": "TEST-BUILDING-1",
+                "address": "Examplegatan 1",
+                "epc_huvudsakliguppvarmning_calc": "Fjarrvarme",
+                "epc_egennybyggar": 1970,
+            }],
+            "vector": {
+                "hits": [{
+                    "source": "synthetic-window-guidance.pdf",
+                    "page_content": "Inspect seals and frame condition before deciding on replacement.",
+                }],
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize("model_answer", [
+    "Replacing windows may help, but first check seals and frame condition. "
+    "(Source: synthetic-window-guidance.pdf) Are draughts the main concern?",
+    "What prompted window replacement: draughts, damaged frames, or higher heating costs?",
+])
+def test_advisory_answers_and_diagnostic_questions_survive_without_category_headings(model_answer):
+    module = import_building_flow_graph_module()
+    captured = {}
+
+    def generate(prompt, message_list=None):
+        captured["prompt"] = prompt
+        return model_answer
+
+    module.llm_summarizer.generate_response = generate
+    state = _window_advice_state()
+    state["metadata"]["response_fallback"] = {"reason": "ecm_response_missing_recommendations"}
+    state["metadata"]["response_model_error"] = "Error: previous request failed"
+
+    result = module.llm_summarizer_node(state)
+
+    assert model_answer in result["final_response"]
+    assert result["final_response"].startswith("Building ID: TEST-BUILDING-1")
+    assert "response_fallback" not in result["metadata"]
+    assert "response_model_error" not in result["metadata"]
+    assert "improve comfort without major works this year" in captured["prompt"]
+    assert "synthetic-window-guidance.pdf" in captured["prompt"]
+    assert "Inspect seals and frame condition" in captured["prompt"]
+    assert '"epc_egennybyggar": 1970' in captured["prompt"]
+    assert "solar PV" not in result["final_response"]
+
+
+@pytest.mark.parametrize(("model_answer", "reason"), [
+    ("Error: Rate limit exceeded. Please retry shortly.", "response_model_error"),
+    ("", "response_model_empty"),
+    ("   ", "response_model_empty"),
+    (None, "response_model_empty"),
+    ("No content returned from the model.", "response_model_empty"),
+])
+def test_advisory_generation_failure_does_not_masquerade_as_tailored_recommendations(model_answer, reason):
+    module = import_building_flow_graph_module()
+    module.llm_summarizer.generate_response = lambda *args, **kwargs: model_answer
+
+    result = module.llm_summarizer_node(_window_advice_state())
+
+    assert "I couldn't generate the advisory answer" in result["final_response"]
+    assert "Available building-record facts:" in result["final_response"]
+    assert "district heating" in result["final_response"]
+    assert "solar PV" not in result["final_response"]
+    assert "2-4 week" not in result["final_response"]
+    assert result["metadata"]["response_fallback"]["reason"] == reason
+
+
+def test_advisory_model_exception_returns_honest_fallback_and_keeps_identity():
+    module = import_building_flow_graph_module()
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("Synthetic connection failure")
+
+    module.llm_summarizer.generate_response = unavailable
+
+    result = module.llm_summarizer_node(_window_advice_state())
+
+    assert result["final_response"].startswith("Building ID: TEST-BUILDING-1")
+    assert "I couldn't generate the advisory answer" in result["final_response"]
+    assert result["metadata"]["response_fallback"]["reason"] == "response_model_exception"
+    assert result["metadata"]["response_model_error"] == "RuntimeError"
+    assert result["session_state"]["metadata"]["byggnadsid"] == "TEST-BUILDING-1"

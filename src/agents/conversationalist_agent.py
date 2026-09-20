@@ -1,6 +1,8 @@
+from src.azure_openai_v1 import azure_v1_base_url
+from src.agents.completion_options import completion_options
 import os
 import logging
-from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
+from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from typing import List, Dict, Optional, Union
 from dotenv import load_dotenv
 import time
@@ -104,18 +106,17 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
 
     def _initialize_openai_client(self):
         """
-        Initializes the AzureOpenAI client.
+        Initializes the OpenAI client.
         Ensures all necessary environment variables are set.
 
         Raises:
             ValueError: If any required Azure OpenAI environment variables are missing.
-            RuntimeError: If AzureOpenAI client fails to initialize.
+            RuntimeError: If OpenAI client fails to initialize.
         """
         required_env_vars = {
             "AZURE_ENDPOINT": "Azure OpenAI endpoint",
             "CONVERSATIONAL_MODEL_DEPLOYMENT_NAME": "Deployment name for the conversational model",
             "OPENAI_API_KEY": "OpenAI API key",
-            "CONVERSATIONAL_MODEL_API_VERSION": "API version for the conversational model"
         }
 
         for var, desc in required_env_vars.items():
@@ -126,18 +127,16 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
         endpoint = os.getenv("AZURE_ENDPOINT")
         self.deployment = os.getenv("CONVERSATIONAL_MODEL_DEPLOYMENT_NAME")
         subscription_key = os.getenv("OPENAI_API_KEY")
-        api_version = os.getenv("CONVERSATIONAL_MODEL_API_VERSION")
-        logger.info(f"Conversational Model is {self.deployment} and the api version is {api_version}. ")
+        logger.info(f"Conversational Model is {self.deployment} using Azure OpenAI v1.")
         try:
-            self.client = AzureOpenAI(
-                azure_endpoint=endpoint,
+            self.client = OpenAI(
+                base_url=azure_v1_base_url(endpoint),
                 api_key=subscription_key,
-                api_version=api_version,
             )
-            logger.info("AzureOpenAI client initialized successfully.")
+            logger.info("OpenAI client initialized successfully.")
         except Exception as e:
-            logger.error(f"Failed to initialize AzureOpenAI client: {e}")
-            raise RuntimeError(f"Failed to initialize AzureOpenAI client: {e}")
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
 
     def handle_conversational_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
         start_time = time.time()
@@ -209,12 +208,7 @@ class ConversationalAgent(BaseAgent): # Inherit from BaseAgent
             completion = self.client.chat.completions.create(
                 model=self.deployment,
                 messages=messages_for_api,
-                max_tokens=800,
-                temperature=0.2,
-                top_p=0.23,
-                frequency_penalty=0,
-                presence_penalty=0,
-                stop=None,
+                **completion_options(self.deployment, temperature=0.2),
                 stream=False
             )
             response_content = completion.choices[0].message.content

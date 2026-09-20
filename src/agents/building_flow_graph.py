@@ -11,6 +11,8 @@ from langgraph.graph import StateGraph, START, END
 
 # --- Project deps
 from src.agents.parse_intent_agent import ParseIntentAgent
+from src.agents.clarification_agent import generate_clarification
+from src.agents.response_evidence import prepare_response_evidence, select_response_building_id
 from src.agents.generic_sql_layer import SQL_Mapper_Layer
 from src.agents.building_response_prompt import (
     build_building_response_prompt,
@@ -26,7 +28,6 @@ from src.pipeline.safety_analysis import (
     apply_response_safety_notes,
     assess_building_identity,
     build_clarification_question,
-    compute_data_freshness,
     compute_uncertainty,
     extract_retrieved_facts,
 )
@@ -499,6 +500,12 @@ def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
         flags=re.IGNORECASE,
     )
 
+    candidate = re.sub(
+        r"^\s*(?:(?:please\s+)?(?:use|choose|select)\s+)?"
+        r"(?:(?:the|our|my)\s+)?(?:building|property|entrance)\s+(?:with|at|on)\s+",
+        "", candidate, flags=re.IGNORECASE,
+    )
+
     street_fragment = _extract_street_address_fragment(candidate)
     if street_fragment:
         return street_fragment
@@ -798,7 +805,22 @@ def _lookup_brf_addresses(brf_name: str) -> List[Dict[str, Any]]:
     if client is None or not hasattr(client, "brf_addresses"):
         return []
     rows = client.brf_addresses(brf_name) or []
-    return [row for row in rows if isinstance(row, dict)]
+    rows = [row for row in rows if isinstance(row, dict)]
+    if rows:
+        return rows
+    # Try the exact legal name first: some association names include a city.
+    # Only after a miss, separate a natural-language location qualifier and
+    # retain it as a filter so similarly named BRFs in other cities do not match.
+    qualified = re.fullmatch(r"(.+?)\s+(?:in|i)\s+([^,.;!?]+)", brf_name, re.IGNORECASE)
+    if not qualified:
+        return []
+    name, location = (part.strip() for part in qualified.groups())
+    candidates = client.brf_addresses(name) or []
+    return [
+        row for row in candidates
+        if isinstance(row, dict)
+        and str(row.get("postort") or "").strip().casefold() == location.casefold()
+    ]
 
 
 def _format_brf_address(row: Dict[str, Any]) -> Optional[str]:
@@ -1071,6 +1093,8 @@ def _looks_like_personal_energy_advice(text: Optional[str]) -> bool:
 
 
 ECM_ADVICE_PATTERNS = (
+    r"\b(?:reduce|lower|cut|save)\s+(?:(?:the|our|my)\s+)?"
+    r"(?:energy|heating\s+(?:costs?|bills?|demand)|electricity\s+(?:use|consumption|costs?|bills?))\b",
     r"\becms?\b",
     r"\benergy conservation measures?\b",
     r"\benergy efficiency measures?\b",
@@ -1858,24 +1882,6 @@ def _normalize_frontend_building_metadata(
     return normalized
 
 
-def _building_fact_summary_for_ecm(facts: Dict[str, Any]) -> str:
-    parts: List[str] = []
-    for key, label, unit in (
-        ("energy_class", "energy class", None),
-        ("energy_performance", "declared energy performance", "kWh/m2-year"),
-        ("specific_energy_use", "specific energy use", "kWh/m2-year"),
-        ("primary_energy_number", "primary energy number", "kWh/m2-year"),
-        ("energy_declaration_year", "energy declaration year", None),
-        ("construction_year", "construction year", None),
-        ("heating_system", "heating system", None),
-        ("ventilation_type", "ventilation", None),
-    ):
-        value = (facts or {}).get(key)
-        if _fact_present(value):
-            parts.append(f"{label}: {_format_fact_value(value, unit)}")
-    return "; ".join(parts)
-
-
 def _short_building_fact_summary_for_advice(facts: Dict[str, Any]) -> str:
     parts: List[str] = []
     for key, label, unit in (
@@ -1890,44 +1896,8 @@ def _short_building_fact_summary_for_advice(facts: Dict[str, Any]) -> str:
     return "; ".join(parts[:4])
 
 
-def _looks_like_ventilation_focused_request(text: Optional[str]) -> bool:
-    lowered = str(text or "").lower()
-    return bool(re.search(r"\b(?:ventilation|ftx|airflow|air\s+flow|fan|filters?)\b", lowered))
-
-
-def _response_has_ecm_recommendations(text: Optional[str]) -> bool:
-    lowered = str(text or "").lower()
-    if not lowered.strip():
-        return False
-    required_sections = (
-        "energy conservation",
-        "energy efficiency",
-        "energy management",
-        "renewable",
-    )
-    if not all(section in lowered for section in required_sections):
-        return False
-    action_terms = (
-        "check",
-        "adjust",
-        "optimize",
-        "optimise",
-        "balance",
-        "monitor",
-        "measure",
-        "commission",
-        "setpoint",
-        "heating curve",
-        "domestic hot water",
-        "ventilation",
-        "solar",
-    )
-    return sum(1 for term in action_terms if term in lowered) >= 3
-
-
-def _deterministic_ecm_response(
+def _unavailable_advisory_response(
     *,
-    user_input: str = "",
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
@@ -1938,67 +1908,22 @@ def _deterministic_ecm_response(
     if current_address:
         lines.append(f"Address: {current_address}")
 
-    summary = _short_building_fact_summary_for_advice(facts)
-    if summary:
-        lines.extend(["", f"Based on the known facts: {summary}."])
-
-    heating = str((facts or {}).get("heating_system") or "").lower()
-    ventilation = str((facts or {}).get("ventilation_type") or "").lower()
-    has_district_heating = "district heating" in heating
-    has_ftx = "ftx" in ventilation
-    ventilation_explanation = _ventilation_explanation((facts or {}).get("ventilation_type"))
-
-    if _looks_like_ventilation_focused_request(user_input):
-        if ventilation_explanation:
-            lines.extend(["", ventilation_explanation])
-        lines.extend(
-            [
-                "",
-                "Energy Conservation Measures (ECMs)",
-                "",
-                "1. Energy conservation / reduce demand and waste",
-                "- Check whether airflow or operating hours are higher than needed while still meeting indoor-air requirements.",
-                "",
-                "2. Energy efficiency / improve equipment and building systems",
-                (
-                    "- Commission the FTX system: clean/replace filters, verify airflow balance, heat-recovery function, bypass settings, and fan operation."
-                    if has_ftx
-                    else "- Verify ventilation airflows, fan operation, filters, and pressure settings; avoid over-ventilation while maintaining indoor air quality."
-                ),
-                "",
-                "3. Energy management measures / controls, monitoring, and routines",
-                "- Track fan electricity, complaints, filter pressure, and heat-recovery/temperature trends so faults are caught early.",
-                "",
-                "4. Renewable energy / add supply after demand is reduced",
-                "- Renewables are not usually the first ventilation measure; consider solar PV only after ventilation demand, controls, and fan efficiency are optimized.",
-            ]
-        )
-        return "\n".join(lines)
-
     lines.extend(
         [
             "",
-            "Energy Conservation Measures (ECMs)",
-            "",
-            "1. Energy conservation / reduce demand and waste",
-            "- Map indoor temperatures, overheating, open-window behavior, and domestic-hot-water waste before adding more heat.",
-            "",
-            "2. Energy efficiency / improve equipment and building systems",
-            (
-                "- Review the district-heating substation, heat exchangers, pumps, and radiator valves; tune the heating curve and return temperatures."
-                if has_district_heating
-                else "- Review the main heating plant, pumps, valves, and heat distribution so delivered heat matches actual demand."
-            ),
-            "",
-            "3. Energy management measures / controls, monitoring, and routines",
-            "- Track heat, hot water, electricity, indoor temperatures, and complaints against outdoor temperature; use this for seasonal tuning.",
-            "",
-            "4. Renewable energy / add supply after demand is reduced",
-            "- Assess solar PV after low-cost demand, efficiency, and control measures are understood; check roof area, shading, structure, grid connection, and self-consumption.",
-            "",
-            "Good first step: run a 2-4 week diagnostic, then prioritize measures with measured evidence.",
+            "I couldn't generate the advisory answer, so I cannot provide a tailored "
+            "recommendation in this response. Please retry your question.",
         ]
     )
+    summary = _short_building_fact_summary_for_advice(facts)
+    if summary:
+        lines.extend(
+            [
+                "",
+                f"Available building-record facts: {summary}.",
+                "These recorded facts alone do not establish which measure should be prioritized.",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -2986,6 +2911,8 @@ def understand_context_node(state: GraphState) -> GraphState:
     parse_input = {
         "last_message": state.get("last_message"),
         "messages": state.get("messages", []),
+        "metadata": state.get("metadata", {}),
+        "prior_context": prior_context,
     }
     parsed = parse_intent_agent(copy.deepcopy(parse_input))  # defensive copy
     print(f"[understand_context] parsed keys={list(parsed.keys())}", flush=True)
@@ -3259,6 +3186,15 @@ def brf_resolution_node(state: GraphState) -> GraphState:
         return {}
 
     failed_brf_lookup = _metadata_has_failed_brf_lookup(md)
+    supplied_address = _extract_address_candidate_from_text(last_message)
+    if failed_brf_lookup and supplied_address and not current_brf_name:
+        # An address supplied in response to our clarification supersedes the
+        # failed name lookup. ODEN must still validate the new address normally.
+        md = _clear_failed_brf_lookup_state(md)
+        md["address"] = supplied_address
+        md["address_from_user"] = supplied_address
+        ctx["address"] = supplied_address
+        return {"metadata": md, "context": ctx}
     should_reuse_brf_context = bool(
         current_brf_name
         or _looks_like_identity_followup(last_message, ctx)
@@ -3495,7 +3431,24 @@ def maintain_history_node(state: GraphState) -> GraphState:
     last = (state.get("last_message") or "").strip()
     same = (messages[-1].get("content") or "").strip() == last if messages and last else False
     print(f"[maintain_history] ENTER last_matches={same}", flush=True)
+    ctx = dict(state.get("context") or {})
+    md = state.get("metadata") or {}
+    intents = _coerce_intent_list(ctx)
+    required = {INTENT_TO_FLAG.get(str(intent).strip().lower()) for intent in intents}
+    updates: Dict[str, Any] = {}
+    if (
+        "done_specialized_sql" in required
+        and "done_generic_sql" not in required
+        and (md.get("address") or _has_single_filter(md))
+    ):
+        # The specialized meter database supplements the ODEN building profile.
+        # Persist this after BRF selection restores its original intent, so the
+        # fan-out and join barrier both include the same required ODEN lookup.
+        ctx["intent_list"] = ["SQL database", *intents]
+        ctx["parsed_intent"] = " ; ".join(ctx["intent_list"])
+        updates["context"] = ctx
     print("[maintain_history] EXIT", flush=True)
+    return updates
 
 
 # ==================================
@@ -4245,49 +4198,37 @@ def aggregator_node(state: GraphState) -> GraphState:
 def llm_summarizer_node(state: GraphState) -> GraphState:
     print("[llm_summarizer] ENTER", flush=True)
     ctx = state.get("context", {}) or {}
-    metadata = merge_identifier_metadata(
-        state.get("metadata", {}) or {},
-        state.get("aggregated_data"),
-        state.get("agent_data"),
-        state.get("session_state"),
+    prior_metadata = _latest_session_state(state.get("session_state")).get("metadata") or {}
+    metadata = dict(state.get("metadata") or prior_metadata)
+    aggregate = state.get("aggregated_data") or state.get("agent_data") or {}
+    oden_records = (
+        state["agent_data_generic"] if "agent_data_generic" in state
+        else aggregate.get("generic_sql") if isinstance(aggregate, dict) else None
     )
-    current_address = metadata.get("address") or metadata.get("address_from_user") or ""
-    building_id = (
-        select_preferred_identifier(
-            metadata,
-            state.get("aggregated_data"),
-            state.get("agent_data"),
-            state.get("session_state"),
+    # Document snippets and local SQL identifiers cannot select an ODEN building.
+    selected_id = select_response_building_id(state, metadata)
+    building_id = selected_id or "building_id_not_available"
+    if selected_id:
+        metadata["byggnadsid"] = selected_id
+        metadata["building_id"] = selected_id
+    else:
+        metadata.pop("byggnadsid", None)
+        metadata.pop("building_id", None)
+    identity_check = metadata.get("building_identity_check") or {}
+    if not selected_id or identity_check.get("matched_building_id") != selected_id:
+        identity_check = assess_building_identity(
+            {"byggnadsid": selected_id, "address": metadata.get("address")}, oden_records,
         )
-        or "building_id_not_available"
-    )
-    identity_check = metadata.get("building_identity_check") or assess_building_identity(
-        metadata,
-        state.get("agent_data_generic"),
-        state.get("agent_data_specialized"),
-        state.get("aggregated_data"),
-        state.get("agent_data"),
-    )
-    retrieved_facts = extract_retrieved_facts(
-        metadata,
-        state.get("aggregated_data"),
-        state.get("agent_data"),
-    )
+    metadata["building_identity_check"] = identity_check
+    evidence = prepare_response_evidence(state, metadata, str(building_id))
+    retrieved_facts = evidence["facts"]
+    # Replace the snapshot rather than deep-merging old values into a fresh result.
+    metadata["retrieved_facts"] = retrieved_facts
+    metadata["data_freshness"] = evidence["data_freshness"]
+    metadata["evidence_scope"] = evidence["evidence_scope"]
+    current_address = metadata.get("address") or metadata.get("address_from_user") or ""
     epc_record_address = _extract_first_address_for_keys(
-        (
-            state.get("agent_data_generic"),
-            state.get("agent_data_specialized"),
-            state.get("aggregated_data"),
-            state.get("agent_data"),
-        ),
-        ("epc_idadr", "official_address"),
-    ) or identity_check.get("matched_address")
-    metadata = _deep_merge(
-        metadata,
-        {
-            "building_identity_check": identity_check,
-            "retrieved_facts": retrieved_facts,
-        },
+        (evidence["results"].get("generic_sql"),), ("epc_idadr", "official_address"),
     )
     current_address = (
         current_address
@@ -4321,11 +4262,7 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         epc_record_address=epc_record_address,
     )
     retrieved_facts = metadata.get("retrieved_facts") or retrieved_facts
-    metadata["data_freshness"] = compute_data_freshness(
-        metadata,
-        state.get("aggregated_data"),
-        state.get("agent_data"),
-    )
+    metadata["data_freshness"] = evidence["data_freshness"]
     route_hint = "clarification" if (metadata.get("clarification") or {}).get("needed") else "building_specific"
     metadata["uncertainty"] = compute_uncertainty(
         metadata,
@@ -4339,76 +4276,78 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     )
     user_input_for_response = ctx.get("answer_focus") or state.get("last_message") or ""
     ecm_request = _looks_like_building_ecm_advice(user_input_for_response)
+    # The legacy direct-fact renderer assumes annual EPC units. Meter readings
+    # may instead be monthly or use another unit; keep their model explanation.
+    has_meter_records = bool(evidence["evidence_scope"]["sources"]["specialized_sql"]["accepted_records"])
+    fixed_unit_facts = {} if has_meter_records else retrieved_facts
+    # Failure status belongs to this generation, not a previous session turn.
+    metadata.pop("response_fallback", None)
+    metadata.pop("response_model_error", None)
     prompt = build_building_response_prompt(
         user_input=user_input_for_response,
         current_address=str(current_address),
         history=state.get("messages") or [],
         action_description=action_description,
-        results=state.get("aggregated_data") or state.get("aggregated") or {},
+        results=evidence["results"],
         metadata=metadata,
         building_id=building_id,
     )
+    # A valid advisory answer may be a single focused recommendation or a
+    # diagnostic question. Keyword/section checks cannot judge that quality.
+    model_failure_reason = None
     try:
         answer = llm_summarizer.generate_response(prompt, message_list=[])
-        if _is_model_error_response(answer):
-            metadata = _deep_merge(metadata, {"response_model_error": answer})
+    except Exception as exc:
+        answer = None
+        model_failure_reason = "response_model_exception"
+        metadata["response_model_error"] = type(exc).__name__
+        print(f"[llm_summarizer] model error: {type(exc).__name__}", flush=True)
+
+    if _is_model_error_response(answer):
+        model_failure_reason = "response_model_error"
+        metadata["response_model_error"] = answer
+    elif (
+        not isinstance(answer, str)
+        or not answer.strip()
+        or answer.strip() == "No content returned from the model."
+    ):
+        model_failure_reason = model_failure_reason or "response_model_empty"
+
+    if model_failure_reason:
+        metadata["response_fallback"] = {"reason": model_failure_reason}
+        if ecm_request:
+            answer = _unavailable_advisory_response(
+                current_address=str(current_address),
+                building_id=str(building_id),
+                facts=fixed_unit_facts,
+            )
+        else:
             answer = _deterministic_building_fact_response(
                 user_input=user_input_for_response,
                 current_address=str(current_address),
                 building_id=str(building_id),
-                facts=retrieved_facts,
+                facts=fixed_unit_facts,
             )
-            print("[llm_summarizer] model error; used deterministic building-fact fallback", flush=True)
-        targeted_fact_answer = _targeted_building_fact_response(
-            user_input=user_input_for_response,
-            current_address=str(current_address),
-            building_id=str(building_id),
-            facts=retrieved_facts,
+        print("[llm_summarizer] used model-unavailable fallback", flush=True)
+
+    targeted_fact_answer = _targeted_building_fact_response(
+        user_input=user_input_for_response,
+        current_address=str(current_address),
+        building_id=str(building_id),
+        facts=fixed_unit_facts,
+    )
+    if targeted_fact_answer and not ecm_request and not model_failure_reason:
+        fallback_reason = (
+            "direct_fact_response_was_too_broad"
+            if _response_looks_like_full_profile(answer)
+            else "direct_fact_response_targeted"
         )
-        if targeted_fact_answer and not ecm_request:
-            fallback_reason = (
-                "direct_fact_response_was_too_broad"
-                if _response_looks_like_full_profile(answer)
-                else "direct_fact_response_targeted"
-            )
-            metadata = _deep_merge(
-                metadata,
-                {
-                    "response_fallback": {
-                        "reason": fallback_reason,
-                    }
-                },
-            )
-            answer = targeted_fact_answer
-            print("[llm_summarizer] used targeted direct-fact response", flush=True)
-        if ecm_request and not _response_has_ecm_recommendations(answer):
-            metadata = _deep_merge(
-                metadata,
-                {
-                    "response_fallback": {
-                        "reason": "ecm_response_missing_recommendations",
-                        "hierarchy": [
-                            "energy_conservation",
-                            "energy_efficiency",
-                            "energy_management_measures",
-                            "renewable_energy",
-                        ],
-                    }
-                },
-            )
-            answer = _deterministic_ecm_response(
-                user_input=user_input_for_response,
-                current_address=str(current_address),
-                building_id=str(building_id),
-                facts=retrieved_facts,
-            )
-            print("[llm_summarizer] used deterministic ECM hierarchy fallback", flush=True)
-        answer = ensure_building_identifier_in_response(answer, building_id)
-        answer = apply_response_safety_notes(answer, metadata, user_message=user_input_for_response)
-        print("[llm_summarizer] generate_response ✓", flush=True)
-    except Exception as e:
-        answer = "Sorry, summarizer error."
-        print(f"[llm_summarizer] ERROR: {e}", flush=True)
+        metadata["response_fallback"] = {"reason": fallback_reason}
+        answer = targeted_fact_answer
+        print("[llm_summarizer] used targeted direct-fact response", flush=True)
+    answer = ensure_building_identifier_in_response(answer, building_id)
+    answer = apply_response_safety_notes(answer, metadata, user_message=user_input_for_response)
+    print("[llm_summarizer] response prepared ✓", flush=True)
 
     sess = _latest_session_state(state.get("session_state"))
     if not (metadata.get("clarification") or {}).get("needed"):
@@ -4433,6 +4372,8 @@ def request_address_node(state: GraphState) -> GraphState:
     clarification = md.get("clarification") or {}
     reason = clarification.get("reason") or "missing_address"
     question = clarification.get("question_asked") or build_clarification_question(reason)
+    generated = generate_clarification(state=state, reason=reason, fallback=question)
+    question = generated["question"]
     return {
         "final_response": question,
         "metadata": _deep_merge(
@@ -4442,6 +4383,8 @@ def request_address_node(state: GraphState) -> GraphState:
                     "needed": True,
                     "reason": reason,
                     "question_asked": question,
+                    "generation_status": generated["status"],
+                    "question_focus": generated.get("focus"),
                     "resolved": False,
                     "resolved_after_turns": None,
                 }
@@ -4455,6 +4398,8 @@ def clarification_node(state: GraphState) -> GraphState:
     clarification = md.get("clarification") or {}
     reason = clarification.get("reason") or "incomplete_question"
     question = clarification.get("question_asked") or build_clarification_question(reason)
+    generated = generate_clarification(state=state, reason=reason, fallback=question)
+    question = generated["question"]
     return {
         "final_response": question,
         "metadata": _deep_merge(
@@ -4464,6 +4409,8 @@ def clarification_node(state: GraphState) -> GraphState:
                     "needed": True,
                     "reason": reason,
                     "question_asked": question,
+                    "generation_status": generated["status"],
+                    "question_focus": generated.get("focus"),
                     "resolved": False,
                     "resolved_after_turns": None,
                 }

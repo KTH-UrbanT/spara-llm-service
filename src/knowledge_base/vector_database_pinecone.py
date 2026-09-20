@@ -1,3 +1,4 @@
+from src.azure_openai_v1 import azure_v1_base_url
 # knowledge_base/vector_database.py
 import os
 import time
@@ -7,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from pinecone import Pinecone
-from langchain_openai import AzureOpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 
 # ---- Config via env ----
@@ -18,17 +19,16 @@ PINECONE_TEXT_FIELD = os.getenv("PINECONE_TEXT_FIELD", "chunk_text")  # where ch
 
 # Azure OpenAI (embeddings)
 AZURE_DEPLOYMENT = os.getenv("OPENAI_EMBEDDINGS_MODEL_DEPLOYMENT")
-AZURE_API_VERSION = os.getenv("OPENAI_API_VERSION")
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 class PineconeVectorSearch:
     """
-    Thin wrapper over Pinecone index for querying with AzureOpenAIEmbeddings.
+    Thin wrapper over Pinecone index for querying with OpenAIEmbeddings.
     """
 
-    def __init__(self, pc: Pinecone, index_name: str, namespace: str, embeddings: AzureOpenAIEmbeddings):
+    def __init__(self, pc: Pinecone, index_name: str, namespace: str, embeddings: OpenAIEmbeddings):
         self.pc = pc
         self.index = pc.Index(index_name)
         self.namespace = namespace
@@ -79,26 +79,26 @@ class PineconeVectorSearch:
 class VectorDataBase:
     """
     Creates Azure embeddings + Pinecone client and exposes:
-      - self.openai_embeddings  (AzureOpenAIEmbeddings)
+      - self.openai_embeddings  (OpenAIEmbeddings)
       - self.vector_search      (PineconeVectorSearch)
     The ctor keeps your original signature, but indexing_policy / vector_embedding_policy
     are not used here (kept for compatibility with your config).
     """
 
     def __init__(self, indexing_policy, vector_embedding_policy, database_name: str, container_name: str):
-        if not all([AZURE_DEPLOYMENT, AZURE_API_VERSION, AZURE_ENDPOINT, OPENAI_API_KEY]):
+        if not all([AZURE_DEPLOYMENT, AZURE_ENDPOINT, OPENAI_API_KEY]):
             raise RuntimeError(
-                "Missing Azure OpenAI env. Set OPENAI_EMBEDDINGS_MODEL_DEPLOYMENT, OPENAI_API_VERSION, "
+                "Missing Azure OpenAI env. Set OPENAI_EMBEDDINGS_MODEL_DEPLOYMENT, "
                 "AZURE_ENDPOINT, OPENAI_API_KEY."
             )
         if not PINECONE_API_KEY:
             raise RuntimeError("Missing Pinecone API key. Set PINECONE_API_KEY or pinecone_api.")
 
         # Build embeddings (Azure)
-        self.openai_embeddings = AzureOpenAIEmbeddings(
-            azure_deployment=AZURE_DEPLOYMENT,
-            api_version=AZURE_API_VERSION,
-            azure_endpoint=AZURE_ENDPOINT,
+        self.openai_embeddings = OpenAIEmbeddings(
+            model=AZURE_DEPLOYMENT,
+            base_url=azure_v1_base_url(AZURE_ENDPOINT),
+            openai_api_type="openai",  # v1 uses the standard OpenAI client
             openai_api_key=OPENAI_API_KEY,
         )
 

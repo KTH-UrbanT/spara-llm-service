@@ -1,3 +1,5 @@
+from src.azure_openai_v1 import azure_v1_base_url
+from src.agents.completion_options import completion_options
 import os
 import re
 import logging
@@ -6,7 +8,7 @@ import time
 import json
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+from openai import OpenAI
 from src.agents.base_agent import BaseAgent
 from src.pipeline.telemetry import record_model_call
 
@@ -26,19 +28,17 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 endpoint = os.getenv("AZURE_ENDPOINT")
 deployment = os.getenv("BUILDING_MODEL_DEPLOYMENT_NAME")
 subscription_key = os.getenv("OPENAI_API_KEY")
-api_version = os.getenv("BUILDING_MODEL_API_VERSION")
 
 if not all([endpoint, deployment, subscription_key]):
     logger.critical("Missing one or more Azure environment variables.")
     sys.exit(1)
 
 try:
-    client = AzureOpenAI(
-        azure_endpoint=endpoint,
+    client = OpenAI(
+        base_url=azure_v1_base_url(endpoint),
         api_key=subscription_key,
-        api_version=api_version,
     )
-    logger.info("AzureOpenAI client initialized for ParseIntentAgent.")
+    logger.info("OpenAI client initialized for ParseIntentAgent.")
 except Exception as e:
     logger.critical(f"Failed to initialize Azure client: {e}")
     sys.exit(1)
@@ -127,6 +127,66 @@ DEFAULT_CONTEXT = {
 SEP_REGEX = re.compile(r"\s*(?:;|,|\+|/|\||&|\band\b)\s*", re.IGNORECASE)
 
 
+def _intent_input(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep routing context without sending credentials or promoting stored roles."""
+    history = []
+    for item in state.get("messages") or []:
+        if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+            continue
+        content = item.get("content")
+        if isinstance(content, str) and content.strip():
+            history.append({"role": item["role"], "content": content})
+
+    current = state.get("last_message")
+    if not isinstance(current, str) or not current.strip():
+        current = next((item["content"] for item in reversed(history) if item["role"] == "user"), "")
+    if history and history[-1] == {"role": "user", "content": current}:
+        history.pop()
+
+    # Allowlist context fields, including only routing information nested under
+    # pending requests. Raw retrieval results and unrelated metadata stay local.
+    allowed = {
+        "byggnadsid", "building_id", "building_id_from_user", "address",
+        "address_from_user", "brf_name", "building_type", "selected_brf_building_id",
+        "selected_brf_addresses", "selected_brf_lookup_address", "clarification",
+        "needed", "reason", "question_asked", "resolved", "building_identity_check",
+        "status", "pending_building_advice_request", "pending_brf_resolution",
+        "question", "original_question", "context", "original_context", "type",
+        "parsed_intent", "intent_list", "intents", "effective_query", "answer_focus",
+        "advice_type", "brf_resolution", "selected_building_id", "selected_addresses",
+    }
+
+    def clean(value, depth=0):
+        if depth > 4:
+            return None
+        if isinstance(value, dict):
+            return {key: clean(item, depth + 1) for key, item in value.items() if key in allowed}
+        if isinstance(value, list):
+            return [clean(item, depth + 1) for item in value[:12]]
+        if isinstance(value, str):
+            return value[:4000]
+        return value if value is None or isinstance(value, (bool, int, float)) else None
+
+    session_context = {}
+    for key in ("metadata", "prior_context"):
+        if isinstance(state.get(key), dict):
+            session_context[key] = clean(state[key])
+    return {
+        "current_message": current,
+        "history": [{**item, "content": item["content"][:4000]} for item in history[-16:]],
+        "session_context": session_context,
+    }
+
+
+def _address_in_current_message(address: str, message: str) -> bool:
+    """Address extraction may normalize punctuation, never add missing content."""
+    def normalized(value):
+        return " ".join(re.findall(r"[^\W_]+", value.casefold(), flags=re.UNICODE))
+
+    candidate = normalized(address)
+    return bool(candidate) and f" {candidate} " in f" {normalized(message)} "
+
+
 def openai_call_worker(prompt_template: str, message: str) -> str:
     """Synchronous call to Azure OpenAI with rate-limit retries; returns raw content string (JSON expected)."""
     messages = [
@@ -141,13 +201,9 @@ def openai_call_worker(prompt_template: str, message: str) -> str:
             completion = client.chat.completions.create(
                 model=deployment,
                 messages=messages,
-                max_tokens=800,
-                temperature=0.9,
-                top_p=0.23,
-                frequency_penalty=0,
-                presence_penalty=0,
-                stop=None,
+                **completion_options(deployment, temperature=0.9),
                 stream=False,
+                response_format={"type": "json_object"},
             )
             response_content = completion.choices[0].message.content
             record_model_call(
@@ -214,9 +270,8 @@ class ParseIntentAgent(BaseAgent):
             return f.read()
 
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        # Prefer the most recent user message; fall back to 'last_message' if messages list is empty
-        messages = state.get("messages", [])
-        user_input = messages[-1]["content"] if messages else state.get("last_message", "")
+        routing_input = _intent_input(state)
+        user_input = routing_input["current_message"]
 
         if not user_input:
             logger.warning("No user input found; using DEFAULT_CONTEXT.")
@@ -224,7 +279,7 @@ class ParseIntentAgent(BaseAgent):
             return state
 
         try:
-            raw = openai_call_worker(self.prompt_template, user_input)
+            raw = openai_call_worker(self.prompt_template, json.dumps(routing_input, ensure_ascii=False))
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             state["context"] = DEFAULT_CONTEXT.copy()
@@ -232,6 +287,10 @@ class ParseIntentAgent(BaseAgent):
 
         try:
             parsed = self._parse_response(raw)
+            if parsed["address"] and not _address_in_current_message(parsed["address"], user_input):
+                # Stored identity is carried separately. A model must not turn an
+                # earlier or invented address into a new user-supplied address.
+                parsed["address"] = None
             # logger.info(f"LLM classification parsed: {parsed}")
             state["context"] = parsed
         except Exception as e:
@@ -245,11 +304,13 @@ class ParseIntentAgent(BaseAgent):
         Expects the model to return JSON. Validates/normalizes:
           - 'parsed_intent' (string; can include separators)
           - 'intents' (list[str]) derived from parsed_intent
-          - 'address' (pass-through; default None)
-          - 'ambigious' (pass-through; default True)
+          - 'address' (string or null; default None)
+          - 'ambigious' (boolean; default True)
         Falls back to DEFAULT_CONTEXT on any validation issue.
         """
         d = json.loads(text)
+        if not isinstance(d, dict):
+            raise ValueError("Intent response must be a JSON object")
 
         # Prefer explicit parsed_intent from the model; otherwise derive from 'intents'
         raw_pi = str(d.get("parsed_intent", "")).strip()
@@ -270,9 +331,14 @@ class ParseIntentAgent(BaseAgent):
             raise ValueError(f"Disallowed intent(s) in parsed_intent: {parts}")
 
         # Normalize
-        intents = parts
+        intents = list(dict.fromkeys(parts))
         address = d.get("address", None)
-        ambigious = bool(d.get("ambigious", True))
+        if address is not None and not isinstance(address, str):
+            raise ValueError("Intent address must be a string or null")
+        address = address.strip() or None if isinstance(address, str) else None
+        ambigious = d.get("ambigious", True)
+        if not isinstance(ambigious, bool):
+            raise ValueError("Intent ambigious must be a JSON boolean")
         parsed_intent = " ; ".join(intents)  # keep your format with spaces around semicolons
 
         return {

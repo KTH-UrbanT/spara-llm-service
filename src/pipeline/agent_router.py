@@ -10,7 +10,12 @@ from src.agents.generic_agent import GenericAgent
 from src.agents.aggregator_agent import AggregatorAgent  # imported if you use it elsewhere
 from src.agents.conversationalist_agent import ConversationalAgent
 from src.services.draft_report_service import generate_draft_report_response
-from src.services.expert_handoff_email import send_expert_handoff_email
+from src.services.expert_handoff_email import (
+    copyable_expert_handoff_summary,
+    expert_handoff_preview_matches,
+    prepare_expert_handoff,
+    send_expert_handoff_email,
+)
 from src.pipeline.safety_analysis import build_out_of_scope_response, detect_out_of_scope
 
 
@@ -833,6 +838,42 @@ class AgentRouter:
         self.cluster = ClusterAgent()
         self.conversationallist = ConversationalAgent()
 
+    def _prepare_handoff_response(self, thread_id, messages, metadata):
+        preview = prepare_expert_handoff(thread_id, messages, metadata)
+        enabled = preview["enabled"]
+        updated_metadata = {
+            **metadata,
+            "expert_handoff_preview": preview,
+            "expert_handoff_pending_confirmation": enabled,
+            "expert_handoff_confirmed": False,
+            "expert_handoff_status": "pending_confirmation" if enabled else "disabled",
+            "expert_handoff_sent": False,
+            "expert_handoff_simulated": False,
+            "expert_handoff_cc_submitted": False,
+            "expert_handoff_error": None,
+        }
+        if enabled:
+            cc_note = f" A copy will also be submitted to {preview['cc']}." if preview.get("cc") else ""
+            content = (
+                f"I can email the configured energy advisor at {preview['recipient']}.{cc_note} "
+                "The email will contain the summary below and an attachment with the full "
+                "conversation and available building/session details, including any contact "
+                "information you shared.\n\n"
+                f"{preview['summary']}\n\nDo you want me to send it?"
+            )
+        else:
+            content = (
+                "Email handoff is not enabled or fully configured, so no email was sent. "
+                "You can copy the summary below and contact your municipality's energy "
+                "and climate advisory service (energi- och klimatradgivning) through its website.\n\n"
+                f"{preview['summary']}"
+            )
+        return {
+            "role": "assistant", "content": content,
+            "classification": "expert_handoff", "agent_answered": "expert_handoff",
+            "route": "expert_handoff",
+        }, updated_metadata
+
     def route_message(self, messages, last_message, metadata, thread_id) -> Dict[str, Any]:
         base_metadata = dict(metadata or {})
         cleared_failed_brf_lookup = False
@@ -845,16 +886,17 @@ class AgentRouter:
 
         last_assistant_asked_handoff = _last_assistant_asked_for_expert_handoff(messages)
         pending_handoff = bool(base_metadata.get("expert_handoff_pending_confirmation")) or last_assistant_asked_handoff
-        explicit_handoff_send = (
-            self.router.is_confirmation(last_message)
-            and getattr(self.router, "wants_expert_handoff", None)
-            and self.router.wants_expert_handoff(last_message)
-        )
-
-        if (pending_handoff or explicit_handoff_send) and self.router.is_confirmation(last_message):
+        # Text-only historical prompts are not sufficient consent: the configured
+        # recipient and payload must match a concrete preview shown to the user.
+        if pending_handoff and self.router.is_confirmation(last_message):
+            if not expert_handoff_preview_matches(thread_id, messages, base_metadata):
+                return self._prepare_handoff_response(thread_id, messages, base_metadata)
             updated_metadata = {
                 **base_metadata,
                 "expert_handoff_pending_confirmation": False,
+                "expert_handoff_confirmed": True,
+                "expert_handoff_simulated": False,
+                "expert_handoff_error": None,
             }
             if _evaluation_mode_enabled():
                 updated_metadata = {
@@ -862,6 +904,7 @@ class AgentRouter:
                     "expert_handoff_requested": True,
                     "expert_handoff_sent": False,
                     "expert_handoff_simulated": True,
+                    "expert_handoff_status": "simulated",
                 }
                 return {
                     "role": "assistant",
@@ -871,17 +914,30 @@ class AgentRouter:
                     "route": "expert_handoff",
                 }, updated_metadata
             try:
-                was_sent = send_expert_handoff_email(thread_id, messages, updated_metadata)
+                result = send_expert_handoff_email(thread_id, messages, updated_metadata)
+                status = result.get("status", "unknown")
+                if status == "sending":
+                    status = "unknown"
+                was_submitted = status == "submitted"
                 updated_metadata = {
                     **updated_metadata,
                     "expert_handoff_requested": True,
-                    "expert_handoff_sent": bool(was_sent),
+                    "expert_handoff_sent": was_submitted,
+                    "expert_handoff_status": status,
+                    "expert_handoff_cc_submitted": bool(result.get("cc_submitted")),
                 }
-                if was_sent:
-                    cc_note = " and you were CCed" if updated_metadata.get("user_email") else ""
+                if was_submitted:
+                    recipient = updated_metadata["expert_handoff_preview"]["recipient"]
+                    cc_note = " Your copy was also accepted." if result.get("cc_submitted") else ""
+                    if updated_metadata["expert_handoff_preview"].get("cc") and not result.get("cc_submitted"):
+                        cc_note = " Your CC copy was not accepted."
+                    repeat_note = " This request was already submitted; no duplicate email was sent." if result.get("duplicate") else ""
                     return {
                         "role": "assistant",
-                        "content": f"The email was sent successfully to the EKR expert{cc_note}.",
+                        "content": (
+                            f"The mail server accepted the email for {recipient}.{cc_note} "
+                            f"Delivery to the inbox is not confirmed.{repeat_note}"
+                        ),
                         "classification": "expert_handoff",
                         "agent_answered": "expert_handoff",
                         "route": "expert_handoff",
@@ -891,12 +947,25 @@ class AgentRouter:
                     **updated_metadata,
                     "expert_handoff_requested": True,
                     "expert_handoff_sent": False,
-                    "expert_handoff_error": str(exc),
+                    "expert_handoff_status": "unknown",
+                    "expert_handoff_error": type(exc).__name__,
                 }
 
+            status = updated_metadata.get("expert_handoff_status")
+            failure_note = (
+                "I could not confirm whether the mail server accepted the email. "
+                "I will not automatically resend it because that could create a duplicate."
+                if status in {"unknown", "sending"} else
+                "I could not send the email to the configured energy advisor."
+            )
             return {
                 "role": "assistant",
-                "content": "I could not send the email to the EKR expert right now. Please try again later.",
+                "content": (
+                    f"{failure_note} You can copy the summary below and contact your "
+                    "municipality's energy and climate advisory service through its website.\n\n"
+                    + (base_metadata.get("expert_handoff_preview", {}).get("summary")
+                       or copyable_expert_handoff_summary(messages, base_metadata))
+                ),
                 "classification": "expert_handoff",
                 "agent_answered": "expert_handoff",
                 "route": "expert_handoff",
@@ -907,6 +976,8 @@ class AgentRouter:
                 **base_metadata,
                 "expert_handoff_pending_confirmation": False,
                 "expert_handoff_sent": False,
+                "expert_handoff_confirmed": False,
+                "expert_handoff_status": "cancelled",
             }
             return {
                 "role": "assistant",
@@ -915,6 +986,15 @@ class AgentRouter:
                 "agent_answered": "expert_handoff",
                 "route": "expert_handoff",
             }, updated_metadata
+
+        if pending_handoff:
+            # A new question or topic supersedes the pending consent, including
+            # fast conversational/clarification routes that return before classification.
+            base_metadata = {
+                **base_metadata,
+                "expert_handoff_pending_confirmation": False,
+                "expert_handoff_confirmed": False,
+            }
 
         boundary_case = detect_out_of_scope(last_message)
         if boundary_case:
@@ -940,6 +1020,21 @@ class AgentRouter:
                 "agent_answered": "boundary",
                 "route": "out_of_scope",
             }, updated_metadata
+
+        report_requested = bool(
+            getattr(self.router, "wants_draft_report", None)
+            and self.router.wants_draft_report(last_message)
+        )
+        expert_handoff_requested_by_phrase = bool(
+            getattr(self.router, "wants_expert_handoff", None)
+            and self.router.wants_expert_handoff(last_message)
+        )
+        if report_requested:
+            report_response = generate_draft_report_response(thread_id, messages, base_metadata)
+            report_response.setdefault("route", "report_generation")
+            return report_response, base_metadata
+        if expert_handoff_requested_by_phrase:
+            return self._prepare_handoff_response(thread_id, messages, base_metadata)
 
         if (
             _awaiting_address_disambiguation(base_metadata)
@@ -1006,17 +1101,7 @@ class AgentRouter:
         else:
             previous_classification = None
 
-        expert_handoff_requested_by_phrase = bool(
-            getattr(self.router, "wants_expert_handoff", None)
-            and self.router.wants_expert_handoff(last_message)
-        )
-
-        if getattr(self.router, "wants_draft_report", None) and self.router.wants_draft_report(last_message):
-            classified = "draft_energy_report"
-        elif expert_handoff_requested_by_phrase:
-            classified = "expert_handoff"
-        else:
-            classified = self.router.classify_question(last_message, previous_classification)
+        classified = self.router.classify_question(last_message, previous_classification, history=messages)
 
         classified = _normalize_classification(classified)
         broad_advice_without_identity = _advisory_without_resolved_building_context(
@@ -1050,6 +1135,7 @@ class AgentRouter:
             base_metadata = {
                 **base_metadata,
                 "expert_handoff_pending_confirmation": False,
+                "expert_handoff_confirmed": False,
             }
 
         if classified == "draft_energy_report":
@@ -1058,17 +1144,7 @@ class AgentRouter:
             return report_response, base_metadata
 
         if classified == "expert_handoff":
-            updated_metadata = {
-                **base_metadata,
-                "expert_handoff_pending_confirmation": True,
-            }
-            return {
-                "role": "assistant",
-                "content": "I can email this conversation and the available session details to an EKR expert. Do you want me to send it?",
-                "classification": "expert_handoff",
-                "agent_answered": "expert_handoff",
-                "route": "expert_handoff",
-            }, updated_metadata
+            return self._prepare_handoff_response(thread_id, messages, base_metadata)
 
         if classified == "generic":
             generic_response = self.generic.handle_generic_input(last_message, messages)

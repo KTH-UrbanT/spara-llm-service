@@ -1,10 +1,11 @@
+from src.azure_openai_v1 import azure_v1_base_url
 # Import necessary libraries
 import json  # For loading the configuration file
 from knowledge_base.vector_database import VectorDataBase  # For interacting with the vector database
 from context_retrieval.main_context_retrieval import *  # For context retrieval logic
 import os  # For environment variables
 import backoff
-from openai import AzureOpenAI, RateLimitError   # Correctly import error classes  # For interacting with OpenAI's API (Azure version)
+from openai import OpenAI, RateLimitError   # Correctly import error classes  # For interacting with OpenAI's API (Azure version)
 from dotenv import load_dotenv  # For loading environment variables from .env file
 import building_specs
 # Load environment variables from the .env file
@@ -59,10 +60,9 @@ class RetrievalGeneration:
         subscription_key = os.getenv("OPENAI_API_KEY")
         
         # Initialize the Azure OpenAI client
-        self.client = AzureOpenAI(  
-                azure_endpoint=endpoint,  
+        self.client = OpenAI(  
+                base_url=azure_v1_base_url(endpoint),  
                 api_key=subscription_key,  
-                api_version = os.getenv("LANGUAGE_MODEL_API_VERSION"),  
             )  
     @backoff.on_exception(backoff.expo,
                           RateLimitError,

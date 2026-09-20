@@ -1,8 +1,10 @@
+from src.azure_openai_v1 import azure_v1_base_url
+from src.agents.completion_options import completion_options
 import os
 import logging
 import time
 from typing import List, Dict, Optional, Union
-from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
+from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
 from dotenv import load_dotenv
 from src.pipeline.telemetry import record_model_call
 
@@ -45,7 +47,6 @@ class OpenAIResponseAgent:
             "AZURE_ENDPOINT": "Azure OpenAI endpoint",
             "OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME": "Deployment name for response model",
             "OPENAI_API_KEY": "OpenAI API key",
-            "OPENAI_RESPONSE_MODEL_API_VERSION": "API version for the model"
         }
 
         for var, desc in required_env_vars.items():
@@ -56,13 +57,11 @@ class OpenAIResponseAgent:
         self.endpoint = os.getenv("AZURE_ENDPOINT")
         self.deployment = os.getenv("OPENAI_RESPONSE_MODEL_DEPLOYMENT_NAME")
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.api_version = os.getenv("OPENAI_RESPONSE_MODEL_API_VERSION")
 
         try:
-            self.client = AzureOpenAI(
-                azure_endpoint=self.endpoint,
+            self.client = OpenAI(
+                base_url=azure_v1_base_url(self.endpoint),
                 api_key=self.api_key,
-                api_version=self.api_version
             )
             logger.info("Azure OpenAI client initialized successfully for response agent.")
         except Exception as e:
@@ -132,14 +131,7 @@ class OpenAIResponseAgent:
 
         messages = self._build_messages(last_message, message_list)
         params = {"model": self.deployment, "messages": messages, "stream": False}
-        if self._is_o4_family():
-            params["max_completion_tokens"] = 4000
-        else:
-            params["max_tokens"] = 800
-            params["temperature"] = 0.2
-            params["top_p"] = 0.23
-            params["frequency_penalty"] = 0
-            params["presence_penalty"] = 0
+        params.update(completion_options(self.deployment, reasoning_tokens=16384))
 
         try:
             model_started_at = time.perf_counter()
@@ -152,7 +144,7 @@ class OpenAIResponseAgent:
                 params.pop("max_tokens", None)
                 params["max_completion_tokens"] = 800
                 # Remove legacy sampling params that may cause 400 on o4/o3
-                for k in ("top_p", "frequency_penalty", "presence_penalty"):
+                for k in ("temperature", "top_p", "frequency_penalty", "presence_penalty"):
                     params.pop(k, None)
                 model_started_at = time.perf_counter()
                 try:

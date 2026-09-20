@@ -373,6 +373,7 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
         "out_of_scope_type": boundary_handling["out_of_scope_type"],
         "expert_handoff_triggered": route == "expert_handoff",
         "report_generation_triggered": route == "report_generation",
+        "report_status": response.get("report_status") if route == "report_generation" else None,
         "evaluation_mode": is_evaluation_mode(),
         "building_id": building_id,
         "building_match": building_match,
@@ -389,6 +390,14 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
         "telemetry": session_metadata.get("telemetry"),
         "model_config": _build_model_config(),
     }
+    if route == "expert_handoff":
+        for key in (
+            "expert_handoff_pending_confirmation", "expert_handoff_sent",
+            "expert_handoff_status", "expert_handoff_simulated",
+            "expert_handoff_cc_submitted",
+        ):
+            if key in session_metadata:
+                payload[key] = session_metadata[key]
     for key in SESSION_MEMORY_KEYS:
         if key == "pending_brf_resolution" and _has_resolved_brf_selection(session_metadata):
             continue

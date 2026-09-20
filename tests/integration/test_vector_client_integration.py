@@ -20,7 +20,6 @@ def test_vector_client_env_connection_smoke():
         "database_name",
         "container_name",
         "OPENAI_EMBEDDINGS_MODEL_DEPLOYMENT",
-        "OPENAI_API_VERSION",
         "AZURE_ENDPOINT",
         "OPENAI_API_KEY",
         "PINECONE_API_KEY",

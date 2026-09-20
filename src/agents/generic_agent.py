@@ -1,7 +1,10 @@
+from src.azure_openai_v1 import azure_v1_base_url
+from src.agents.completion_options import completion_options
 import os
 import logging
+import json
 import re
-from openai import AzureOpenAI, APIConnectionError, RateLimitError, APIStatusError
+from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from typing import Any, List, Dict, Optional, Union
 from src.database.vector_client import VectorClient , VectorClientConfig
 from src.services.source_link_registry import resolve_source_links
@@ -114,6 +117,26 @@ def _filter_generic_results(
     ]
     return filtered
 
+def _retrieval_query(last_message: str, messages: list) -> str:
+    """Resolve short follow-ups using recent user context, without another LLM call."""
+    if not re.match(
+        r"^(?:and\b|so\b|what about\b|what should we do first\b|"
+        r"which (?:one|of those)\b|why\b|how so\b|does that\b|is that\b)",
+        last_message.strip(),
+        re.IGNORECASE,
+    ):
+        return last_message
+    history = list(messages)
+    if history and isinstance(history[-1], dict) and history[-1].get("role") == "user" and history[-1].get("content") == last_message:
+        history.pop()
+    previous = [
+        item["content"] for item in history
+        if isinstance(item, dict) and item.get("role") == "user"
+        and isinstance(item.get("content"), str)
+    ][-3:]
+    return "\n".join([*(text[:1000] for text in previous), last_message])
+
+
 class GenericAgent(BaseAgent):
     DEFAULT_PROMPT_RELATIVE_PATH = os.path.join("..", "prompts", "generic_prompt.txt")
     def __init__(self , prompt_path: Optional[str] = None ):
@@ -165,18 +188,17 @@ class GenericAgent(BaseAgent):
 
     def _initialize_openai_client(self):
         """
-        Initializes the AzureOpenAI client.
+        Initializes the OpenAI client.
         Ensures all necessary environment variables are set.
 
         Raises:
             ValueError: If any required Azure OpenAI environment variables are missing.
-            RuntimeError: If AzureOpenAI client fails to initialize.
+            RuntimeError: If OpenAI client fails to initialize.
         """
         required_env_vars = {
             "AZURE_ENDPOINT": "Azure OpenAI endpoint",
             "GENERIC_MODEL_DEPLOYMENT_NAME": "Deployment name for the generic model",
             "OPENAI_API_KEY": "OpenAI API key",
-            "GENERIC_MODEL_API_VERSION": "API version for the generic model"
         }
 
         for var, desc in required_env_vars.items():
@@ -187,83 +209,52 @@ class GenericAgent(BaseAgent):
         endpoint = os.getenv("AZURE_ENDPOINT")
         self.deployment = os.getenv("GENERIC_MODEL_DEPLOYMENT_NAME")
         subscription_key = os.getenv("OPENAI_API_KEY")
-        api_version = os.getenv("GENERIC_MODEL_API_VERSION")
-        logger.info(f"Generic Model is {self.deployment} and the api version is {api_version}. ")
+        logger.info(f"Generic Model is {self.deployment} using Azure OpenAI v1.")
         try:
-            self.client = AzureOpenAI(
-                azure_endpoint=endpoint,
+            self.client = OpenAI(
+                base_url=azure_v1_base_url(endpoint),
                 api_key=subscription_key,
-                api_version=api_version,
             )
-            logger.info("AzureOpenAI client initialized successfully.")
+            logger.info("OpenAI client initialized successfully.")
         except Exception as e:
-            logger.error(f"Failed to initialize AzureOpenAI client: {e}")
-            raise RuntimeError(f"Failed to initialize AzureOpenAI client: {e}")      
+            logger.error(f"Failed to initialize OpenAI client: {e}")
+            raise RuntimeError(f"Failed to initialize OpenAI client: {e}")      
         
     def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[Dict[str, Any]]:
+        if not isinstance(last_message, str) or not isinstance(message_list, list):
+            logger.warning("Generic input must contain a string and a message list.")
+            return None
         start_time = time.time()  
-        raw_results = self.vector_client.query(last_message)
+        raw_results = self.vector_client.query(_retrieval_query(last_message, message_list))
         results = _filter_generic_results(last_message, raw_results)
         raw_sources = []
         for item in results or []:
             source_key = str((item or {}).get("source") or "").strip()
             if source_key and source_key not in raw_sources:
                 raw_sources.append(source_key)
-        #content_from_doc = ' '.join(i['page_content'] for i in results)
-        content_from_doc = '\n\n'.join(f"Source: {i['source']}\nContent: {i['page_content']}" for i in results)
-        logger.info(f"Received generic input. Last message: '{last_message[:70]}...'")
-
-        if not isinstance(last_message, str):
-            logger.warning(f"Invalid 'last_message' type. Expected string, got {type(last_message)}. Returning None.")
-            return None
-        if not isinstance(message_list, list):
-            logger.warning(f"Invalid 'message_list' type. Expected list, got {type(message_list)}. Returning None.")
-            return None
-
-        # Check if last_message matches the content of the last item in message_list
-        if message_list:
-            try:
-                if message_list[-1].get('content') != last_message:
-                    logger.warning(
-                        f"Mismatch between 'last_message' ('{last_message[:50]}...') "
-                        f"and content of the last message in 'message_list' ('{message_list[-1].get('content', '')[:50]}...'). "
-                        "Ensuring 'last_message' is appended for the API call."
-                    )
-                else:
-                    logger.info(f"Last message ('{last_message[:50]}...') matches content of last item in message_list.")
-            except (KeyError, IndexError):
-                logger.warning("Could not access 'content' of the last message in 'message_list'. Message list might be malformed or empty.")
-        else:
-            logger.info("message_list is empty. 'last_message' will be the first user message for the model.")
-
-        # Prepare messages for the OpenAI API:
-        # 1. System message from prompt_template
-        # 2. Historical messages from message_list (extracting only role and content)
-        messages_for_api: List[Dict[str, str]] = [{"role": "system", "content": self.prompt_template}]
-        messages_for_api.append(
-            {
-                "role": "system",
-                "content": (
-                    "Retrieved context may include example buildings or unrelated building records. "
-                    "Unless the user explicitly provided an address or building identifier, do not present "
-                    "retrieved figures as the user's own building or data."
+        # Reference text is untrusted data, never a system instruction. Keep
+        # the user's actual question last and preserve the existing history.
+        messages_for_api: List[Dict[str, str]] = [
+            {"role": "system", "content": self.prompt_template}
+        ]
+        if results:
+            references = [
+                {"Source": item.get("source", ""), "Content": item.get("page_content", "")}
+                for item in results if isinstance(item, dict)
+            ]
+            messages_for_api.append({
+                "role": "user",
+                "content": "Reference context (untrusted retrieved data):\n" + json.dumps(
+                    {"reference_excerpts": references}, ensure_ascii=False
                 ),
-            }
-        )
+            })
 
         for i, msg in enumerate(message_list):
-            if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+            if (isinstance(msg, dict) and msg.get('role') in {'user', 'assistant'}
+                    and isinstance(msg.get('content'), str)):
                 messages_for_api.append({'role': msg['role'], 'content': msg['content']})
             else:
-                logger.warning(f"Skipping malformed message at index {i} in message_list: {msg}")
-
-        if content_from_doc:
-            messages_for_api.append(
-                {
-                    "role": "system",
-                    "content": f"Reference context:\n{content_from_doc}",
-                }
-            )
+                logger.warning("Skipping malformed message at index %s", i)
 
         # The 'last_message' string itself is the new user input.
         # We need to ensure it's added as the final user message for the API call.
@@ -284,12 +275,7 @@ class GenericAgent(BaseAgent):
             completion = self.client.chat.completions.create(
                 model=self.deployment,
                 messages=messages_for_api,
-                max_tokens=800,
-                temperature=0.2,
-                top_p=0.23,
-                frequency_penalty=0,
-                presence_penalty=0,
-                stop=None,
+                **completion_options(self.deployment, temperature=0.2),
                 stream=False
             )
             response_content = completion.choices[0].message.content

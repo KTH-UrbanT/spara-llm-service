@@ -82,9 +82,17 @@ def merge_identifier_metadata(metadata: Optional[Dict[str, Any]], *sources: Any)
     return merged
 
 
-def build_history_excerpt(messages: List[Dict[str, Any]], keep_last: int = 8) -> str:
+def build_history_excerpt(messages: List[Dict[str, Any]], keep_last: Optional[int] = None) -> str:
+    # The caller owns retention. Dropping earlier turns here loses the BRF's
+    # objectives and constraints while retaining only recent clarification.
+    selected = messages or []
+    if keep_last is not None:
+        selected = selected[-keep_last:] if keep_last > 0 else []
     excerpt = []
-    for message in (messages or [])[-keep_last:]:
+    for message in selected:
+        if (not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}
+                or not isinstance(message.get("content"), str)):
+            continue
         excerpt.append(
             {
                 "role": message.get("role"),
@@ -113,7 +121,18 @@ def build_building_response_prompt(
         history=build_history_excerpt(history),
         action_description=action_description or "No specific action was recorded.",
         results=_json_text(results),
-        metadata=_json_text(metadata or {}),
+        # Keep operational caches, query traces and old duplicate field aliases
+        # out of the model input. The summarizer supplies a scoped fact snapshot.
+        metadata=_json_text({
+            key: value for key, value in (metadata or {}).items()
+            if key in {
+                "byggnadsid", "building_id", "brf_name", "building_type", "address",
+                "address_from_user", "requested_address", "epc_record_address",
+                "same_building_multiple_addresses", "address_context_note",
+                "building_identity_check", "retrieved_facts", "data_freshness",
+                "evidence_scope", "uncertainty", "clarification",
+            }
+        }),
     )
 
 

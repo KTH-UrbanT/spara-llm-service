@@ -21,7 +21,7 @@ class StubRouterAgent:
         normalized = message.strip().lower()
         return normalized == "no"
 
-    def classify_question(self, message, previous_classification):
+    def classify_question(self, message, previous_classification, history=None):
         type(self).last_call = (message, previous_classification)
         return type(self).next_classification
 
@@ -95,7 +95,13 @@ def import_agent_router_module():
     )
     stub_module(
         "src.services.expert_handoff_email",
-        send_expert_handoff_email=lambda thread_id, messages, metadata: True,
+        send_expert_handoff_email=lambda thread_id, messages, metadata: {"status": "submitted"},
+        prepare_expert_handoff=lambda thread_id, messages, metadata: {
+            "enabled": True, "recipient": "advisor@example.com", "cc": None,
+            "request_id": "preview-1", "summary": "Summary to copy",
+        },
+        expert_handoff_preview_matches=lambda thread_id, messages, metadata: bool(metadata.get("expert_handoff_preview")),
+        copyable_expert_handoff_summary=lambda messages, metadata: "Summary to copy",
     )
     return fresh_import("src.pipeline.agent_router")
 

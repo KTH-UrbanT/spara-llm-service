@@ -392,11 +392,6 @@ def _derive_fact_aliases(facts: Dict[str, Any]) -> Dict[str, Any]:
                 "EnergyClassKwhM2",
                 "energy_performance",
                 "epc_egienergiprestanda",
-                "epc_egiprimarenergital2019",
-                "epc_egiprimarenergital2020_calc",
-                "epc_egiprimarenergital2020",
-                "epc_egispecifikenergianvandning",
-                "epc_egispecifikenergianvandning_calc",
             ),
         )
         if value is not None:

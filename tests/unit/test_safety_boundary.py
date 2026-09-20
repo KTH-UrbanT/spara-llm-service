@@ -1,3 +1,5 @@
+import pytest
+
 from src.pipeline.evaluation_metadata import build_message_evidence, build_message_metadata
 from src.pipeline.safety_analysis import (
     assess_boundary_safety,
@@ -238,3 +240,50 @@ def test_retrieved_facts_separate_epc_energy_metrics():
     assert facts["energy_performance"] == 201
     assert facts["specific_energy_use"] == 198
     assert facts["primary_energy_number"] == 145
+
+
+def test_missing_declared_performance_is_not_filled_from_a_different_metric():
+    facts = extract_retrieved_facts({
+        "epc_egispecifikenergianvandning_calc": 198,
+        "epc_egiprimarenergital2020_calc": 145,
+    })
+    assert "energy_performance" not in facts
+    assert facts["specific_energy_use"] == 198
+    assert facts["primary_energy_number"] == 145
+
+
+def test_legacy_explicit_energy_performance_remains_supported():
+    assert extract_retrieved_facts({"EnergyClassKwhM2": 123})["energy_performance"] == 123
+
+
+def test_handoff_status_is_exposed_without_preview_contents():
+    metadata = build_message_metadata(
+        {"content": "Email submitted; delivery is unconfirmed.", "route": "expert_handoff", "classification": "expert_handoff"},
+        {"expert_handoff_status": "submitted", "expert_handoff_sent": True,
+         "expert_handoff_pending_confirmation": False,
+         "expert_handoff_preview": {"private": "contents"}},
+    )
+    assert metadata["expert_handoff_status"] == "submitted"
+    assert metadata["expert_handoff_pending_confirmation"] is False
+    assert "expert_handoff_preview" not in metadata
+
+
+@pytest.mark.parametrize("status", ["generated", "fallback", "storage_failed"])
+def test_report_status_reaches_message_metadata(status):
+    metadata = build_message_metadata({
+        "classification": "draft_energy_report", "content": "Report outcome",
+        "report_status": status,
+    }, {})
+    assert metadata["route"] == "report_generation"
+    assert metadata["report_status"] == status
+
+
+def test_generic_turn_does_not_publish_previous_handoff_or_report_outcome():
+    metadata = build_message_metadata(
+        {"route": "generic", "classification": "generic", "content": "General advice"},
+        {"expert_handoff_status": "submitted", "expert_handoff_sent": True,
+         "report_status": "generated"},
+    )
+    assert "expert_handoff_status" not in metadata
+    assert "expert_handoff_sent" not in metadata
+    assert "report_status" not in metadata

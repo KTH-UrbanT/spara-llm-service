@@ -1,8 +1,14 @@
 from tests.support import fresh_import, stub_module
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def no_evaluation_environment(monkeypatch):
+    monkeypatch.delenv("EVALUATION_MODE", raising=False)
 
 
 class FakeRouterAgent:
-    def classify_question(self, message, previous_classification=None):
+    def classify_question(self, message, previous_classification=None, history=None):
         lowered = message.lower()
         if "report" in lowered:
             return "draft_energy_report"
@@ -93,7 +99,7 @@ class EmailRecorder:
         if cls.should_raise:
             raise RuntimeError("smtp failed")
         cls.calls.append((thread_id, messages, metadata))
-        return True
+        return {"status": "submitted", "cc_submitted": False}
 
 
 def import_agent_router_module():
@@ -115,8 +121,28 @@ def import_agent_router_module():
             "downloadable_report": {"report_id": f"rep-{thread_id}"},
         },
     )
-    stub_module("src.services.expert_handoff_email", send_expert_handoff_email=EmailRecorder.send)
+    stub_module(
+        "src.services.expert_handoff_email",
+        send_expert_handoff_email=EmailRecorder.send,
+        prepare_expert_handoff=lambda thread_id, messages, metadata: {
+            "enabled": True, "recipient": "advisor@example.com", "cc": None,
+            "request_id": "preview-1", "summary": "Summary to copy",
+        },
+        expert_handoff_preview_matches=lambda thread_id, messages, metadata: bool(metadata.get("expert_handoff_preview")),
+        copyable_expert_handoff_summary=lambda messages, metadata: "Summary to copy",
+    )
     return fresh_import("src.pipeline.agent_router")
+
+
+def pending_metadata(**extra):
+    return {
+        "expert_handoff_pending_confirmation": True,
+        "expert_handoff_preview": {
+            "request_id": "preview-1", "recipient": "advisor@example.com",
+            "cc": None, "summary": "Summary to copy",
+        },
+        **extra,
+    }
 
 
 def test_route_message_asks_for_expert_handoff_confirmation():
@@ -132,6 +158,10 @@ def test_route_message_asks_for_expert_handoff_confirmation():
 
     assert response["classification"] == "expert_handoff"
     assert "Do you want me to send it?" in response["content"]
+    assert "advisor@example.com" in response["content"]
+    assert "full conversation" in response["content"]
+    assert "contact information" in response["content"]
+    assert "Summary to copy" in response["content"]
     assert metadata["expert_handoff_pending_confirmation"] is True
     assert EmailRecorder.calls == []
 
@@ -148,12 +178,13 @@ def test_route_message_sends_email_after_confirmation():
     response, metadata = router.route_message(
         messages,
         "yes",
-        {"expert_handoff_pending_confirmation": True, "address": ["Main Street 1"]},
+        pending_metadata(address=["Main Street 1"]),
         "thread-2",
     )
 
     assert response["classification"] == "expert_handoff"
-    assert "email was sent successfully" in response["content"]
+    assert "mail server accepted" in response["content"]
+    assert "Delivery to the inbox is not confirmed" in response["content"]
     assert metadata["expert_handoff_pending_confirmation"] is False
     assert metadata["expert_handoff_requested"] is True
     assert len(EmailRecorder.calls) == 1
@@ -174,16 +205,17 @@ def test_route_message_accepts_sure_as_handoff_confirmation():
             {"role": "user", "content": "sure."},
         ],
         "sure.",
-        {"expert_handoff_pending_confirmation": True},
+        pending_metadata(),
         "thread-sure",
     )
 
     assert response["classification"] == "expert_handoff"
-    assert "email was sent successfully" in response["content"]
+    assert "mail server accepted" in response["content"]
+    assert "Delivery to the inbox is not confirmed" in response["content"]
     assert metadata["expert_handoff_sent"] is True
 
 
-def test_route_message_sends_explicit_email_command_after_lost_pending_state():
+def test_route_message_requires_new_preview_after_lost_pending_state():
     module = import_agent_router_module()
     router = module.AgentRouter()
 
@@ -207,8 +239,9 @@ def test_route_message_sends_explicit_email_command_after_lost_pending_state():
     )
 
     assert response["classification"] == "expert_handoff"
-    assert "email was sent successfully" in response["content"]
-    assert metadata["expert_handoff_sent"] is True
+    assert "Do you want me to send it?" in response["content"]
+    assert metadata["expert_handoff_sent"] is False
+    assert EmailRecorder.calls == []
 
 
 def test_route_message_cancels_expert_handoff_on_rejection():
@@ -218,7 +251,7 @@ def test_route_message_cancels_expert_handoff_on_rejection():
     response, metadata = router.route_message(
         [{"role": "user", "content": "no"}],
         "no",
-        {"expert_handoff_pending_confirmation": True},
+        pending_metadata(),
         "thread-3",
     )
 
@@ -236,14 +269,15 @@ def test_route_message_reports_email_failure_to_user():
     response, metadata = router.route_message(
         [{"role": "user", "content": "yes"}],
         "yes",
-        {"expert_handoff_pending_confirmation": True},
+        pending_metadata(),
         "thread-4",
     )
 
     assert response["classification"] == "expert_handoff"
-    assert "could not send the email" in response["content"]
+    assert "could not confirm" in response["content"]
+    assert "Summary to copy" in response["content"]
     assert metadata["expert_handoff_sent"] is False
-    assert "smtp failed" in metadata["expert_handoff_error"]
+    assert "RuntimeError" in metadata["expert_handoff_error"]
 
 
 def test_route_message_accepts_longer_confirmation_phrase():
@@ -253,12 +287,13 @@ def test_route_message_accepts_longer_confirmation_phrase():
     response, metadata = router.route_message(
         [{"role": "user", "content": "yes please send the email"}],
         "yes please send the email",
-        {"expert_handoff_pending_confirmation": True},
+        pending_metadata(),
         "thread-5",
     )
 
     assert response["classification"] == "expert_handoff"
-    assert "email was sent successfully" in response["content"]
+    assert "mail server accepted" in response["content"]
+    assert "Delivery to the inbox is not confirmed" in response["content"]
     assert metadata["expert_handoff_sent"] is True
 
 
@@ -287,7 +322,7 @@ def test_pending_handoff_does_not_treat_report_request_as_confirmation():
     response, metadata = router.route_message(
         [{"role": "user", "content": "can you give me the draft energy report?"}],
         "can you give me the draft energy report?",
-        {"expert_handoff_pending_confirmation": True, "address": ["Main Street 1"]},
+        pending_metadata(address=["Main Street 1"]),
         "thread-7",
     )
 
@@ -295,3 +330,80 @@ def test_pending_handoff_does_not_treat_report_request_as_confirmation():
     assert response["content"] == "draft report reply"
     assert metadata["expert_handoff_pending_confirmation"] is False
     assert EmailRecorder.calls == []
+
+
+def test_pending_flag_without_preview_does_not_authorize_sending():
+    module = import_agent_router_module()
+    response, metadata = module.AgentRouter().route_message(
+        [{"role": "user", "content": "yes"}], "yes",
+        {"expert_handoff_pending_confirmation": True}, "thread-no-preview",
+    )
+    assert "Do you want me to send it?" in response["content"]
+    assert EmailRecorder.calls == []
+
+
+def test_disabled_handoff_offers_summary_without_confirmation_or_send(monkeypatch):
+    module = import_agent_router_module()
+    monkeypatch.setattr(module, "prepare_expert_handoff", lambda *args: {
+        "enabled": False, "summary": "Summary to copy",
+    })
+    response, metadata = module.AgentRouter().route_message(
+        [{"role": "user", "content": "I need an expert"}], "I need an expert", {}, "thread-disabled",
+    )
+    assert "not enabled or fully configured" in response["content"]
+    assert "Summary to copy" in response["content"]
+    assert "Do you want me to send it?" not in response["content"]
+    assert metadata["expert_handoff_status"] == "disabled"
+    assert metadata["expert_handoff_pending_confirmation"] is False
+    assert EmailRecorder.calls == []
+
+
+def test_evaluation_confirmation_never_sends_email(monkeypatch):
+    module = import_agent_router_module()
+    monkeypatch.setenv("EVALUATION_MODE", "true")
+    response, metadata = module.AgentRouter().route_message(
+        [{"role": "user", "content": "yes"}], "yes", pending_metadata(), "thread-evaluation",
+    )
+    assert "No real email was sent" in response["content"]
+    assert metadata["expert_handoff_status"] == "simulated"
+    assert EmailRecorder.calls == []
+
+
+def test_repeated_confirmation_after_success_does_not_send_again():
+    module = import_agent_router_module()
+    router = module.AgentRouter()
+    response, metadata = router.route_message(
+        [{"role": "user", "content": "yes"}], "yes", pending_metadata(), "thread-repeat",
+    )
+    router.route_message(
+        [response, {"role": "user", "content": "yes"}], "yes", metadata, "thread-repeat",
+    )
+    assert len(EmailRecorder.calls) == 1
+
+
+def test_fast_conversation_clears_pending_consent():
+    module = import_agent_router_module()
+    router = module.AgentRouter()
+    response, metadata = router.route_message(
+        [{"role": "user", "content": "hello"}], "hello", pending_metadata(), "thread-topic",
+    )
+    assert metadata["expert_handoff_pending_confirmation"] is False
+    router.route_message([response, {"role": "user", "content": "yes"}], "yes", metadata, "thread-topic")
+    assert EmailRecorder.calls == []
+
+
+@pytest.mark.parametrize("status", ["failed", "unknown", "sending"])
+def test_submission_failure_provides_copyable_summary(monkeypatch, status):
+    module = import_agent_router_module()
+    monkeypatch.setattr(module, "send_expert_handoff_email", lambda *args: {"status": status})
+    response, metadata = module.AgentRouter().route_message(
+        [{"role": "user", "content": "yes"}], "yes", pending_metadata(), "thread-failure",
+    )
+    assert "Summary to copy" in response["content"]
+    assert "municipality" in response["content"]
+    assert metadata["expert_handoff_sent"] is False
+    if status in {"unknown", "sending"}:
+        assert metadata["expert_handoff_status"] == "unknown"
+        assert "not automatically resend" in response["content"]
+    else:
+        assert metadata["expert_handoff_status"] == "failed"

@@ -1,6 +1,7 @@
+from src.azure_openai_v1 import azure_v1_base_url
 from azure.cosmos import CosmosClient, PartitionKey 
 from src.knowledge_base.azure_cosmos_custom import AzureCosmosDBNoSqlVectorSearchCustom
-from langchain_openai import AzureOpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 import os
 from dotenv import load_dotenv
 
@@ -46,10 +47,10 @@ class VectorDataBase :
         cosmos_container_properties = {"partition_key": partition_key}
         cosmos_database_properties = {"id": self.database_name}
 
-        self.openai_embeddings = AzureOpenAIEmbeddings(
-            azure_deployment = os.environ.get('OPENAI_EMBEDDINGS_MODEL_DEPLOYMENT'),
-            api_version = os.environ.get('OPENAI_API_VERSION'),
-            azure_endpoint = os.environ.get('AZURE_ENDPOINT'),
+        self.openai_embeddings = OpenAIEmbeddings(
+            model = os.environ.get('OPENAI_EMBEDDINGS_MODEL_DEPLOYMENT'),
+            base_url=azure_v1_base_url(os.environ.get("AZURE_ENDPOINT")),
+            openai_api_type="openai",  # v1 uses the standard OpenAI client
             openai_api_key = os.environ.get('OPENAI_API_KEY'),
         )
         try : 

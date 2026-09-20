@@ -3,7 +3,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import psycopg2
 
-load_dotenv(override=True)  # pulls server, database, username, password, port from your .env (or real env)
+load_dotenv(override=False)  # Preserve runtime/Compose settings; .env supplies local defaults.
 
 SERVER = os.getenv('server', 'localhost')
 DBNAME = os.getenv('database', 'hammarbydata')

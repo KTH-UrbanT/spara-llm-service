@@ -1,5 +1,9 @@
+import json
+from pathlib import Path
+
 from src.agents.building_response_prompt import (
     build_building_response_prompt,
+    build_history_excerpt,
     ensure_building_identifier_in_response,
     merge_identifier_metadata,
     select_preferred_identifier,
@@ -55,10 +59,12 @@ def test_building_response_prompt_requires_ecm_style_for_heating_cost_advice():
     assert "Energy Conservation Measures (ECMs)" in prompt
     assert "reduce heating costs" in prompt
     assert "energy pyramid hierarchy" in prompt
-    assert "Energy conservation / reduce demand and waste" in prompt
-    assert "Energy efficiency / improve equipment and building systems" in prompt
-    assert "Energy management measures / improve controls, monitoring" in prompt
-    assert "Renewable energy / add renewable supply after demand, efficiency, and management" in prompt
+    assert "energy conservation / reduce demand and waste" in prompt
+    assert "energy efficiency / improve systems and controls" in prompt
+    assert "then renewable energy" in prompt
+    assert "Do not require four sections" in prompt
+    assert "one or two useful follow-up questions" in prompt
+    assert "never as proven higher savings or a diagnosis" in prompt
 
 
 def test_building_response_prompt_keeps_simple_fact_answers_focused_and_explains_terms():
@@ -90,3 +96,26 @@ def test_ensure_building_identifier_in_response_prefixes_missing_id():
     )
 
     assert text.startswith("Building ID: 01-80-FILOSOFEN2-3")
+
+
+def test_history_preserves_early_objective_and_later_correction():
+    history = [{"role": "user", "content": "Our aim is comfort; major works must wait."}]
+    history += [{"role": "assistant", "content": f"Discussion turn {i}"} for i in range(9)]
+    history += [{"role": "user", "content": "Correction: the windows were repaired last year."}]
+
+    excerpt = json.loads(build_history_excerpt(history))
+
+    assert len(excerpt) == len(history)
+    assert excerpt[0]["content"] == history[0]["content"]
+    assert excerpt[-1]["content"] == history[-1]["content"]
+    assert len(json.loads(build_history_excerpt(history, keep_last=2))) == 2
+    assert json.loads(build_history_excerpt(history, keep_last=0)) == []
+
+
+def test_shared_system_prompt_uses_construction_year_mapping():
+    prompt_path = Path(__file__).resolve().parents[2] / "src/prompts/openai_response_prompt.txt"
+    prompt = prompt_path.read_text(encoding="utf-8")
+    field_descriptions = json.loads(prompt[prompt.index("{"):])
+
+    assert field_descriptions["epc_egennybyggar"]["name"] == "EPC: construction year"
+    assert "year built" in field_descriptions["epc_egennybyggar"]["description"]

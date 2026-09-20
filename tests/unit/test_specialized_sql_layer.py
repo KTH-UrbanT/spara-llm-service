@@ -47,7 +47,7 @@ class FakeDBModule:
 
 
 def import_specialized_sql_layer():
-    stub_module("openai", OpenAI=FakeOpenAIClient, AzureOpenAI=FakeOpenAIClient)
+    stub_module("openai", OpenAI=FakeOpenAIClient)
     return fresh_import("src.agents.specialized_sql_layer")
 
 
@@ -58,7 +58,6 @@ def make_layer(module):
         endpoint=None,
         api_key="key",
         model_or_deployment="gpt-test",
-        api_version=None,
         is_azure=False,
     )
     layer._client = FakeOpenAIClient()
