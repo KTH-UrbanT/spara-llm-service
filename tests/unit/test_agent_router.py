@@ -169,6 +169,25 @@ def test_fast_conversational_greeting_skips_conversational_agent():
     assert StubConversationalAgent.last_call is None
 
 
+def test_swedish_greeting_is_answered_in_swedish_without_a_model_call():
+    module = import_agent_router_module()
+    StubConversationalAgent.last_call = None
+    StubRouterAgent.last_call = None
+    router = module.AgentRouter()
+
+    response, metadata = router.route_message(
+        messages=[{"role": "user", "content": "Hej!"}],
+        last_message="Hej!", metadata={"kept": True}, thread_id="thread-swedish",
+    )
+
+    assert response["content"].startswith("Hej!")
+    assert "allmänna energiråd" in response["content"]
+    assert response["classification"] == "conversational"
+    assert StubConversationalAgent.last_call is None
+    assert StubRouterAgent.last_call is None
+    assert metadata == {"kept": True}
+
+
 def test_address_disambiguation_followup_routes_to_building_agent_before_classifier():
     module = import_agent_router_module()
     StubRouterAgent.next_classification = "conversational"

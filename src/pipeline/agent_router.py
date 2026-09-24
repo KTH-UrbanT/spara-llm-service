@@ -77,6 +77,11 @@ def _fast_conversational_response(message: str) -> Optional[str]:
         return None
 
     if re.fullmatch(r"(hi|hello|hey|hej|good\s+morning|good\s+afternoon|good\s+evening)[.!?]*", lowered):
+        if re.fullmatch(r"hej[.!?]*", lowered):
+            return (
+                "Hej! Jag kan hjälpa dig med allmänna energiråd. Om du vill ha råd "
+                "om en viss byggnad kan du ange föreningens namn, gatuadress eller byggnadsid."
+            )
         return (
             "Hi! I can help with general energy advice. If you want building-specific "
             "advice, share a BRF name, street address, or building ID."

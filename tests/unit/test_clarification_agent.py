@@ -82,6 +82,39 @@ def test_identity_gate_cannot_be_replaced_with_diagnostic_question():
     assert result["status"] == "fallback"
 
 
+@pytest.mark.parametrize("reason,focus,question", [
+    ("missing_address", "building_identity", "Vilken adress har byggnaden?"),
+    ("ambiguous_address", "building_location", "I vilken kommun ligger byggnaden?"),
+    ("ambiguous_address", "building_location", "Vilken ort ligger byggnaden i?"),
+    ("ambiguous_brf", "building_selection", "Vilken av byggnaderna gäller frågan?"),
+    ("incomplete_question", "objective", "Vad vill ni förbättra?"),
+    ("incomplete_question", "timing", "När märkte ni förändringen?"),
+    ("missing_building_data", "missing_evidence", "Finns det några temperaturmätningar?"),
+])
+def test_swedish_question_is_used_instead_of_english_fallback(reason, focus, question):
+    agent, _ = agent_for({"focus": focus, "question": question})
+    result = agent.generate(
+        state={"last_message": "Kan du hjälpa oss?"}, reason=reason,
+        fallback="Which information should we clarify?",
+    )
+    assert result == {"question": question, "status": "generated", "focus": focus}
+
+
+@pytest.mark.parametrize("question", [
+    "Vad är din mejladress?",
+    "Vilken är föreningens gatuadress?",
+    "Vad är ert byggnadsid?",
+    "Vad är ditt namn?",
+    "Vill ni ha garanterade besparingar?",
+    "Vad vill du förbättra i Stockholm?",
+])
+def test_swedish_question_keeps_existing_scope_and_evidence_guards(question):
+    agent, _ = agent_for({"focus": "objective", "question": question})
+    fallback = "Vad vill ni ha hjälp med?"
+    result = agent.generate(state={}, reason="incomplete_question", fallback=fallback)
+    assert result == {"question": fallback, "status": "fallback"}
+
+
 def test_location_gate_requires_location_question():
     agent, _ = agent_for({"focus": "building_location", "question": "What would you like to improve?"})
     result = agent.generate(state={}, reason="ambiguous_address", fallback="Which city is the building in?")

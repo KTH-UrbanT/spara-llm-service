@@ -80,22 +80,22 @@ def _valid_question(data, foci, context):
     # A clarification does not need generated figures, identifiers, links or claims.
     if re.search(r"[\d\n\r.!;:\[\]{}<>@%€$£]", question):
         return False
-    if not re.match(r"^(?:what|which|when|where|how|is|are|do|does|did|has|have|can|could|would)\b", question, re.I):
+    if not re.match(r"^(?:what|which|when|where|how|is|are|do|does|did|has|have|can|could|would|vad|vilken|vilket|vilka|när|var|vart|hur|varför|är|har|finns|kan|kunde|skulle|vill|vet|behöver|(?:i|på|för|från|om|med|under)\s+(?:vilken|vilket|vilka))\b", question, re.I):
         return False
-    if re.search(r"\b(?:guarantee\w*|payback|definitely|obviously|caused by|you should|you must|you need to|will save|will reduce|i found|i checked|i sent|i created)\b", question, re.I):
+    if re.search(r"\b(?:guarantee\w*|payback|definitely|obviously|caused by|you should|you must|you need to|will save|will reduce|i found|i checked|i sent|i created|garantera\w*|garanti\w*|återbetalningstid\w*|definitivt|uppenbarligen|orsakas av|du bör|ni bör|du måste|ni måste|kommer att spara|kommer att minska|jag hittade|jag kontrollerade|jag skickade|jag skapade)\b", question, re.I):
         return False
     # Do not introduce named entities in a question; canonical choices are rendered separately.
     names = re.findall(r"\b[A-ZÅÄÖ][\wÅÄÖåäö-]*\b", question)
     if any(name not in {"BRF", "ODEN", "OVK", "EPC"} for name in names[1:]):
         return False
     focus = data["focus"]
-    if focus == "building_identity" and not re.search(r"\b(?:address|building|brf)\b", question, re.I):
+    if focus == "building_identity" and not re.search(r"\b(?:address|building|brf|adress\w*|byggnad\w*|brf-namn\w*|bostadsrättsförening\w*)\b", question, re.I):
         return False
-    if focus == "building_location" and not re.search(r"\b(?:city|municipality|postcode|postal|location|building id)\b", question, re.I):
+    if focus == "building_location" and not re.search(r"\b(?:city|municipality|postcode|postal|location|building id|ort\w*|stad\w*|kommun\w*|postnummer\w*|postort\w*|byggnadsid)\b", question, re.I):
         return False
-    if focus == "building_selection" and not re.search(r"\b(?:which|select|choose)\b", question, re.I):
+    if focus == "building_selection" and not re.search(r"\b(?:which|select|choose|vilken|vilket|vilka|välj\w*)\b", question, re.I):
         return False
-    if focus in OPEN_FOCI and re.search(r"\b(?:street address|building id|brf name|email|phone number|your name)\b", question, re.I):
+    if focus in OPEN_FOCI and re.search(r"\b(?:street address|building id|brf name|email|phone number|your name|gatuadress\w*|adress\w*|byggnadsid|brf-namn\w*|föreningens namn|mejladress\w*|e-post\w*|telefonnummer\w*|ditt namn|ert namn)\b", question, re.I):
         return False
     normalized = re.sub(r"\W+", "", question).casefold()
     for message in context["history"]:
