@@ -1,3 +1,6 @@
+import pytest
+import requests
+
 from tests.support import fresh_import, stub_module
 
 
@@ -18,6 +21,10 @@ class FakeSQLClient:
 
     def buildings_by_single_filter(self, field, op, value):
         self.calls.append(("buildings_by_single_filter", field, op, value))
+        return self.single_filter_rows
+
+    def buildings_by_building_id(self, building_id):
+        self.calls.append(("buildings_by_building_id", building_id))
         return self.single_filter_rows
 
 
@@ -179,7 +186,7 @@ def test_execute_can_resolve_building_id_from_address_before_fetching_field():
     assert sql.calls[1] == ("building_by_uuid", "uuid-1")
 
 
-def test_execute_returns_error_when_address_cannot_resolve_to_building():
+def test_execute_returns_not_found_when_address_cannot_resolve_to_building():
     SQL_Mapper_Layer = import_generic_sql_layer()
     sql = FakeSQLClient()
     sql.address_rows = []
@@ -190,7 +197,7 @@ def test_execute_returns_error_when_address_cannot_resolve_to_building():
     assert result["ok"] is False
     assert result["data"] is None
     assert result["message"] == "Could not resolve building_id from address 'Missing 1'."
-    assert result["trace"]["execution_status"] == "error"
+    assert result["trace"]["execution_status"] == "not_found"
 
 
 def test_execute_handles_unknown_ops_and_exceptions():
@@ -211,3 +218,101 @@ def test_execute_handles_unknown_ops_and_exceptions():
     result = layer.execute("fetch_building_data", building_id="uuid-1")
     assert result["ok"] is False
     assert "exception: RuntimeError: boom" == result["message"]
+
+
+LOOKUP_CASES = [
+    ("fetch_building_data", {"building_id": "missing-id"}, "building_by_uuid", None),
+    ("building_by_uuid", {"building_id": "missing-id"}, "building_by_uuid", None),
+    ("buildings_by_building_id", {"building_id": "missing-id"}, "buildings_by_building_id", []),
+    ("building_by_address", {"address": "Missing 1"}, "building_by_address", []),
+    ("buildings_by_single_filter", {"field": "byggnadsid", "value": "missing-id"}, "buildings_by_single_filter", []),
+    *[(op, {"building_id": "missing-id"}, "building_by_uuid", None)
+      for op in ("fetch_energy_class", "fetch_heated_area", "fetch_tariff")],
+    *[(op, {"address": "Missing 1"}, "building_by_address", None)
+      for op in ("fetch_energy_class", "fetch_heated_area", "fetch_tariff")],
+]
+
+
+def http_error(status):
+    response = requests.Response()
+    response.status_code = status
+    response.url = "https://example.test/api/buildings/"
+    return requests.HTTPError(f"HTTP {status}", response=response)
+
+
+@pytest.mark.parametrize("operation,kwargs,method,empty_data", LOOKUP_CASES)
+def test_execute_normalizes_actual_http_404_to_lookup_not_found(operation, kwargs, method, empty_data):
+    SQL_Mapper_Layer = import_generic_sql_layer()
+    sql = FakeSQLClient()
+    error = http_error(404)
+
+    def missing_lookup(*args):
+        sql.calls.append((method, *args))
+        raise error
+
+    setattr(sql, method, missing_lookup)
+    result = SQL_Mapper_Layer(sql_client=sql).execute(operation, **kwargs)
+
+    assert result["ok"] is False
+    assert result["data"] == empty_data
+    assert result["trace"]["execution_status"] == "not_found"
+    assert result["trace"]["rows_returned"] == 0
+    assert result["trace"]["returned_values_used"] == {}
+    assert "exception:" not in result["message"]
+    assert (kwargs.get("building_id") or kwargs.get("address") or kwargs["value"]) in result["message"]
+    assert len(sql.calls) == 1
+
+
+@pytest.mark.parametrize("operation,kwargs,method,_empty_data", LOOKUP_CASES)
+@pytest.mark.parametrize("error", [http_error(401), http_error(403), http_error(500), requests.ConnectTimeout("ODEN connect timeout")])
+def test_execute_preserves_access_server_and_timeout_failures_as_errors(operation, kwargs, method, _empty_data, error):
+    SQL_Mapper_Layer = import_generic_sql_layer()
+    sql = FakeSQLClient()
+
+    def failed_lookup(*args):
+        sql.calls.append((method, *args))
+        raise error
+
+    setattr(sql, method, failed_lookup)
+    result = SQL_Mapper_Layer(sql_client=sql).execute(operation, **kwargs)
+
+    assert result["ok"] is False
+    assert result["data"] is None
+    assert result["trace"]["execution_status"] == "error"
+    assert result["trace"]["returned_values_used"] == {}
+    assert result["message"].startswith(f"exception: {type(error).__name__}:")
+    assert len(sql.calls) == 1
+
+
+@pytest.mark.parametrize("operation", ["fetch_energy_class", "fetch_heated_area", "fetch_tariff"])
+def test_field_helper_http_404_after_address_resolution_retains_resolved_target(operation):
+    SQL_Mapper_Layer = import_generic_sql_layer()
+    sql = FakeSQLClient()
+
+    def missing_uuid(building_id):
+        sql.calls.append(("building_by_uuid", building_id))
+        raise http_error(404)
+
+    sql.building_by_uuid = missing_uuid
+    result = SQL_Mapper_Layer(sql_client=sql).execute(operation, address="Main Street 1")
+
+    assert result["ok"] is False
+    assert result["data"] is None
+    assert result["trace"]["execution_status"] == "not_found"
+    assert result["trace"]["building_id"] == "uuid-1"
+    assert result["message"] == "No building found for uuid 'uuid-1'."
+    assert sql.calls == [("building_by_address", "Main Street 1"), ("building_by_uuid", "uuid-1")]
+
+
+@pytest.mark.parametrize("error", [requests.HTTPError("404 without a response"), RuntimeError("HTTP 404")])
+def test_execute_does_not_infer_http_404_from_exception_text(error):
+    SQL_Mapper_Layer = import_generic_sql_layer()
+    sql = FakeSQLClient()
+
+    def failed_lookup(building_id):
+        raise error
+
+    sql.building_by_uuid = failed_lookup
+    result = SQL_Mapper_Layer(sql_client=sql).execute("fetch_building_data", building_id="missing-id")
+
+    assert result["trace"]["execution_status"] == "error"

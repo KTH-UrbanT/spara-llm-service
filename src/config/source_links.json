@@ -1,122 +1,328 @@
 {
   "brfenergieffektiv_2015.pdf": {
     "title": "BRF Energieffektiv 2015",
-    "link": "https://www.energimyndigheten.se/effektiv-energianvandning/flerbostadshus/"
+    "link": "https://eef.se/wp-content/uploads/2018/01/brfenergieffektiv_2015.pdf",
+    "link_type": "document",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_title": "BRF Energieffektiv – Handbok för bostadsrättsföreningar (reviderad 2015)",
+    "link_note": "PDF-innehåll, titel och upplaga verifierade; 72 sidor."
   },
   "Checklista_Offert_varmesystem_2025.pdf": {
-    "title": "Checklista: offert v\u00e4rmesystem 2025",
-    "link": "https://www.energiradgivningen.se/hitta-och-valja-foretag/"
+    "title": "Checklista: offert värmesystem 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/renovering/offerterochavtal.809.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Offerter och avtal",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/hitta-och-valja-foretag/"
   },
   "ekr_imp_files.txt": {
     "title": "EKR referensanteckningar",
-    "link": ""
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "document_guidance"
   },
   "electricity_enduses.csv": {
-    "title": "Electricity end uses reference data",
-    "link": ""
+    "title": "Referensunderlag: elanvändningens fördelning",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "EnergiBRFhandbokenSthlm.pdf": {
     "title": "EnergiBRF-handboken Stockholm",
-    "link": "https://energiochklimatradgivningen.se/foreningar.27.html"
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "not_found",
+    "source_type": "document_guidance",
+    "previous_link": "https://bobattre.se/Docs/EnergiBRFhandbokenSthlm.pdf",
+    "link_checked_at": "2026-10-06",
+    "link_note": "HTTP 404: den tidigare dokumentlänken finns inte.",
+    "link_http_status": 404
   },
   "Faktablad_Anvnd din luftluftvrmepump rtt_2025.pdf": {
-    "title": "Faktablad: Anv\u00e4nd din luft-luftv\u00e4rmepump r\u00e4tt 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Faktablad: Använd din luft-luftvärmepump rätt 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/uppvarmning/olikavarmesystem/varmepumpar.865.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Värmepumpar",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Faktablad_Energitips_Tvttstugan_2025.pdf": {
-    "title": "Faktablad: Energitips tv\u00e4ttstugan 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Faktablad: Energitips tvättstugan 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/sparael/elanvandningigemensammautrymmen.783.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Elanvändning i gemensamma utrymmen",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Faktablad_Fjarrvrme_Undercentral_2025.pdf": {
-    "title": "Faktablad: Fj\u00e4rrv\u00e4rme undercentral 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Faktablad: Fjärrvärme undercentral 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/uppvarmning/olikavarmesystem/fjarrvarme.864.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Fjärrvärme",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Faktablad_Installera luftluftvrmepump_2025.pdf": {
-    "title": "Faktablad: Installera luft-luftv\u00e4rmepump 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Faktablad: Installera luft-luftvärmepump 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/uppvarmning/olikavarmesystem/varmepumpar.865.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Värmepumpar",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Faktablad_Teknisk-forvaltning-Energi_2025.pdf": {
-    "title": "Optimera er energianv\u00e4ndning med Teknisk f\u00f6rvaltning Energi",
-    "link": "https://aff-forum.se/teknisk-forvaltning-energi/"
+    "title": "Optimera er energianvändning med Teknisk förvaltning Energi",
+    "link": "https://aff.se/teknisk-forvaltning-energi/",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Teknisk förvaltning Energi",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://aff-forum.se/teknisk-forvaltning-energi/",
+    "link_aliases": [
+      "https://aff-forum.se/teknisk-forvaltning-energi/"
+    ]
   },
   "Fixa laddplats i BRF_Steg fr steg_2025.pdf": {
-    "title": "Fixa laddplats i BRF: steg f\u00f6r steg 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Fixa laddplats i BRF: steg för steg 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/resahallbart/laddplatserforelbilar.811.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Laddplatser för elbilar",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Fixa laddplats i fretag_2025.pdf": {
-    "title": "Fixa laddplats i f\u00f6retag 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Fixa laddplats i företag 2025",
+    "link": "https://energiochklimatradgivningen.se/foretag/resortransporter/laddplatserpaforetaget.776.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Laddplatser på företaget",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Fixa laddplats i samfllighet_2025.pdf": {
-    "title": "Fixa laddplats i samf\u00e4llighet 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Fixa laddplats i samfällighet 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/resahallbart/laddplatserforelbilar.811.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Laddplatser för elbilar",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "hvac_systems.csv": {
-    "title": "HVAC systems reference data",
-    "link": ""
+    "title": "Referensunderlag: värme, ventilation och kyla",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "id.csv": {
-    "title": "ID reference data",
-    "link": ""
+    "title": "Referensunderlag: identifierare",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "Infobroschyren EKR_2025.pdf": {
     "title": "Infobroschyren EKR 2025",
-    "link": "https://www.energimyndigheten.se/effektiv-energianvandning/hushall/energi--och-klimatradgivning/"
+    "link": "https://www.energimyndigheten.se/effektiv-energianvandning/hushall/energi--och-klimatradgivning/",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Energi- och klimatrådgivningen",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats."
   },
   "Kunskapsbank.docx": {
     "title": "Kunskapsbank",
-    "link": "https://klimatknuffen.se/knowledge"
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "content_unverified",
+    "source_type": "document_guidance",
+    "previous_link": "https://klimatknuffen.se/knowledge",
+    "link_checked_at": "2026-10-06",
+    "link_note": "Webbadressen visar endast en laddningssida; innehåll och koppling till dokumentet kunde inte verifieras."
   },
   "links_for_scrape.xlsx": {
-    "title": "Links for scrape manifest",
-    "link": ""
+    "title": "Referensunderlag: källänkar",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "meterings.csv": {
-    "title": "Meterings reference data",
-    "link": ""
+    "title": "Referensunderlag: mätningar",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "meterings_reordered.csv": {
-    "title": "Meterings reordered reference data",
-    "link": ""
+    "title": "Referensunderlag: omordnade mätningar",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "normalization_values.csv": {
-    "title": "Normalization values reference data",
-    "link": ""
+    "title": "Referensunderlag: normaliseringsvärden",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "results-old.csv": {
-    "title": "Results reference data (old)",
-    "link": ""
+    "title": "Referensunderlag: äldre resultat",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "results.csv": {
-    "title": "Results reference data",
-    "link": ""
+    "title": "Referensunderlag: resultat",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "results_reordered.csv": {
-    "title": "Results reordered reference data",
-    "link": ""
+    "title": "Referensunderlag: omordnade resultat",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "standard_values.json": {
-    "title": "Standard values reference data",
-    "link": ""
+    "title": "Referensunderlag: standardvärden",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
   "Tips om vrmepumpar_2025.pdf": {
-    "title": "Tips om v\u00e4rmepumpar 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Tips om värmepumpar 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/uppvarmning/olikavarmesystem/varmepumpar.865.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Värmepumpar",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Tips vid energirenovering av fnster_2025.pdf": {
-    "title": "Tips vid energirenovering av f\u00f6nster 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "title": "Tips vid energirenovering av fönster 2025",
+    "link": "https://energiochklimatradgivningen.se/foreningar/renovering/tillaggsisolering.806.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Tilläggsisolering",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "Tips vid isolering_2025.pdf": {
     "title": "Tips vid isolering 2025",
-    "link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
+    "link": "https://energiochklimatradgivningen.se/foreningar/renovering/tillaggsisolering.806.html",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Tilläggsisolering",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://www.energiradgivningen.se/faktablad-och-broschyrer/"
   },
   "users.csv": {
-    "title": "Users reference data",
-    "link": ""
+    "title": "Referensunderlag: användare",
+    "link": "",
+    "link_type": "unavailable",
+    "link_status": "unavailable",
+    "source_type": "reference_data"
   },
-  "V\u00e4gledning f\u00f6r energi- och driftoptimering.pdf": {
-    "title": "V\u00e4gledning f\u00f6r energi- och driftoptimering",
-    "link": "https://aff-forum.se/category/kunskapsbanken/anpassade-mallar/#teknisk-forvaltning-energi-2"
+  "Vägledning för energi- och driftoptimering.pdf": {
+    "title": "Vägledning för energi- och driftoptimering",
+    "link": "https://aff.se/category/kunskapsbanken/anpassade-mallar/",
+    "link_type": "related_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Anpassade mallar – Teknisk förvaltning energi",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200,
+    "link_note": "Relaterad officiell information. Den exakta upplagan av det lagrade dokumentet har inte verifierats.",
+    "previous_link": "https://aff-forum.se/category/kunskapsbanken/anpassade-mallar/#teknisk-forvaltning-energi-2",
+    "link_aliases": [
+      "https://aff-forum.se/category/kunskapsbanken/anpassade-mallar/"
+    ]
+  },
+  "foreningar.27.html": {
+    "title": "Spara energi tillsammans – Föreningar",
+    "link": "https://energiochklimatradgivningen.se/foreningar.27.html",
+    "link_type": "web_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Spara energi tillsammans – Föreningar",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200
+  },
+  "innandubytervarmesystem.789.html": {
+    "title": "Innan du byter värmesystem",
+    "link": "https://energiochklimatradgivningen.se/foreningar/uppvarmning/innandubytervarmesystem.789.html",
+    "link_type": "web_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Innan du byter värmesystem",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200
+  },
+  "kontaktaradgivare.3852.html": {
+    "title": "Kontakta rådgivare",
+    "link": "https://energiochklimatradgivningen.se/kontaktaradgivare.3852.html",
+    "link_type": "web_page",
+    "link_status": "verified",
+    "source_type": "document_guidance",
+    "link_title": "Kontakta rådgivare",
+    "link_verified_at": "2026-10-06",
+    "link_http_status": 200
   }
 }

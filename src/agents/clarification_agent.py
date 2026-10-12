@@ -54,7 +54,7 @@ def _context(state, reason, foci):
     fact_id = facts.get("byggnadsid") or facts.get("building_id")
     identity = md.get("building_identity_check") or {}
     verified = bool(selected and fact_id == selected and identity.get("status") == "passed")
-    pending = md.get("pending_building_advice") or {}
+    pending = md.get("pending_building_request") or md.get("pending_building_advice_request") or {}
     return {
         "latest_user_message": str(state.get("last_message") or "")[:4000],
         "history": _history(state.get("messages")),

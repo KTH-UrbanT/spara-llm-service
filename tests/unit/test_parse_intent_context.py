@@ -32,6 +32,28 @@ def classification(parsed_intent="SQL database ; vector database", address=None,
     return json.dumps({"parsed_intent": parsed_intent, "address": address, "ambigious": ambigious})
 
 
+@pytest.mark.parametrize('fragment', [
+    'en budget på 50', 'inte 50', 'budget 20000', 'budgeten 20',
+    'cost 5000', 'temperature 20', '20 000 kr', '10 minuter',
+])
+def test_budget_and_quantity_fragments_cannot_be_model_addresses(intent_module, fragment):
+    parsed = intent_module.ParseIntentAgent()._parse_response(classification(address=fragment), user_input=fragment)
+    assert parsed['address'] is None
+
+
+def test_multipart_sources_are_unioned_without_dropping_questions(intent_module):
+    parts = [{"question": "Which heating system do we have?", "kind": "fact", "sources": ["SQL database"]},
+             {"question": "What does that mean for priorities?", "kind": "advice", "sources": ["vector database"]}]
+    parsed = intent_module.ParseIntentAgent()._parse_response(json.dumps({"parsed_intent": "SQL database", "ambigious": False, "request_parts": parts}))
+    assert parsed["request_parts"] == parts
+    assert parsed["intents"] == ["SQL database", "vector database"]
+
+
+def test_malformed_optional_part_does_not_erase_the_valid_request(intent_module):
+    parsed = intent_module.ParseIntentAgent()._parse_response(json.dumps({"parsed_intent": "SQL database", "request_parts": [{"question": "What is the class?", "kind": [], "sources": ["SQL database"]}]}))
+    assert parsed["intents"] == ["SQL database"]
+
+
 def test_address_reply_passes_original_request_and_selected_context(intent_module, monkeypatch):
     captured = []
     monkeypatch.setattr(intent_module, "openai_call_worker", lambda prompt, payload: captured.append(json.loads(payload)) or classification(address="Testgatan 14"))
@@ -127,6 +149,110 @@ def test_address_spacing_case_and_punctuation_normalization_is_allowed(intent_mo
     assert result["context"]["address"] == "Ågatan 12, Örebro"
 
 
+@pytest.mark.parametrize("value, expected", [
+    ("What heating system does Teknikringen 37A in Stockholm have?", "Teknikringen 37A in Stockholm"),
+    ("What heating system does Teknikringen 37A", "Teknikringen 37A"),
+    ("Which heating system is recorded for Ringvägen 10, Stockholm?", "Ringvägen 10, Stockholm"),
+    ("Vilket värmesystem har Teknikringen 37A i Stockholm?", "Teknikringen 37A i Stockholm"),
+    ("Vilket värmesystem har huset på S:t Göransgatan 10 i Stockholm?", "S:t Göransgatan 10 i Stockholm"),
+    ("Vilken energiklass har vår byggnad på Drottning Kristinas väg 43A, Stockholm?", "Drottning Kristinas väg 43A, Stockholm"),
+    ("Fastigheten vid Norra Djurgården 10", "Norra Djurgården 10"),
+    ("Entrén på Hammarby Allé 163", "Hammarby Allé 163"),
+    ("Please select the building at Norra Stationsgatan 10, 113 64 Stockholm", "Norra Stationsgatan 10, 113 64 Stockholm"),
+    ("Drottning Kristinas väg 43A", "Drottning Kristinas väg 43A"),
+    ("Hammarby Allé 163", "Hammarby Allé 163"),
+    ("Norra Djurgården 10", "Norra Djurgården 10"),
+    ("It's Norra Djurgården 10", "Norra Djurgården 10"),
+    ("Give me information about Norra Djurgården 10", "Norra Djurgården 10"),
+    ("S:t Eriksgatan 10A–12B, Stockholm", "S:t Eriksgatan 10A–12B, Stockholm"),
+    ("ÅGATAN  12, Örebro", "ÅGATAN 12, Örebro"),
+])
+def test_address_shape_removes_question_prefix_without_truncating_street(intent_module, value, expected):
+    parsed = intent_module.ParseIntentAgent()._parse_response(classification(address=value))
+    assert parsed["address"] == expected
+
+
+@pytest.mark.parametrize("value", [
+    "What is energy performance 100?",
+    "energy class 2019",
+    "primary energy number 155",
+    "heating cost 1200",
+    "Heating costs 1200, Stockholm",
+    "värmekostnad 1200",
+    "Atemp 6798",
+    "Atemp 6798 m²",
+    "Atemp6798 m²",
+    "Atemp 6798 m2",
+    "heated area 6798",
+    "uppvärmd area 6798",
+    "recorded Ringvägen 10",
+    "registered Ringvägen 10",
+    "listed Ringvägen 10",
+    "reported Ringvägen 10",
+    "please explain why is 2019G and 2020 updated as F",
+    "Vilken energiklass har vår byggnad 10?",
+    "Our building 10",
+    "117 26",
+    "Teknikringen 37A and Professorsslingan 49",
+])
+def test_address_shape_rejects_field_phrases_years_and_multiple_addresses(intent_module, value):
+    parsed = intent_module.ParseIntentAgent()._parse_response(classification(address=value))
+    assert parsed["address"] is None
+    assert parsed["intents"] == ["SQL database", "vector database"]
+
+
+def test_polluted_model_address_is_cleaned_after_raw_provenance_check(intent_module, monkeypatch):
+    message = "What heating system does Teknikringen 37A in Stockholm have?"
+    monkeypatch.setattr(intent_module, "openai_call_worker", lambda *a: classification(address=message))
+    result = intent_module.ParseIntentAgent()({"last_message": message})
+    assert result["context"]["address"] == "Teknikringen 37A in Stockholm"
+
+
+def test_swedish_building_location_prefix_is_cleaned_after_raw_provenance_check(intent_module, monkeypatch):
+    message = "Vilket värmesystem har huset på S:t Göransgatan 10 i Stockholm?"
+    monkeypatch.setattr(intent_module, "openai_call_worker", lambda *a: classification(address=message))
+    result = intent_module.ParseIntentAgent()({"last_message": message})
+    assert result["context"]["address"] == "S:t Göransgatan 10 i Stockholm"
+
+
+@pytest.mark.parametrize("verb", ["recorded", "registered", "listed", "reported"])
+@pytest.mark.parametrize("preposition", ["for", "at", "on", "in"])
+def test_record_location_grammar_preserves_full_multiword_street(intent_module, verb, preposition):
+    value = f"{verb} {preposition} Norra Djurgården 10, Stockholm"
+    parsed = intent_module.ParseIntentAgent()._parse_response(classification(address=value))
+    assert parsed["address"] == "Norra Djurgården 10, Stockholm"
+
+
+@pytest.mark.parametrize("model_address, expected", [
+    ("Which heating system is recorded for Ringvägen 10, Stockholm?", "Ringvägen 10, Stockholm"),
+    ("recorded for Ringvägen 10", "Ringvägen 10"),
+    ("recorded for Ringvägen 10, Stockholm", "Ringvägen 10, Stockholm"),
+])
+def test_building_switch_record_prefix_is_cleaned_after_raw_provenance_check(intent_module, monkeypatch, model_address, expected):
+    message = "Which heating system is recorded for Ringvägen 10, Stockholm?"
+    monkeypatch.setattr(intent_module, "openai_call_worker", lambda *a: classification(address=model_address))
+    result = intent_module.ParseIntentAgent()({"last_message": message})
+    assert result["context"]["address"] == expected
+
+
+@pytest.mark.parametrize("model_address", [
+    "What heating system does Teknikringen 37A in Stockholm",
+    "Teknikringen 37A, 117 26",
+    "Teknikringen 37A, Örebro",
+])
+def test_cleanup_cannot_authorize_invented_location(intent_module, monkeypatch, model_address):
+    monkeypatch.setattr(intent_module, "openai_call_worker", lambda *a: classification(address=model_address))
+    result = intent_module.ParseIntentAgent()({"last_message": "What heating system does Teknikringen 37A have?"})
+    assert result["context"]["address"] is None
+
+
+def test_four_digit_house_numbers_require_explicit_helper_option(intent_module):
+    normalizer = intent_module.normalize_address_candidate
+    assert normalizer("Björkängen 1234") is None
+    assert normalizer("Björkängen 1234", allow_four_digit_number=True) == "Björkängen 1234"
+    assert normalizer("energy class 2019", allow_four_digit_number=True) is None
+
+
 @pytest.mark.parametrize("raw", [
     "not json",
     '[]',
@@ -164,3 +290,59 @@ def test_worker_requests_json_without_promoting_context_to_system_role(intent_mo
         {"role": "system", "content": "Trusted routing instructions"},
         {"role": "user", "content": payload},
     ]
+
+
+def test_pending_request_keeps_all_parts_and_selected_address_provenance(intent_module):
+    parts = [{"question": f"Requested part {index}", "kind": "fact", "sources": ["SQL database"]} for index in range(15)]
+    payload = intent_module._intent_input({
+        "last_message": "01-80-TAPETEN2-1",
+        "metadata": {
+            "selected_address_building_id": "01-80-TAPETEN2-1",
+            "selected_address_lookup_address": "Ringvägen 10",
+            "clarification_started_user_turn": 1,
+            "request_parts": parts,
+            "pending_building_request": {"question": "All original parts", "context": {"request_parts": parts}},
+        },
+    })
+    saved = payload["session_context"]["metadata"]
+    assert saved["request_parts"] == parts
+    assert saved["pending_building_request"]["context"]["request_parts"] == parts
+    assert saved["selected_address_building_id"] == "01-80-TAPETEN2-1"
+    assert saved["selected_address_lookup_address"] == "Ringvägen 10"
+    assert saved["clarification_started_user_turn"] == 1
+
+
+@pytest.mark.parametrize("part", [
+    {"question": "Explain the class."},
+    {"question": "Explain the class.", "kind": None, "sources": None},
+    {"question": "Explain the class.", "kind": "unsupported", "sources": ["not an allowed source"]},
+])
+def test_missing_part_fields_do_not_discard_the_request(intent_module, part):
+    raw = json.dumps({"parsed_intent": "SQL database", "address": None, "ambigious": False, "request_parts": [part]})
+    parsed = intent_module.ParseIntentAgent()._parse_response(raw)
+    assert parsed["request_parts"] == [{"question": "Explain the class.", "kind": "other", "sources": ["SQL database"]}]
+
+
+@pytest.mark.parametrize("kind, expected", [("explanation", "interpretation"), ("next_step", "advice"), ("next_steps", "advice")])
+def test_explanation_and_next_steps_keep_their_guidance_source(intent_module, kind, expected):
+    raw = json.dumps({"parsed_intent": "SQL database", "ambigious": False, "request_parts": [{"question": "What should we do next?", "kind": kind}]})
+    parsed = intent_module.ParseIntentAgent()._parse_response(raw)
+    assert parsed["request_parts"][0]["kind"] == expected
+    assert parsed["request_parts"][0]["sources"] == ["SQL database", "vector database"]
+    assert parsed["intents"] == ["SQL database", "vector database"]
+
+
+def test_valid_part_sources_can_supply_a_missing_top_level_intent(intent_module):
+    raw = json.dumps({"address": None, "ambigious": False, "request_parts": [
+        {"question": "What heating system is recorded?", "kind": "fact", "sources": ["SQL database"]},
+        {"question": "Explain it and suggest next checks.", "kind": "advice", "sources": ["vector database"]},
+    ]})
+    parsed = intent_module.ParseIntentAgent()._parse_response(raw)
+    assert parsed["intents"] == ["SQL database", "vector database"]
+    assert len(parsed["request_parts"]) == 2
+
+
+def test_invalid_top_level_route_still_fails_when_parts_are_valid(intent_module):
+    raw = json.dumps({"parsed_intent": "unsupported", "request_parts": [{"question": "Explain it.", "kind": "advice", "sources": ["vector database"]}]})
+    with pytest.raises(ValueError, match="Disallowed intent"):
+        intent_module.ParseIntentAgent()._parse_response(raw)

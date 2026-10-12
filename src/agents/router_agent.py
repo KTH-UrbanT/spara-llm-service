@@ -11,6 +11,7 @@ import multiprocessing
 import sys # Import sys for checking if BaseAgent exists
 import time
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.safety_analysis import requests_existing_document
 # Load environment variables from .env file
 load_dotenv()
 
@@ -27,6 +28,15 @@ logging.basicConfig(
 )
 # Get a specific logger for this module
 logger = logging.getLogger(__name__)
+CANONICAL_CLASSIFICATIONS = frozenset({
+    "building_specific", "generic", "conversational", "cluster",
+    "draft_energy_report", "expert_handoff",
+})
+SWEDISH_REPORT_NOUN_PATTERN = (
+    r"(?:energi[-\s]?)?rapport(?:utkast(?:et|en)?|en|er|erna)?|styrelseunderlag(?:et)?"
+)
+CLASSIFICATION_TIMEOUT_SECONDS = 60
+CLASSIFICATION_CLEANUP_TIMEOUT_SECONDS = 2
 logging.getLogger("azure.core.pipeline").setLevel(logging.WARNING)
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 logging.getLogger("azure.ai.inference").setLevel(logging.WARNING)
@@ -63,6 +73,8 @@ try:
     client = OpenAI(
         base_url=azure_v1_base_url(endpoint),
         api_key=subscription_key,
+        timeout=CLASSIFICATION_TIMEOUT_SECONDS,
+        max_retries=0,
     )
     logger.info("OpenAI client for RouterAgent initialized successfully.")
 except Exception as e:
@@ -104,6 +116,45 @@ def _classification_messages(prompt_template: str, message: str, history=None):
     return [{"role": "system", "content": instruction}, *prior, latest]
 
 
+def _validated_classification(value) -> Optional[str]:
+    """Accept a whole canonical label, allowing only boundary whitespace."""
+    if not isinstance(value, str):
+        return None
+    label = value.strip()
+    return label if label in CANONICAL_CLASSIFICATIONS else None
+
+
+def _cleanup_classification_resources(process, manager) -> None:
+    """Release worker resources without an unbounded worker join."""
+    if process is not None:
+        try:
+            if process.is_alive():
+                try:
+                    process.terminate()
+                except Exception:
+                    logger.warning("Could not terminate classifier worker.", exc_info=True)
+                process.join(timeout=CLASSIFICATION_CLEANUP_TIMEOUT_SECONDS)
+                if process.is_alive():
+                    kill = getattr(process, "kill", None)
+                    if callable(kill):
+                        kill()
+                        process.join(timeout=CLASSIFICATION_CLEANUP_TIMEOUT_SECONDS)
+                if process.is_alive():
+                    logger.error("Classifier worker remained alive after bounded cleanup.")
+            close = getattr(process, "close", None)
+            if callable(close) and not process.is_alive():
+                close()
+        except Exception:
+            logger.warning("Could not clean up classifier worker.", exc_info=True)
+    if manager is not None:
+        shutdown = getattr(manager, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except Exception:
+                logger.warning("Could not shut down classifier result manager.", exc_info=True)
+
+
 def openai_call_worker(prompt_template: str, message: str, return_dict: Dict, history=None):
     """
     Worker function to make an OpenAI API call in a separate process.
@@ -125,9 +176,13 @@ def openai_call_worker(prompt_template: str, message: str, return_dict: Dict, hi
             stream=False
         )
         response_content = completion.choices[0].message.content
-        return_dict["result"] = response_content
-        worker_logger.info("OpenAI API call successful in worker.")
-        worker_logger.debug(f"Received content: '{response_content[:100]}...'")
+        label = _validated_classification(response_content)
+        if label is None:
+            return_dict["invalid_output"] = response_content
+            worker_logger.warning("Classifier returned an invalid route label.")
+        else:
+            return_dict["result"] = label
+            worker_logger.info("OpenAI classification call successful in worker.")
     except APIConnectionError as e:
         error_msg = f"API Connection Error: {e}"
         worker_logger.error(error_msg, exc_info=True)
@@ -201,70 +256,157 @@ class RouterAgent(BaseAgent):
             logger.error(f"Error reading prompt file {path}: {e}")
             raise IOError(f"Could not read prompt file {path}: {e}")
 
+    def _requests_handoff_preview(self, message: str) -> bool:
+        """Recognize an explicit request to inspect a proposed advisor message."""
+        advisor = r"\b(?:expert|(?:(?:energi|klimat)-?)?rådgivare(?:n)?|ekr|(?:energy\s+|climate\s+)?advis[oe]r)\b"
+        return bool(
+            re.search(advisor, message, re.IGNORECASE)
+            and re.search(
+                r"(?:^|[.!?;]\s*|\b(?:can|could|would|will)\s+you\s+|\b(?:kan|kunde|skulle|vill)\s+du\s+)"
+                r"(?:please\s+|snälla\s+)?(?:show|preview|visa|förhandsgranska)\b"
+                r"(?!\s+(?:inte|ingen|inget|inga|not|no)\b)[^.!?;\n]*"
+                r"(?:summary|preview|message|what\s+(?:would|will)\s+be\s+sent|sammanfattning|förhandsvisning|"
+                r"förhandsgranskning|vad\s+som\s+skulle\s+skickas)", message, re.IGNORECASE,
+            )
+            and re.search(
+                r"\b(?:preview|förhandsvisning|förhandsgranskning|mottagare|recipient)\b|"
+                r"\b(?:to|for|till)\s+(?:(?:the|an|a|our|en)\s+)?" + advisor
+                + r"|\b(?:what\s+(?:would|will)\s+be\s+sent|vad\s+som\s+skulle\s+skickas)\b",
+                message, re.IGNORECASE,
+            )
+        )
+
     def wants_expert_handoff(self, message: str) -> bool:
-        if not message:
+        if not message or self.is_rejection(message):
+            return False
+        advisor = r"\b(?:expert|(?:(?:energi|klimat)-?)?rådgivare(?:n)?|ekr|(?:energy\s+|climate\s+)?advis[oe]r)\b"
+        # Previewing and withholding permission to send are compatible. The
+        # separate confirmation contract continues to prohibit submission.
+        if self._requests_handoff_preview(message):
+            return True
+        if (
+            self.requested_handoff_scope(message) is not None
+            and (
+                re.search(r"\b(?:expert|(?:(?:energi|klimat)-?)?rådgivare(?:n)?|ekr|advis[oe]r)\b", message, re.IGNORECASE)
+                or re.search(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", message, re.IGNORECASE)
+            )
+            and re.search(r"\b(?:send|email|forward|share|skicka|mejla|vidarebefordra|dela)\b", message, re.IGNORECASE)
+            and not re.search(r"\b(?:vill\s+inte|don't\s+want|do\s+not\s+want|never\s+send)\b", message.replace("’", "'"), re.IGNORECASE)
+        ):
+            return True
+        if re.search(r"\b(?:skicka|mejla|vidarebefordra|kontakta|koppla)\s+(?:inte|ingen|inget|inga)\b|\b(?:jag|vi)\s+vill\s+inte\b", message, re.IGNORECASE):
             return False
 
-        for clause in _requested_action_clauses(
-            message, "pass|forward|send|email|refer|connect|contact|speak|talk"
+        human_target = r"(?:" + advisor + r"|\b(?:human|person|someone|människa|någon)\b)"
+        if re.search(
+            r"\b(?:jag|vi)\s+vill\s+att\b[^.!?;\n]*" + advisor
+            + r"[^.!?;\n]*\b(?:får|ska\s+få|tar\s+emot)\b[^.!?;\n]*\b(?:sammanfattning|samtal(?:et)?|meddelande)\b"
+            r"|(?:^|[.!?;]\s*)(?:can|could|may)\s+(?:i|we)\s+(?:talk|speak)\s+(?:to|with)\b[^.!?;\n]*" + human_target
+            + r"|\b(?:i|we)(?:'d|\s+would)?\s+(?:like|want|need)\s+to\s+(?:talk|speak)\s+(?:to|with)\b[^.!?;\n]*" + human_target,
+            message, re.IGNORECASE,
         ):
-            if re.search(r"\b(?:advisor|adviser|expert|ekr)\b", clause, re.IGNORECASE):
+            return True
+        swedish_request = re.search(
+            r"(?:^|[.!?;]\s*|\b(?:kan|kunde|skulle|vill)\s+du\s+)"
+            r"(?:snälla\s+)?(?:skicka|vidarebefordra|mejla|kontakta|koppla)\b([^.!?;\n]*)",
+            message, re.IGNORECASE,
+        )
+        if swedish_request:
+            clause = swedish_request.group(1)
+            target = re.search(human_target, clause, re.IGNORECASE)
+            if target and not re.search(r"\b(?:inte|ingen|inget|inga)\b", clause[:target.start()], re.IGNORECASE):
+                return True
+        if re.search(
+            r"\b(?:jag|vi)\s+(?:vill|behöver)\s+(?:gärna\s+)?(?:prata|tala)\s+med\s+(?:en\s+)?" + human_target
+            + r"|\b(?:jag|vi)\s+behöver\s+(?:hjälp\s+av\s+)?(?:en\s+)?" + human_target
+            + r"|\b(?:jag|vi)\s+behöver\s+mänsklig\s+hjälp\b",
+            message, re.IGNORECASE,
+        ):
+            return True
+
+        for clause in _requested_action_clauses(
+            message, "pass|forward|send|email|refer|connect|contact|speak|talk|have"
+        ):
+            if re.search(human_target, clause, re.IGNORECASE):
                 return True
 
-        lowered = message.lower()
-        explicit_phrases = [
-            "send this to an expert",
-            "talk to an expert",
-            "contact an expert",
-            "send to ekr",
-            "email ekr",
-            "email this conversation",
-            "send this conversation",
-            "send the email",
-            "send email",
-            "please send the email",
-            "send it to the expert",
-            "send it to ekr",
-            "have an expert look at this",
-            "someone should look at this",
-            "can an expert help",
-        ]
-        implicit_phrases = [
-            "this is too hard",
-            "this is complicated",
-            "i need more help",
-            "i need human help",
-            "i need an expert",
-            "i want an expert",
-            "can someone help me",
-            "i want to talk to someone",
-            "this should be handled by an expert",
-        ]
+        return bool(re.search(
+            r"\b(?:i|we)\s+(?:need|want)\s+(?:human\s+help|(?:an?\s+)?(?:expert|advisor|adviser|ekr))\b|"
+            r"\b(?:can|could)\s+(?:an?\s+)?expert\s+help\b|"
+            r"^\s*(?:please\s+)?(?:email|send)\s+(?:this\s+conversation|the\s+email|email)\b",
+            message, re.IGNORECASE,
+        ))
 
-        return any(phrase in lowered for phrase in explicit_phrases + implicit_phrases)
 
     def wants_draft_report(self, message: str) -> bool:
         if not message:
             return False
+        if requests_existing_document(message):
+            return False
+        if re.search(
+            r"(?:^|[,.;!?]\s*|\b(?:but|and)\s+)(?:please\s+)?(?:do\s+not|don't|never)\s+"
+            r"(?:create|generate|prepare|make|produce|write|draft|compile|export)\b",
+            message.replace("’", "'"), re.IGNORECASE,
+        ):
+            return False
+        swedish_verbs = r"skapa|generera|sammanställ|skriv|gör|förbered|sammanfatta|exportera|ladda\s+ner"
+        if re.search(
+            r"\b(?:" + swedish_verbs + r")\s+(?:inte|ingen|inget|inga)\b[^.!?;\n]*"
+            r"\b(?:" + SWEDISH_REPORT_NOUN_PATTERN + r")\b|"
+            r"(?:^|[,.!?;]\s*)(?:nej[,\s]+)?(?:" + swedish_verbs + r")\s+inte\b",
+            message, re.IGNORECASE,
+        ):
+            return False
+        swedish_request = re.search(
+            r"(?:^|[.!?;]\s*|\b(?:kan|kunde|skulle|vill)\s+du\s+)"
+            r"(?:snälla\s+)?(?:" + swedish_verbs + r")\b([^.!?;\n]*)",
+            message, re.IGNORECASE,
+        )
+        if swedish_request:
+            clause = swedish_request.group(1)
+            report = re.search(r"\b(?:" + SWEDISH_REPORT_NOUN_PATTERN + r")\b", clause, re.IGNORECASE)
+            if report and not re.search(r"\b(?:inte|ingen|inget|inga)\b", clause[:report.start()], re.IGNORECASE):
+                if not re.search(
+                    r"\b(?:befintlig(?:a)?|ursprunglig(?:a)?|original|uppladdad(?:e)?|senaste|ovk)[-\s]+"
+                    r"(?:\w+\s+){0,2}(?:" + SWEDISH_REPORT_NOUN_PATTERN + r")\b",
+                    clause[:report.end()], re.IGNORECASE,
+                ):
+                    return True
         for clause in _requested_action_clauses(
-            message, "generate|create|prepare|make|produce|write|draft|compile|download|export|give|provide"
+            message, "generate|create|prepare|make|produce|write|draft|compile|download|export|give|provide|summarize|summarise|turn"
         ):
             # An existing source document is not a request to manufacture a new one.
-            if re.search(r"\b(?:existing|original|uploaded|audit|ovk|inspection)\s+(?:\w+\s+){0,2}report\b", clause, re.IGNORECASE):
+            report = re.search(r"\b(?:report|briefing)\b", clause, re.IGNORECASE)
+            if report and re.search(r"\b(?:existing|original|uploaded|audit|ovk|inspection)[-\s]+(?:\w+\s+){0,2}report\b", clause[:report.end()], re.IGNORECASE):
                 continue
-            if re.search(r"\b(?:report|briefing)\b", clause, re.IGNORECASE):
+            if report:
                 return True
+        if re.search(
+            r"^\s*(?:i|we)(?:'d|\s+would)?\s+(?:like|want|need)\s+(?:a\s+|an\s+)?(?:new\s+|short\s+|draft\s+|energy\s+|board\s+){0,3}(?:report|briefing)\b|"
+            r"^\s*(?:jag|vi)\s+(?:vill\s+ha|behöver)\s+(?:en\s+|ett\s+)?"
+            r"(?:(?:ny(?:tt)?|kort|kortfattat|nedladdningsbart)\s+){0,3}"
+            r"(?:" + SWEDISH_REPORT_NOUN_PATTERN + r")\b",
+            message, re.IGNORECASE,
+        ):
+            return True
         return False
 
     def _normalize_binary_reply(self, message: str) -> str:
-        return " ".join(message.strip().lower().strip(" \t\r\n.,!?").split())
+        text = str(message or "").lower().replace("’", "'")
+        return " ".join(re.sub(r"[.,!?:;\r\n]+", " ", text).split())
 
     def is_confirmation(self, message: str) -> bool:
-        if not message:
+        if (
+            not message or "?" in message or self.is_rejection(message)
+            or self.requested_handoff_scope(message) is not None
+        ):
             return False
 
         normalized = self._normalize_binary_reply(message)
         positive_responses = {
+            "ja", "ja tack", "ja gärna", "ja skicka", "ja skicka det", "ja skicka den",
+            "ja skicka mejlet", "ja skicka e-postmeddelandet", "skicka", "skicka det",
+            "skicka mejlet", "skicka e-postmeddelandet", "skicka till rådgivaren",
             "yes",
             "yes please",
             "sure",
@@ -287,15 +429,58 @@ class RouterAgent(BaseAgent):
             "please send the email",
             "yes send the email",
             "yes please send the email",
+            "yes send it", "yes please send it",
         }
-        return normalized in positive_responses
+        if normalized in {self._normalize_binary_reply(value) for value in positive_responses}:
+            return True
+        affirmative = r"(?:yes(?:\s+please)?|sure(?:\s+please)?|okay?(?:\s+please)?|absolutely|ja(?:\s+(?:tack|gärna))?)"
+        action = (
+            r"(?:(?:please|snälla)\s+)?(?:send|email|forward|skicka|mejla|vidarebefordra)"
+            r"(?:\s+(?:it|this|that|this\s+conversation|the\s+conversation|email|the\s+email|the\s+message|"
+            r"det|den|detta|mejlet|e-postmeddelandet|samtalet|sammanfattningen))?"
+            r"(?:\s+(?:to|till)\s+(?:(?:the|an|our|en)\s+)?"
+            r"(?:(?:energy|climate)\s+)?(?:advisor|adviser|expert|ekr|energirådgivaren|rådgivaren))?"
+            r"(?:\s+(?:please|tack))?"
+        )
+        return bool(re.fullmatch(
+            r"(?:(?:" + affirmative + r")(?:\s+(?:and|och))?\s+)?"
+            r"(?:go\s+ahead\s+(?:and\s+)?)?" + action,
+            normalized,
+        ))
 
     def is_rejection(self, message: str) -> bool:
         if not message:
             return False
 
+        advisor = r"\b(?:expert|(?:(?:energi|klimat)-?)?rådgivare(?:n)?|ekr|(?:energy\s+|climate\s+)?advis[oe]r)\b"
+        # Refusing an advisor takes precedence even when a preview is mentioned.
+        if re.search(
+            advisor + r"[^.!?;\n]*\b(?:inte|not|never)\b[^.!?;\n]*\b(?:får|receive|receives|get|gets)\b|"
+            r"\b(?:jag|vi)\s+vill\s+inte\s+(?:ha|kontakta|prata\s+med|tala\s+med)\s+(?:en\s+)?" + advisor
+            + r"|\b(?:i|we)\s+(?:don't|do\s+not)\s+want\s+(?:(?:an?|the)\s+)?" + advisor
+            + r"|\b(?:i|we)\s+(?:don't|do\s+not)\s+want\s+to\s+(?:contact|talk\s+to|speak\s+to)\s+(?:(?:an?|the)\s+)?" + advisor
+            + r"|\b(?:kontakta|koppla)\s+(?:inte|ingen|inga)\b[^.!?;\n]*" + advisor
+            + r"|\b(?:don't|do\s+not|never)\s+(?:contact|connect|refer)\b[^.!?;\n]*" + advisor,
+            message.replace("’", "'"), re.IGNORECASE,
+        ):
+            return True
+        if self._requests_handoff_preview(message):
+            # "Show the preview; don't send" requests a pending draft.
+            # Ignore only the send-withholding clause. Any independent
+            # no/cancel clause remains in the text and still wins below.
+            message = re.sub(
+                r"(?:^|[,.;!?\n]\s*|\b(?:but|and|men|och)\s+)(?:(?:please|snälla)\s+)?"
+                r"(?:(?:don't|do\s+not)\s+(?:send|email|forward|share|submit)"
+                r"(?:\s+(?:it|this|that|anything|the\s+(?:email|message|conversation|summary)))?(?:\s+yet)?|"
+                r"(?:skicka|mejla|vidarebefordra|dela)\s+(?:inte(?:\s+(?:det|den|detta|mejlet|sammanfattningen|samtalet|något))?|inget|ingenting)(?:\s+ännu)?)\b",
+                ". ", message.replace("’", "'"), flags=re.IGNORECASE,
+            )
         normalized = self._normalize_binary_reply(message)
         negative_responses = {
+            "nej", "nej tack", "nej skicka inte", "nej skicka inte det", "nej skicka inte mejlet", "skicka inte",
+            "skicka inte det", "skicka inte mejlet", "skicka inte e-postmeddelandet",
+            "avbryt", "avbryt överlämningen", "inte nu", "vänta", "vänta med att skicka",
+            "nej jag vill inte", "nej skicka inget", "nej tack skicka inte", "avbryt mejlet",
             "no",
             "no thanks",
             "no thank you",
@@ -307,108 +492,216 @@ class RouterAgent(BaseAgent):
             "do not send anything",
             "no, don't send anything",
             "no, do not send anything",
+            "no do not send", "no do not send it",
             "cancel",
             "cancel the email",
             "cancel the handoff",
             "not now",
             "never mind",
         }
-        return normalized in negative_responses
+        if normalized in {self._normalize_binary_reply(value) for value in negative_responses}:
+            return True
+        for clause in re.split(r"[.;!?\n]+", message):
+            clause = re.sub(r"^\s*(?:actually|on\s+second\s+thought|förresten)\s*[, ]*", "", clause, flags=re.IGNORECASE)
+            if self._normalize_binary_reply(clause) in negative_responses:
+                return True
+        if re.search(
+            r"^\s*(?:no(?:\s+(?:thanks|thank\s+you))?|nej(?:\s+tack)?)(?:\s*[,.;!?]|\s*$)",
+            message, re.IGNORECASE,
+        ):
+            return True
+        cancellation_text = message.replace("’", "'")
+        if self.requested_handoff_scope(message) == "summary_only":
+            # Excluding the transcript changes sharing terms; it does not
+            # cancel a request to share the summary. Other cancellation
+            # clauses still take precedence.
+            cancellation_text = re.sub(
+                r"\b(?:(?:don't|do\s+not)\s+(?:send|email|forward|share)\s+(?:the\s+)?(?:full|entire)\s+(?:chat|conversation|transcript)|"
+                r"(?:skicka|mejla|vidarebefordra|dela)\s+inte\s+(?:hela\s+)?(?:chatten|samtalet|konversationen|samtalsbilagan))\b",
+                "", cancellation_text, flags=re.IGNORECASE,
+            )
+        return bool(re.search(
+            r"(?:^|[,.;!\n]\s*|\b(?:but|and|men|och)\s+)(?:(?:please|snälla)\s+)?"
+            r"(?:(?:don't|do\s+not|never)\s+(?:send|email|forward|share|submit)|"
+            r"(?:skicka|mejla|vidarebefordra|dela)\s+(?:inte|inget|ingen|inga|ingenting)|"
+            r"(?:cancel|avbryt)(?:\s+(?:the\s+)?(?:email|handoff|message|mejlet|överlämningen))?|"
+            r"(?:wait|vänta)(?:\s+med\s+att\s+skicka)?)\b",
+            cancellation_text, re.IGNORECASE,
+        ))
 
+    def requested_handoff_scope(self, message: str) -> Optional[str]:
+        """Recognize an explicit sharing preference, never approval to send."""
+        text = str(message or "").strip().replace("’", "'")
+        if not text or re.search(
+            r"^\s*(?:what|why|how|vad|varför|hur)\b|"
+            r"\b(?:only\s+if|unless|bara\s+om)\b|"
+            r"\b(?:report|rapporten|document|dokumentet)\s+(?:says|states|säger)\b",
+            text, re.IGNORECASE,
+        ):
+            return None
+        sharing_action = bool(re.search(r"\b(?:send|email|forward|share|skicka|mejla|vidarebefordra|dela)\b", text, re.IGNORECASE))
+        if not sharing_action and re.search(r"\b(?:create|generate|write|summari[sz]e|skapa|skriv|sammanfatta)\b", text, re.IGNORECASE):
+            return None
+        full_payload = r"(?:(?:the\s+)?(?:full|entire)\s+(?:chat|conversation|transcript)|hela\s+(?:chatten|samtalet|konversationen)|samtalsbilagan)"
+        summary = r"(?:sammanfattning(?:en)?|summary)"
+        only_summary = r"\b(?:(?:bara|endast|enbart|only|just)\s+(?:(?:the|a|den|en)\s+)?" + summary + r"|summary[-\s]+only)\b"
+        excluded_full = (
+            r"\b(?:without|utan|not|no|inte|do\s+not\s+include|don't\s+include|inkludera\s+inte|"
+            r"(?:don't|do\s+not)\s+(?:send|email|forward|share)|(?:skicka|mejla|vidarebefordra|dela)\s+inte)\s+"
+            + full_payload + r"\b"
+        )
+        if re.search(r"\b(?:inte|not)\s+(?:bara|only|just)\s+(?:(?:the|den)\s+)?" + summary, text, re.IGNORECASE):
+            return "full_conversation" if re.search(full_payload, text, re.IGNORECASE) else None
+        if re.search(only_summary, text, re.IGNORECASE) or re.search(excluded_full, text, re.IGNORECASE):
+            # A negated summary-only request does not select that scope.
+            if re.search(r"\b(?:inte|not|don't|do\s+not)\s+(?:\w+\s+){0,2}" + only_summary, text, re.IGNORECASE):
+                return None
+            if re.search(full_payload, re.sub(excluded_full, "", text, flags=re.IGNORECASE), re.IGNORECASE):
+                return None  # Conflicting scope terms cannot approve either payload.
+            return "summary_only"
+        if re.search(full_payload, text, re.IGNORECASE):
+            return "full_conversation"
+        return None
 
-    def classify_question(self, message: str, previous_classification: Optional[str] = None, history=None) -> str:
+    def is_handoff_scope_only_request(self, message: str) -> bool:
+        """Allow summary reuse only for an unambiguous sharing-control turn.
+
+        A conservative vocabulary keeps new facts, corrections or questions in
+        the source transcript instead of silently discarding them during reuse.
         """
-        Classifies a user question by sending it to an Azure OpenAI model.
-        The classification runs in a separate process with a timeout.
+        if self.requested_handoff_scope(message) is None:
+            return False
+        control_words = {
+            "yes", "sure", "okay", "ok", "please", "just", "only", "the", "a", "an",
+            "summary", "summary-only", "full", "entire", "chat", "conversation", "transcript",
+            "send", "email", "forward", "share", "include", "don't", "do", "not", "no",
+            "without", "instead", "but", "and", "to", "advisor", "adviser", "expert", "ekr",
+            "energy", "climate", "can", "could", "you", "i", "we", "want", "prefer", "it",
+            "ja", "tack", "gärna", "snälla", "bara", "endast", "enbart", "sammanfattning",
+            "sammanfattningen", "hela", "chatten", "samtalet", "konversationen", "samtalsbilagan",
+            "skicka", "mejla", "vidarebefordra", "dela", "inkludera", "inte", "utan", "istället",
+            "men", "och", "till", "rådgivare", "rådgivaren", "energirådgivare", "energirådgivaren",
+            "klimatrådgivare", "klimatrådgivaren", "energi", "kan", "du", "jag", "vi", "vill",
+            "föredrar", "menade", "den", "en", "det", "detta",
+        }
+        words = re.findall(r"[^\W\d_]+(?:['-][^\W\d_]+)*|\d+", str(message or "").lower().replace("’", "'"))
+        return bool(words) and all(word in control_words for word in words)
 
-        Args:
-            message (str): The user's question to classify.
-            history: Prior user/assistant turns, optionally including the latest turn.
-            previous_classification (Optional[str]): The previous classification, returned on timeout or error.
+    def wants_handoff_preview_change(self, message: str) -> bool:
+        """Recognize changed consent terms without treating them as approval."""
+        if not message or self.is_rejection(message):
+            return False
+        unsupported_change = bool(re.search(
+            r"\b(?:remove|redact|anonymi[sz]e|change|exclude|ta\s+bort|ändra|utelämna)\b[^.!?;\n]*"
+            r"\b(?:contact|email|address|name|recipient|details|data|kontaktuppgifter|e-post|adress|namn|mottagare|uppgifter)\b|"
+            r"\b(?:send|email|skicka|mejla)\b[^.!?;\n]*\b(?:different|another|annan|annat)\b[^.!?;\n]*"
+            r"\b(?:advisor|adviser|expert|recipient|address|rådgivare|rådgivaren|mottagare|adress)\b",
+            # Any requested redaction changes the previewed payload, even when
+            # expressed without an affirmative word or a "but" clause.
+            message, re.IGNORECASE,
+        ) or re.search(
+            r"\b(?:without|utan|do\s+not\s+include|don't\s+include|inkludera\s+inte)\b[^.!?;\n]*"
+            r"\b(?:contact|email|address|name|personal|details|data|kontaktuppgifter|e-post|adress|namn|personuppgifter|uppgifter)\b",
+            message.replace("’", "'"), re.IGNORECASE,
+        ) or re.search(
+            r"\b(?:inga|ingen|inget|no)\s+(?:(?:mina|våra|my|our|any)\s+)?"
+            r"(?:personuppgifter|kontaktuppgifter|personal\s+(?:data|details|information)|contact\s+(?:details|information))\b",
+            message, re.IGNORECASE,
+        ) or (
+            re.search(r"\b(?:send|email|forward|share|skicka|mejla|vidarebefordra|dela)\b", message, re.IGNORECASE)
+            and re.search(r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", message, re.IGNORECASE)
+        ))
+        if unsupported_change:
+            return True
+        if self.requested_handoff_scope(message) is not None:
+            return False
+        return bool(re.search(
+            r"\b(?:yes|sure|okay|ja)\b[^.!?;\n]*\b(?:but|only\s+if|unless|men|bara\s+om)\b",
+            message, re.IGNORECASE,
+        ))
 
-        Returns:
-            str: The classification result (e.g., "building_specific", "generic"),
-                 or `previous_classification` if the API call fails or times out.
+
+    def classify_question(self, message: str, previous_classification: Optional[str] = None, history=None) -> Optional[str]:
+        """Return a canonical route or None for safe recovery by the pipeline.
+
+        A malformed model response gets one classification-specific retry. API
+        errors, worker failures and timeouts do not retry. The legacy previous
+        classification argument remains accepted but is never a failure route.
         """
-        logger.info(f"Classifying question: '{message[:70]}...'")
-        logger.debug(f"Previous classification (fallback): {previous_classification}")
-        start_time = time.time()
         started_perf = time.perf_counter()
-        telemetry_messages = _classification_messages(self.prompt_template, message, history)
-        if not message:
-            logger.warning("Attempted to classify an empty message. Returning previous classification.")
-            return previous_classification if previous_classification is not None else "generic" # Default if no previous
-
-        if client is None:
-            logger.error("OpenAI client is not initialized. Cannot classify question.")
+        if not isinstance(message, str) or not message.strip():
             record_model_call(
-                component="router_agent",
-                model=deployment,
-                input_messages=telemetry_messages,
+                component="router_agent", model=deployment, success=False,
                 latency_seconds=time.perf_counter() - started_perf,
-                success=False,
+                error="Router classification requires a nonempty user message.",
+            )
+            return None
+
+        logger.info("Classifying question: '%s...'", message[:70])
+        telemetry_messages = _classification_messages(self.prompt_template, message, history)
+        if client is None:
+            record_model_call(
+                component="router_agent", model=deployment,
+                input_messages=telemetry_messages, success=False,
+                latency_seconds=time.perf_counter() - started_perf,
                 error="OpenAI client is not initialized.",
             )
-            return previous_classification if previous_classification is not None else "generic"
+            return None
 
+        for attempt in range(2):
+            attempt_prompt = self.prompt_template
+            if attempt:
+                attempt_prompt += (
+                    "\nThe previous classification response did not meet the output contract. "
+                    "Classify the final user message again. Return exactly one complete "
+                    "label from: building_specific, generic, conversational, cluster, "
+                    "draft_energy_report, expert_handoff. Return no answer, explanation, "
+                    "quotation marks, punctuation, JSON, or alternative labels."
+                )
+            telemetry_messages = _classification_messages(attempt_prompt, message, history)
+            attempt_started = time.perf_counter()
+            manager = process = None
+            label = output = None
+            invalid_output = False
+            error = None
+            try:
+                manager = multiprocessing.Manager()
+                return_dict = manager.dict()
+                process = multiprocessing.Process(
+                    target=openai_call_worker,
+                    args=(attempt_prompt, message, return_dict, history),
+                )
+                process.start()
+                process.join(timeout=CLASSIFICATION_TIMEOUT_SECONDS)
+                if process.is_alive():
+                    error = f"Router classification timed out after {CLASSIFICATION_TIMEOUT_SECONDS}s."
+                elif getattr(process, "exitcode", None) not in (None, 0):
+                    error = f"Router classification worker exited with code {process.exitcode}."
+                elif "error" in return_dict:
+                    error = return_dict["error"]
+                elif "invalid_output" in return_dict or "result" in return_dict:
+                    output = return_dict.get("invalid_output", return_dict.get("result"))
+                    label = _validated_classification(output)
+                    invalid_output = label is None
+                    if invalid_output:
+                        error = "Router classification returned an invalid canonical route label."
+                else:
+                    error = "Router classification worker returned no result or error."
+            except Exception as exc:
+                error = f"Router classification worker failed: {type(exc).__name__}: {exc}"
+                logger.warning("Router classification worker failed.", exc_info=True)
+            finally:
+                _cleanup_classification_resources(process, manager)
 
-        manager = multiprocessing.Manager()
-        return_dict = manager.dict()
-
-        p = multiprocessing.Process(
-            target=openai_call_worker,
-            args=(self.prompt_template, message, return_dict, history)
-        )
-        
-        logger.debug("Starting OpenAI API call in a separate process.")
-        p.start()
-        
-        # Set a reasonable timeout. 5 seconds might be too short for some API calls.
-        # Consider making this configurable or dynamic.
-        process_timeout = 1000 # seconds
-        p.join(timeout=process_timeout)
-
-        if p.is_alive():
-            logger.warning(f"[RouterAgent] Timeout ({process_timeout}s) occurred. Terminating process.")
-            p.terminate()
-            p.join() # Ensure the process is truly terminated
-            return_value = previous_classification if previous_classification is not None else "generic"
-            logger.info(f"Returning previous_classification due to timeout: {return_value}")
             record_model_call(
-                component="router_agent",
-                model=deployment,
-                input_messages=telemetry_messages,
-                latency_seconds=time.perf_counter() - started_perf,
-                success=False,
-                error=f"Router classification timed out after {process_timeout}s.",
+                component="router_agent", model=deployment,
+                input_messages=telemetry_messages, output_text=output,
+                latency_seconds=time.perf_counter() - attempt_started,
+                success=label is not None, error=error,
             )
-            return return_value
-        else:
-            if "result" in return_dict:
-                classification_result = return_dict["result"]
-                logger.info(f"Question classified successfully: '{classification_result}' for message: '{message[:70]}...'")
-                end_time = time.time()
-                print(f"Classification Agent responded in {end_time - start_time} seconds")
-                record_model_call(
-                    component="router_agent",
-                    model=deployment,
-                    input_messages=telemetry_messages,
-                    output_text=classification_result,
-                    latency_seconds=time.perf_counter() - started_perf,
-                    success=True,
-                )
-                return classification_result
-            else:
-                error_msg = return_dict.get('error', 'Unknown error (no result or error key in return_dict)')
-                logger.error(f"[RouterAgent] Error during classification for message '{message[:70]}...': {error_msg}")
-                return_value = previous_classification if previous_classification is not None else "generic"
-                logger.info(f"Returning previous_classification due to error: {return_value}")
-                record_model_call(
-                    component="router_agent",
-                    model=deployment,
-                    input_messages=telemetry_messages,
-                    latency_seconds=time.perf_counter() - started_perf,
-                    success=False,
-                    error=error_msg,
-                )
-                return return_value
+            if label is not None:
+                return label
+            logger.warning("Router classification attempt %s failed: %s", attempt + 1, error)
+            if not invalid_output:
+                break
+        return None

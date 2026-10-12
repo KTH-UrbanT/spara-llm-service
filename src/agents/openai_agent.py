@@ -7,6 +7,11 @@ from typing import List, Dict, Optional, Union
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError, BadRequestError
 from dotenv import load_dotenv
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.safety_analysis import (
+    response_language, response_language_instruction, response_language_mismatch,
+    language_correction_messages, language_correction_preserves_evidence,
+    language_failure_response,
+)
 
 # Load environment variables
 load_dotenv()
@@ -105,12 +110,16 @@ class OpenAIResponseAgent:
                     time.sleep(sleep_for)
         raise last_error
 
-    def _build_messages(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]):
-        messages = [{"role": "system", "content": self.prompt_template}]
+    def _build_messages(self, last_message: str, message_list: List[Dict[str, Union[str, int]]], *, language: Optional[str] = None):
+        language = language if language in {"en", "sv"} else response_language(message_list, last_message)
+        messages = [{"role": "system", "content": self.prompt_template + "\n\n" + response_language_instruction(language)}]
         for msg in (message_list or []):
+            if not isinstance(msg, dict):
+                logger.warning("Skipping malformed message.")
+                continue
             role = msg.get("role")
             content = msg.get("content")
-            if isinstance(role, str) and isinstance(content, str):
+            if role in {"user", "assistant"} and isinstance(content, str):
                 messages.append({"role": role, "content": content})
             else:
                 logger.warning(f"Skipping malformed message: {msg!r}")
@@ -119,7 +128,31 @@ class OpenAIResponseAgent:
             messages.append({"role": "user", "content": last_message})
         return messages
 
-    def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[str]:
+    def generate_response(self, last_message: str, message_list: List[Dict[str, Union[str, int]]], *, language: Optional[str] = None) -> Optional[str]:
+        """Generate in the chosen language, with at most one faithful correction."""
+        if not isinstance(last_message, str):
+            last_message = "" if last_message is None else str(last_message)
+        if not isinstance(message_list, list):
+            message_list = []
+        language = language if language in {"en", "sv"} else response_language(message_list, last_message)
+        messages = self._build_messages(last_message, message_list, language=language)
+        answer = self._generate_response_once(last_message, message_list, language=language, prepared_messages=messages)
+        if not isinstance(answer, str) or answer.strip().lower().startswith("error:") or not response_language_mismatch(answer, language):
+            return answer
+        corrected = self._generate_response_once(
+            last_message, message_list, language=language,
+            prepared_messages=language_correction_messages(messages, answer, language),
+            correction_source=answer,
+        )
+        if (
+            not isinstance(corrected, str) or corrected.strip().lower().startswith("error:")
+            or response_language_mismatch(corrected, language)
+            or not language_correction_preserves_evidence(answer, corrected)
+        ):
+            return "Error: " + language_failure_response(language)
+        return corrected
+
+    def _generate_response_once(self, last_message: str, message_list: List[Dict[str, Union[str, int]]], *, language: str, prepared_messages=None, correction_source=None) -> Optional[str]:
         start_time = time.time()
         started_perf = time.perf_counter()
 
@@ -129,7 +162,7 @@ class OpenAIResponseAgent:
         if not isinstance(message_list, list):
             message_list = []
 
-        messages = self._build_messages(last_message, message_list)
+        messages = prepared_messages if prepared_messages is not None else self._build_messages(last_message, message_list, language=language)
         params = {"model": self.deployment, "messages": messages, "stream": False}
         params.update(completion_options(self.deployment, reasoning_tokens=16384))
 
@@ -224,6 +257,16 @@ class OpenAIResponseAgent:
 
         end_time = time.time()
         logger.info(f"Response generated in {end_time - start_time:.2f} seconds.")
+        missing_content = not isinstance(response_content, str) or not response_content.strip()
+        service_failure = isinstance(response_content, str) and response_content.strip().lower().startswith("error:")
+        mismatch = response_language_mismatch(response_content, language)
+        changed_evidence = bool(correction_source is not None and not language_correction_preserves_evidence(correction_source, response_content))
+        error = (
+            "Response model returned no usable content." if missing_content else
+            "Response model returned a service failure." if service_failure else
+            f"Response language mismatch: required {language}." if mismatch else
+            "Language correction changed protected facts or citations." if changed_evidence else None
+        )
         record_model_call(
             component="openai_response_agent",
             model=self.deployment,
@@ -231,6 +274,9 @@ class OpenAIResponseAgent:
             output_text=response_content,
             response=response,
             latency_seconds=time.perf_counter() - model_started_at,
-            success=True,
+            success=error is None,
+            error=error,
         )
-        return response_content or "No content returned from the model."
+        if error:
+            logger.warning(error)
+        return response_content if not missing_content else "Error: " + language_failure_response(language)

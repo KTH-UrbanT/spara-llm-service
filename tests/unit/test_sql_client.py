@@ -5,9 +5,10 @@ from src.database.sql_client import SQLClient
 
 
 class FakeResponse:
-    def __init__(self, payload, ok=True):
+    def __init__(self, payload, ok=True, status_code=None):
         self.payload = payload
         self.ok = ok
+        self.status_code = status_code if status_code is not None else (200 if ok else 404)
         self.raise_called = False
 
     def json(self):
@@ -15,8 +16,8 @@ class FakeResponse:
 
     def raise_for_status(self):
         self.raise_called = True
-        if not self.ok:
-            raise RuntimeError("request failed")
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}", response=self)
 
 
 class FakeSession:
@@ -43,11 +44,73 @@ def test_building_by_uuid_returns_object_for_successful_lookup():
     assert session.calls[0]["url"] == "https://example.com/api/buildings/uuid-1/"
 
 
-def test_building_by_uuid_returns_none_when_response_is_not_ok():
+def test_building_by_uuid_returns_none_only_when_response_is_not_found():
     session = FakeSession([FakeResponse({"detail": "not found"}, ok=False)])
     client = SQLClient(session=session)
 
     assert client.building_by_uuid("missing") is None
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 503])
+def test_building_by_uuid_preserves_access_and_server_errors(status):
+    response = FakeResponse({"detail": "request failed"}, ok=False, status_code=status)
+    session = FakeSession([response])
+    client = SQLClient(session=session)
+
+    with pytest.raises(requests.HTTPError) as raised:
+        client.building_by_uuid("uuid-1")
+
+    assert raised.value.response.status_code == status
+    assert response.raise_called is True
+    assert len(session.calls) == 1
+
+
+def test_building_by_uuid_preserves_exhausted_connection_timeout():
+    session = FakeSession([requests.ConnectTimeout("connect timeout")])
+    client = SQLClient(session=session)
+    client.retries = 0
+
+    with pytest.raises(requests.ConnectTimeout):
+        client.building_by_uuid("uuid-1")
+
+    assert len(session.calls) == 1
+
+
+def test_unknown_building_id_fallback_404_is_a_mapper_not_found_result():
+    from tests.unit.test_generic_sql_layer import import_generic_sql_layer
+
+    session = FakeSession([
+        FakeResponse([]),
+        FakeResponse({"detail": "not found"}, ok=False, status_code=404),
+    ])
+    client = SQLClient(base_url="https://example.test/api", session=session)
+    result = import_generic_sql_layer()(sql_client=client).execute(
+        "buildings_by_building_id", building_id="00-00-PILOTFINNSEJ999-0"
+    )
+
+    assert result["ok"] is False
+    assert result["data"] == []
+    assert result["trace"]["execution_status"] == "not_found"
+    assert result["message"] == "No buildings matched byggnadsid '00-00-PILOTFINNSEJ999-0'."
+    assert len(session.calls) == 2
+    assert session.calls[1]["params"]["byggnadsid"] == "00-00-PILOTFINNSEJ999-0"
+
+
+@pytest.mark.parametrize("operation", ["fetch_building_data", "fetch_energy_class", "fetch_heated_area", "fetch_tariff"])
+@pytest.mark.parametrize("status,expected", [(404, "not_found"), (401, "error"), (403, "error"), (500, "error")])
+def test_real_client_mapper_preserves_http_failure_category_for_profile_and_fields(operation, status, expected):
+    from tests.unit.test_generic_sql_layer import import_generic_sql_layer
+
+    session = FakeSession([FakeResponse({"detail": "request failed"}, ok=False, status_code=status)])
+    result = import_generic_sql_layer()(sql_client=SQLClient(session=session)).execute(
+        operation, building_id="missing-id"
+    )
+
+    assert result["ok"] is False
+    assert result["data"] is None
+    assert result["trace"]["execution_status"] == expected
+    assert result["trace"]["returned_values_used"] == {}
+    assert len(session.calls) == 1
 
 
 def test_building_by_address_calls_dedicated_endpoint_case_insensitively():

@@ -221,7 +221,8 @@ class SpecializedSQLLayer:
     # ---------- Routing ----------
 
     def route(self, state: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-        last_message = (state or {}).get("last_message") or ""
+        context = (state or {}).get("context") or {}
+        last_message = context.get("answer_focus") or context.get("effective_query") or (state or {}).get("last_message") or ""
         metadata = (state or {}).get("metadata") or {}
         building_id = metadata.get("building_id")
         address = metadata.get("address")  # <-- NEW

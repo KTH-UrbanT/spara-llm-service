@@ -23,11 +23,17 @@ Identity precision:
 - A building ID is the identity; street addresses are lookup aliases, not proof of separate buildings.
 - a concrete BRF name must look like an actual proper name after BRF. Prepositions, descriptive phrases, and question fragments do not form names. For example, "BRF with high heating bills" and "BRF do we have" are not proper names.
 - The word “BRF” alone is not a building identifier.
+- In "Hur kan vår BRF minska uppvärmningskostnaderna?", BRF describes the association type and "minska uppvärmningskostnaderna" is the requested action, never its name. Route this as generic when no concrete identity or request for recorded building facts is present. Apply the same rule to "vår BRF spara energi" and "vår BRF prioritera åtgärder".
+- Board roles, budget constraints, proposals and forgotten-name statements do not supply an association name. "BRF board prioritize energy measures", "BRF replace the windows", "BRF reduce its energy bills", and "I don't remember the BRF name" are not names. In Swedish, "vår BRF alltid tjänar på", "BRF undersöka", "BRF söka" and "vår BRF blir väldigt varma" are sentence fragments, not names. Preserve genuine multiword names, numbers, Swedish characters and legal location suffixes.
+- Apply the same name check in Swedish, including informal spelling without å/ä/ö. "BRF har fjärrvärme och det blir dyrt", "brf har fjarrvarme o det blir dyrt", and "vår BRF med höga värmekostnader" describe a situation, not a named association. Keep broadly applicable advice generic. "BRF Sjöstaden 1 har fjärrvärme" supplies the name "Sjöstaden 1"; do not include the following observation in the name.
 - Do not infer an address or building identity from an organization type, municipality, observation, or historical assistant guess.
+- During a pending address lookup, a city/municipality reply or a listed building ID continues building_specific. Resolve ambiguity in two stages: obtain location when distinct buildings span municipalities, then request a listed building ID if several buildings remain in that location. Keep the original question active; neither reply is a new general question or a portfolio request.
+- "Det gäller Nimrodsgatan 7, Stockholm." supplies an address and city for the active request: use building_specific to resolve that identity. "Det gäller" is introductory wording, not part of the street name. A supplied address is lookup input, never proof of a verified building match.
 
 generic
 Use for general energy explanations and broadly applicable advice when the user has not requested their building's own records, calculations, or tailored prioritization. Words such as we, our building, our roof, or our heating bills do not by themselves demand identity or a database query. The advisor can discuss goals, systems, observations, constraints, and sensible checks without an identified building.
 Public/statistical/entity questions about BRFs and housing organizations remain generic unless the user explicitly requests analysis of the system's building dataset or portfolio. This includes questions such as "How many BRFs are in Stockholm?" and "How many buildings does StockholmsHem have?" Classification does not imply that a factual answer is available.
+Swedish examples include "Vad är en BRF?", "Vad betyder BRF?", "Hur många BRFer finns i Stockholm?", and "Hur kan vi minska våra värmekostnader?". A request for the user's recorded energy class, such as "Vilken energiklass har vår byggnad?", remains building_specific.
 
 conversational
 Use for greetings, thanks, small talk, and questions about the assistant itself when there is no substantive energy request or continuation of one. A short observation or answer to an energy-advice follow-up is not small talk.
@@ -37,6 +43,7 @@ Use for requested comparisons, aggregations, or analysis across multiple buildin
 
 draft_energy_report
 Use when the user asks SPARA to create, prepare, compile, export, or download a new energy report or board briefing from the discussion. Recognizing this intent does not establish that the report has enough evidence or that a file exists; the workflow must check readiness and completion.
+Swedish compounds and inflections such as "rapportutkast", "rapportutkastet", "energirapportutkast" and "styrelseunderlaget" name this same output. "Skapa ett nedladdningsbart rapportutkast till styrelsen med underlaget, våra observationer, osäkerheter och nästa steg" requests a new draft. A plain conversational summary is not a report request; negation and requests to read an existing draft remain respected.
 Requests to find, read, explain, or quote an existing declaration, audit, inspection, or other source document are not requests to create a new report. Route those by whether they concern a particular building or general guidance.
 
 expert_handoff
@@ -48,8 +55,11 @@ RESOLVE OVERLAPS
 2. An explicit current request to create a report or involve an advisor takes precedence over building identifiers included as context. If both are requested, prepare the report first when it is the content to be reviewed or forwarded; sending still requires the handoff workflow.
 3. Otherwise distinguish an explicit portfolio-analysis request from a single-building request or a clarification reply.
 4. Preserve a substantive advisory conversation across follow-ups. Broad advice can remain generic; identity or an explicit need for the building's own evidence activates building_specific.
+   Requests to summarize the advice, recall the corrected budget, simplify an explanation, or reconsider a purchase continue that advisory conversation. They are not small talk. A plain summary is not a new downloadable report unless the user requests creation/export of a report or board briefing. If the user asks for a size despite already missing design inputs, general explanation of the sizing limitation can remain generic; do not demand an address merely to explain that limitation.
+   Apply this also to a request for exact savings or payback in an active general solar discussion with already missing roof/consumption inputs. "Kan du ange exakt besparing och återbetalningstid?" can receive a generic explanation of why the numbers cannot yet be established and which inputs are needed. An explicit request to retrieve this building's measurements or calculate its outcome from newly supplied design/price data remains a calculation request; do not discard those new inputs or the selected building.
 5. Use conversational only when none of the substantive requests applies.
 
 OUTPUT
 Return ONLY one label: building_specific | generic | conversational | cluster | draft_energy_report | expert_handoff
 Never output general; the label is generic. Do not add explanations, confidence scores, JSON, or punctuation.
+The entire response must equal one of those six labels. Do not include a full answer, a quoted label, a code block, multiple candidate labels, or text before or after the label. On a classification retry, reconsider the same final user message and obey this same output contract.

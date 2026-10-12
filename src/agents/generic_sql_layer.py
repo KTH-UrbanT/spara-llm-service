@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from requests.exceptions import HTTPError
+
 from src.database.sql_client import SQLClient  # type: ignore
 from src.pipeline.telemetry import record_sql_call
 
@@ -204,6 +206,12 @@ class SQL_Mapper_Layer:
             return self._result(False, None, f"Unknown op '{op}'.", trace=trace)
 
         except Exception as e:
+            # A missing ODEN resource is a lookup outcome. Authentication,
+            # server and transport failures must remain retrieval errors.
+            if isinstance(e, HTTPError) and getattr(e.response, "status_code", None) == 404:
+                not_found = self._http_not_found_result(op, kwargs, trace)
+                if not_found is not None:
+                    return not_found
             trace["execution_status"] = "error"
             trace["error_message"] = f"exception: {type(e).__name__}: {e}"
             return self._result(False, None, f"exception: {type(e).__name__}: {e}", trace=trace)
@@ -211,6 +219,32 @@ class SQL_Mapper_Layer:
     # ----------------------------
     # Internals
     # ----------------------------
+    def _http_not_found_result(self, op: str, kwargs: Dict[str, Any], trace: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        building_id = trace.get("building_id") or kwargs.get("building_id")
+        address = kwargs.get("address")
+        data = None
+        if op in {"fetch_building_data", "building_by_uuid"}:
+            message = f"No building found for uuid '{building_id}'."
+        elif op == "buildings_by_building_id":
+            message = f"No buildings matched byggnadsid '{building_id}'."
+            data = []
+        elif op == "building_by_address":
+            message = f"No buildings matched address '{address}'."
+            data = []
+        elif op == "buildings_by_single_filter":
+            message = f"No buildings matched {kwargs.get('field')} '{kwargs.get('value')}'."
+            data = []
+        elif op in {"fetch_energy_class", "fetch_heated_area", "fetch_tariff"}:
+            message = (
+                f"No building found for uuid '{building_id}'."
+                if building_id else f"Could not resolve building_id from address '{address}'."
+            )
+        else:
+            return None
+        trace["execution_status"] = "not_found"
+        trace["error_message"] = message
+        return self._result(False, data, message, trace=trace)
+
     def _resolve_then_get_field(self, kwargs: Dict[str, Any], candidates: List[str], *, trace: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Used by fetch_energy_class / fetch_heated_area / fetch_tariff.
@@ -233,10 +267,11 @@ class SQL_Mapper_Layer:
 
         if not building_id:
             target = f"address '{address}'" if address else "unknown target"
-            trace["execution_status"] = "error"
+            trace["execution_status"] = "not_found" if address else "error"
             trace["error_message"] = f"Could not resolve building_id from {target}."
             return self._result(False, None, f"Could not resolve building_id from {target}.", trace=trace)
 
+        trace["building_id"] = building_id
         payload = self.sql.building_by_uuid(building_id)
         if not payload:
             trace["execution_status"] = "not_found"

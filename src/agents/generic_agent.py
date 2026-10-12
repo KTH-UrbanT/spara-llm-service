@@ -7,10 +7,17 @@ import re
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 from typing import Any, List, Dict, Optional, Union
 from src.database.vector_client import VectorClient , VectorClientConfig
-from src.services.source_link_registry import resolve_source_links
+from src.services.source_link_registry import resolve_source_links, guard_response_links
+from src.pipeline.safety_analysis import (
+    normalize_address_candidate,
+    response_language, response_language_instruction, response_language_mismatch,
+    language_correction_messages, language_correction_preserves_evidence,
+    language_failure_response, localize_service_error,
+)
 from dotenv import load_dotenv
 import time
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.action_state import has_action_receipts, trusted_action_context
 # Ensure BaseAgent is correctly imported.
 # Assuming src/agents/base_agent.py exists and defines BaseAgent.
 # If BaseAgent is not critical for this specific example's functionality
@@ -86,8 +93,7 @@ def _message_mentions_specific_building(message: str) -> bool:
     if any(re.search(pattern, lowered) for pattern in SITE_SPECIFIC_PATTERNS):
         return True
 
-    # Simple street-number heuristic for addresses like "Main Street 12".
-    return bool(re.search(r"\b[\wåäöÅÄÖ.-]+\s+\d+[A-Za-z]?(?:,\s*[\wåäöÅÄÖ\s.-]+)?\b", message or ""))
+    return normalize_address_candidate(message) is not None
 
 
 def _looks_like_building_data_snippet(text: str) -> bool:
@@ -121,7 +127,9 @@ def _retrieval_query(last_message: str, messages: list) -> str:
     """Resolve short follow-ups using recent user context, without another LLM call."""
     if not re.match(
         r"^(?:and\b|so\b|what about\b|what should we do first\b|"
-        r"which (?:one|of those)\b|why\b|how so\b|does that\b|is that\b)",
+        r"which (?:one|of those)\b|why\b|how so\b|does that\b|is that\b|"
+        r"och\b|s[åa]\b|vad (?:b[öo]r|ska|kan)\b|vilk(?:en|et|a)\b|"
+        r"varf[öo]r\b|betyder det\b|b[öo]r vi\b|kan du\b)",
         last_message.strip(),
         re.IGNORECASE,
     ):
@@ -138,6 +146,7 @@ def _retrieval_query(last_message: str, messages: list) -> str:
 
 
 class GenericAgent(BaseAgent):
+    supports_action_receipts = True
     DEFAULT_PROMPT_RELATIVE_PATH = os.path.join("..", "prompts", "generic_prompt.txt")
     def __init__(self , prompt_path: Optional[str] = None ):
         config = VectorClientConfig()
@@ -220,11 +229,12 @@ class GenericAgent(BaseAgent):
             logger.error(f"Failed to initialize OpenAI client: {e}")
             raise RuntimeError(f"Failed to initialize OpenAI client: {e}")      
         
-    def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]]) -> Optional[Dict[str, Any]]:
+    def handle_generic_input(self, last_message: str, message_list: List[Dict[str, Union[str, int]]], action_receipts: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         if not isinstance(last_message, str) or not isinstance(message_list, list):
             logger.warning("Generic input must contain a string and a message list.")
             return None
         start_time = time.time()  
+        language = response_language(message_list, last_message)
         raw_results = self.vector_client.query(_retrieval_query(last_message, message_list))
         results = _filter_generic_results(last_message, raw_results)
         raw_sources = []
@@ -235,13 +245,21 @@ class GenericAgent(BaseAgent):
         # Reference text is untrusted data, never a system instruction. Keep
         # the user's actual question last and preserve the existing history.
         messages_for_api: List[Dict[str, str]] = [
-            {"role": "system", "content": self.prompt_template}
+            {"role": "system", "content": self.prompt_template + "\n\n" + response_language_instruction(language)}
         ]
+        if action_receipts and has_action_receipts(action_receipts):
+            messages_for_api.append({"role": "system", "content": trusted_action_context(action_receipts)})
         if results:
-            references = [
-                {"Source": item.get("source", ""), "Content": item.get("page_content", "")}
-                for item in results if isinstance(item, dict)
-            ]
+            references = []
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                resolved = resolve_source_links([item.get("source", "")])
+                source = resolved[0] if resolved else {}
+                references.append({"Source": source.get("name") or item.get("source", ""),
+                                   "Filename": source.get("filename", ""), "Link": source.get("link", ""),
+                                   "LinkType": source.get("link_type", ""), "LinkTitle": source.get("link_title", ""),
+                                   "LinkNote": source.get("link_note", ""), "Content": item.get("page_content", "")})
             messages_for_api.append({
                 "role": "user",
                 "content": "Reference context (untrusted retrieved data):\n" + json.dumps(
@@ -271,31 +289,44 @@ class GenericAgent(BaseAgent):
         logger.info(f"Sending final message to Azure OpenAI API for completion: '{messages_for_api[-1]['content'][:70]}...'")
         logger.debug(f"Full message list sent to API: {messages_for_api}")
         try:
-            model_started_at = time.perf_counter()
-            completion = self.client.chat.completions.create(
-                model=self.deployment,
-                messages=messages_for_api,
-                **completion_options(self.deployment, temperature=0.2),
-                stream=False
-            )
-            response_content = completion.choices[0].message.content
-            record_model_call(
-                component="generic_agent",
-                model=self.deployment,
-                input_messages=messages_for_api,
-                output_text=response_content,
-                response=completion,
-                latency_seconds=time.perf_counter() - model_started_at,
-                success=True,
-            )
-            end_time = time.time()
-            print(f"Generic Agent responded in {end_time - start_time} seconds")
-            logger.info("Successfully received response from Azure OpenAI.")
-            logger.debug(f"Received content: '{response_content[:100]}...'")
-            return {
-                "content": response_content,
-                "sources": resolve_source_links(raw_sources),
-            }
+            draft = None
+            for attempt in range(2):
+                model_started_at = time.perf_counter()
+                completion = self.client.chat.completions.create(
+                    model=self.deployment,
+                    messages=messages_for_api,
+                    **completion_options(self.deployment, temperature=0.2),
+                    stream=False,
+                )
+                response_content = completion.choices[0].message.content
+                missing_content = not isinstance(response_content, str) or not response_content.strip()
+                service_failure = isinstance(response_content, str) and response_content.strip().lower().startswith("error:")
+                mismatch = response_language_mismatch(response_content, language)
+                changed_evidence = bool(attempt and not language_correction_preserves_evidence(draft, response_content))
+                error = (
+                    "Response model returned no usable content." if missing_content else
+                    "Response model returned a service failure." if service_failure else
+                    f"Response language mismatch: required {language}; attempt {attempt + 1}/2." if mismatch else
+                    "Language correction changed protected facts or citations." if changed_evidence else None
+                )
+                record_model_call(
+                    component="generic_agent", model=self.deployment,
+                    input_messages=messages_for_api, output_text=response_content,
+                    response=completion, latency_seconds=time.perf_counter() - model_started_at,
+                    success=error is None, error=error,
+                )
+                if error is None:
+                    logger.info("Generic response completed in %.2fs.", time.time() - start_time)
+                    return {
+                        "content": guard_response_links(response_content, language),
+                        "sources": resolve_source_links(raw_sources),
+                    }
+                logger.warning(error)
+                if mismatch and not attempt and not missing_content and not service_failure:
+                    draft = response_content
+                    messages_for_api = language_correction_messages(messages_for_api, draft, language)
+                    continue
+                return {"content": language_failure_response(language), "sources": []}
         except APIConnectionError as e:
             logger.error(f"Could not connect to Azure OpenAI API: {e}", exc_info=True)
             record_model_call(
@@ -306,7 +337,7 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": "Error: Unable to connect to the AI service. Please check your network connection.", "sources": []}
+            return {"content": localize_service_error("Error: Unable to connect to the AI service. Please check your network connection.", language), "sources": []}
         except RateLimitError as e:
             logger.error(f"Azure OpenAI API rate limit exceeded: {e}", exc_info=True)
             record_model_call(
@@ -317,7 +348,7 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": "Error: The AI service is currently busy. Please try again shortly.", "sources": []}
+            return {"content": localize_service_error("Error: The AI service is currently busy. Please try again shortly.", language), "sources": []}
         except APIStatusError as e:
             logger.error(f"Azure OpenAI API returned an error status {e.status_code}: {e.response}", exc_info=True)
             record_model_call(
@@ -328,7 +359,7 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": f"Error: An issue occurred with the AI service. Status code: {e.status_code}", "sources": []}
+            return {"content": localize_service_error(f"Error: An issue occurred with the AI service. Status code: {e.status_code}", language), "sources": []}
         except Exception as e:
             logger.error(f"An unexpected error occurred during API call: {e}", exc_info=True)
             record_model_call(
@@ -339,4 +370,4 @@ class GenericAgent(BaseAgent):
                 success=False,
                 error=e,
             )
-            return {"content": "Error: An unexpected error occurred while processing your request.", "sources": []}
+            return {"content": localize_service_error("Error: An unexpected error occurred while processing your request.", language), "sources": []}

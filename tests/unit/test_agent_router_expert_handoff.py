@@ -123,6 +123,7 @@ def import_agent_router_module():
     )
     stub_module(
         "src.services.expert_handoff_email",
+        handoff_response_language=lambda messages, metadata: "en",
         send_expert_handoff_email=EmailRecorder.send,
         prepare_expert_handoff=lambda thread_id, messages, metadata: {
             "enabled": True, "recipient": "advisor@example.com", "cc": None,
@@ -258,6 +259,23 @@ def test_route_message_cancels_expert_handoff_on_rejection():
     assert response["classification"] == "expert_handoff"
     assert "will not send" in response["content"]
     assert metadata["expert_handoff_pending_confirmation"] is False
+    assert EmailRecorder.calls == []
+
+
+def test_pending_rejection_is_handled_before_any_confirmation(monkeypatch):
+    module = import_agent_router_module()
+    pipeline = module.AgentRouter()
+    monkeypatch.setattr(pipeline.router, "is_confirmation", lambda message: True)
+    monkeypatch.setattr(pipeline.router, "is_rejection", lambda message: True)
+    response, metadata = pipeline.route_message(
+        [{"role": "user", "content": "Yes, but do not send."}], "Yes, but do not send.",
+        pending_metadata(), "reject-before-confirm",
+    )
+    assert response["route"] == "expert_handoff"
+    assert metadata["expert_handoff_status"] == "cancelled"
+    assert metadata["expert_handoff_cancelled"] is True
+    assert metadata["expert_handoff_pending_confirmation"] is False
+    assert metadata["expert_handoff_confirmed"] is False
     assert EmailRecorder.calls == []
 
 

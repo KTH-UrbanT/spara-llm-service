@@ -1,6 +1,7 @@
 # src/agents/building_flow_graph.py
 from __future__ import annotations
 import re
+import json
 from typing import Any, Dict, List, Tuple, Optional
 import copy
 import unicodedata
@@ -17,6 +18,7 @@ from src.agents.generic_sql_layer import SQL_Mapper_Layer
 from src.agents.building_response_prompt import (
     build_building_response_prompt,
     ensure_building_identifier_in_response,
+    is_verified_address_explanation_followup,
     merge_identifier_metadata,
     select_preferred_identifier,
 )
@@ -24,13 +26,22 @@ from src.database.vector_client import VectorClient, VectorClientConfig
 from src.agents.openai_agent import OpenAIResponseAgent
 from src.agents.specialized_sql_layer import SpecializedSQLLayer
 from src.database.hammarby_data import query_address
+from src.services.source_link_registry import guard_response_links
 from src.pipeline.safety_analysis import (
+    normalize_address_candidate,
+    STREET_SUFFIX_PATTERN,
+    normalize_brf_name,
+    extract_concrete_brf_name,
+    response_language,
+    FACT_LABELS_SV,
     apply_response_safety_notes,
     assess_building_identity,
     build_clarification_question,
     compute_uncertainty,
     extract_retrieved_facts,
+    requests_existing_document,
 )
+from src.pipeline.evaluation_metadata import with_clarification_progress
 from typing import Annotated
 import operator
 
@@ -142,6 +153,14 @@ ROW_POSTCODE_KEYS = (
 
 PENDING_AMBIGUOUS_ADDRESS_KEY = "pending_ambiguous_address"
 
+BUILDING_FACT_SNAPSHOT_KEYS = (
+    "retrieved_facts", "building_match", "building_information", "aggregated_data", "agent_data",
+    "evidence_scope", "data_freshness", "requested_address", "epc_record_address",
+    "same_building_multiple_addresses", "address_context_note", "address_identity_evidence", "query_traces", "generic_sql_trace", "sql_trace",
+)
+
+ADDRESS_LOOKUP_CONTEXT_KEYS = ("multi_address_resolution", "address_references", "address_candidates", "alternate_addresses", "address_candidate_pool")
+
 ADDRESS_DISAMBIGUATION_REQUEST_RE = re.compile(
     r"(?=.*\b(?:address|building|property|brf|adress|byggnad|fastighet)\b)"
     r"(?=.*\b(?:city|postcode|postal\s+code|municipality|postort|postnummer|kommun|"
@@ -239,27 +258,6 @@ ADDRESS_INTRO_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
-BRF_NAME_RE = re.compile(
-    r"\b(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+"
-    r"([A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 .'\-]*?)"
-    r"(?=\s*(?:[,.;:!?]|$|\bwhat\b|\bwhich\b|\bhow\b|\bwhy\b|\bdo\b|\bdoes\b|\bis\b|\bare\b|\bhave\b|\bhas\b|\bcan\b|\bcould\b|\bshould\b|\bwould\b|\bplease\b|\bvad\b|\bhur\b|\bvilken\b|\bvilket\b|\bmed\b|\bwith\b))",
-    flags=re.IGNORECASE,
-)
-
-INVALID_BRF_NAME_START_RE = re.compile(
-    r"^(?:a|an|the|with|without|in|at|on|from|for|to|of|do|does|did|can|could|"
-    r"should|would|will|is|are|was|were|have|has|had|what|which|how|why|when|"
-    r"where|who|please|tell|give|show|list|count|many|home|owner|homeowner|"
-    r"housing|building|buildings|company|companies|municipality|kommun)\b",
-    flags=re.IGNORECASE,
-)
-
-INVALID_BRF_NAME_PHRASE_RE = re.compile(
-    r"\b(?:do\s+we\s+have|how\s+many|what\s+is\s+brf|home\s*owner|"
-    r"heating\s+bills?|heating\s+costs?|what\s+can\s+we\s+do|stockholmshem)\b",
-    flags=re.IGNORECASE,
-)
-
 STALE_BRF_CLARIFICATION_REASONS = {
     "missing_brf_name",
     "brf_not_found",
@@ -277,7 +275,7 @@ BUILDING_ID_RE = re.compile(
 )
 
 STREET_SUFFIX_RE = (
-    r"gatan|vägen|vagen|gränd|grand|allén|allen|allé|alle|väg|road|street|avenue|lane"
+    STREET_SUFFIX_PATTERN
 )
 
 STREET_ADDRESS_FRAGMENT_RE = re.compile(
@@ -299,39 +297,30 @@ MULTI_ADDRESS_IDENTITY_RE = re.compile(
 
 LOCATION_HINT_STOP_RE = re.compile(
     r"\b(?:what|which|how|why|when|show|tell|give|does|do|is|are|can|could|please|"
-    r"vad|vilken|vilket|hur|varf[öo]r|visa|ber[äa]tta|kan)\b",
+    r"has|have|har|verkar|avser|vad|vilken|vilket|hur|varf[öo]r|visa|ber[äa]tta|kan)\b",
+    flags=re.IGNORECASE,
+)
+
+NON_LOCATION_CORRECTION_RE = re.compile(
+    r"\b(?:budget(?:en)?|kostnad(?:en|er|erna)?|budget|costs?|kronor|sek|kr|"
+    r"temperatur(?:en)?|temperature|kwh|kw|watt|procent|percent|"
+    r"v[äa]rmepump(?:en|ar)?|fj[äa]rrv[äa]rme|v[äa]rmesystem(?:et)?|"
+    r"uppv[äa]rmning(?:en)?|ventilation(?:en|ssystem(?:et)?)?|"
+    r"heat\s+pump|district\s+heating|heating\s+system)\b",
     flags=re.IGNORECASE,
 )
 
 
 def _looks_like_compact_address(text: Optional[str], *, allow_four_digit_number: bool = False) -> bool:
-    if not text:
-        return False
-
-    candidate = re.sub(r"\s+", " ", str(text)).strip(" .,:;")
-    if not candidate or any(mark in candidate for mark in ("?", "!", "\n")):
-        return False
-    if len(candidate) > 90:
-        return False
-
-    word_count = len(re.findall(r"[A-Za-zÅÄÖåäö0-9]+", candidate))
-    if word_count > 7:
-        return False
-
-    house_number = r"\d{1,4}" if allow_four_digit_number else r"\d{1,3}"
-    return bool(
-        re.fullmatch(
-            rf"[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö .'\-]*\s+{house_number}[A-Za-z]?"
-            rf"(?:\s*[-–]\s*{house_number}[A-Za-z]?)?"
-            r"(?:\s*,\s*[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö .'\-]*)?",
-            candidate,
-        )
-    )
+    return normalize_address_candidate(text, allow_four_digit_number=allow_four_digit_number) is not None
 
 
 def _extract_street_address_fragment(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
+    validated = _validated_address_spans(str(text))
+    if validated:
+        return validated[0]["address"]
     match = STREET_ADDRESS_FRAGMENT_RE.search(str(text))
     if not match:
         match = re.search(
@@ -345,6 +334,12 @@ def _extract_street_address_fragment(text: Optional[str]) -> Optional[str]:
     if not match:
         return None
     fragment = match.group(1).strip(" .,:;!?\"'")
+    # A multiword street match can include a preceding building cue. Remove
+    # that cue before validating the street, while preserving its spelling.
+    fragment = re.sub(
+        r"^.*\b(?:address|building|property|byggnad(?:en)?|fastighet(?:en)?)\s+",
+        "", fragment, flags=re.IGNORECASE,
+    )
     if _is_address_recognized(fragment) or _looks_like_compact_address(fragment, allow_four_digit_number=True):
         return fragment
     folded = _ascii_fold(fragment)
@@ -380,6 +375,11 @@ def _strip_location_tail_from_address_candidate(
 ) -> Optional[str]:
     if not text:
         return None
+
+    normalized = normalize_address_candidate(text, allow_four_digit_number=allow_four_digit_number)
+    if normalized:
+        match = re.match(r"^(.+?\s+\d{1,4}[A-Za-z]?(?:\s*[-–]\s*\d{1,4}[A-Za-z]?)?)(?!\w)", normalized)
+        return match.group(1) if match else None
 
     candidate = re.sub(r"\s+", " ", str(text)).strip(" .,:;!?\"'")
     if not candidate:
@@ -470,7 +470,7 @@ def _extract_address_location_hint_from_text(
         r"absolutely|noo?|nej|ja)?\s*[,.:;-]*\s*"
         r"(?:"
         r"(?:i|we)\s+live\s+(?:in|at)|"
-        r"city\s+is|municipality\s+is|postcode\s+is|postal\s+code\s+is|"
+        r"(?:the\s+)?(?:city|municipality|postcode|postal\s+code)\s+is|"
         r"postort(?:en)?\s+[äa]r|kommun(?:en)?\s+[äa]r|postnummer(?:et)?\s+[äa]r|"
         r"jag\s+bor\s+i|vi\s+bor\s+i"
         r")\s+"
@@ -488,13 +488,21 @@ def _extract_address_location_hint_from_text(
 def _extract_address_candidate_from_text(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
+    if _extract_building_id_from_text(text):
+        return None
 
     candidate = str(text).strip()
     if not candidate:
         return None
 
+    normalized = normalize_address_candidate(candidate, allow_four_digit_number=True)
+    if normalized:
+        number_match = re.match(r"^(.+?\s+\d{1,4}[A-Za-z]?(?:\s*[-–]\s*\d{1,4}[A-Za-z]?)?)(?!\w)", normalized)
+        if number_match:
+            return number_match.group(1)
+
     candidate = re.sub(
-        r"^\s*(?:sure|yes|yeah|yep|ok|okay|of course|absolutely|noo?|nej|ja)\s*[,.:;-]*\s*",
+        r"^\s*(?:sure|yes|yeah|yep|ok|okay|of course|absolutely|noo?|nej|ja)\b\s*[,.:;-]*\s*",
         "",
         candidate,
         flags=re.IGNORECASE,
@@ -575,26 +583,41 @@ def _extract_location_only_hint_from_text(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
 
+    # Questions about the cached matches are not municipality corrections.
+    if re.search(
+        r"^\s*(?:what|which|why|how|can|could|please|show|list|give|tell|"
+        r"vad|vilken|vilket|vilka|varför|hur|kan|visa|lista|ge|förklara)\b",
+        str(text), re.IGNORECASE,
+    ):
+        return None
+
     candidate = re.sub(r"\s+", " ", str(text)).strip(" .,:;!?\"'")
     if not candidate:
         return None
 
+    candidate = re.sub(r"^(?:rättelse|correction)\s*[:,\-]\s*", "", candidate, flags=re.IGNORECASE)
+
     candidate = re.sub(
-        r"^\s*(?:oh\s+yes\s+sure|oh\s+yes|sure|yes|yeah|yep|ok|okay|of course|absolutely|noo?|nej|ja)\s*[,.:;-]*\s*",
+        r"^\s*(?:oh\s+yes\s+sure|oh\s+yes|sure|yes|yeah|yep|ok|okay|of course|absolutely|noo?|nej|ja)\b\s*[,.:;-]*\s*",
         "",
         candidate,
         flags=re.IGNORECASE,
     )
     candidate = re.sub(
         r"^(?:i\s+live\s+(?:in|at)|we\s+live\s+(?:in|at)|"
-        r"i\s+live|we\s+live|"
-        r"city\s+is|municipality\s+is|postcode\s+is|postal\s+code\s+is|"
+        r"i\s+live|we\s+live|it(?:'s|s|\s+is)\s+in|jag\s+bor\s+i|"
+        r"(?:jag|vi)\s+(?:menade|menar)(?:\s+(?:staden|kommunen))?(?:\s+i)?|"
+        r"i\s+(?:meant|mean)(?:\s+(?:the\s+)?(?:city|municipality))?(?:\s+in)?|"
+        r"(?:det|den)\s+ligger\s+i|det\s+[äa]r(?:\s+i)?|det\s+g[äa]ller|"
+        r"(?:the\s+)?(?:city|municipality|postcode|postal\s+code)\s+is|"
+        r"stad(?:en)?\s+[äa]r|"
         r"postort(?:en)?\s+[äa]r|kommun(?:en)?\s+[äa]r|postnummer(?:et)?\s+[äa]r|"
         r"i|in)\s+",
         "",
         candidate,
         flags=re.IGNORECASE,
     )
+    candidate = re.sub(r"^(\d{3}\s?\d{2})\s*,\s*", r"\1 ", candidate)
     candidate = _clean_location_hint(candidate)
     if not candidate:
         return None
@@ -611,13 +634,12 @@ def _awaiting_address_location_disambiguation(metadata: Optional[Dict[str, Any]]
     identity_check = metadata.get("building_identity_check") or {}
     return bool(
         clarification.get("needed")
-        and clarification.get("reason") == "ambiguous_address"
+        and (clarification.get("reason") == "ambiguous_address" or str(clarification.get("reason") or "").startswith("multi_address_"))
         and (
             metadata.get("address")
             or metadata.get("address_from_user")
             or metadata.get(PENDING_AMBIGUOUS_ADDRESS_KEY)
         )
-        and not _extract_metadata_location_hint(metadata)
         and identity_check.get("status") in (None, "", "ambiguous")
     )
 
@@ -684,22 +706,58 @@ def _clean_address_candidate_fragment(fragment: Optional[str]) -> Optional[str]:
     return None
 
 
+def _validated_address_spans(raw: str) -> List[Dict[str, Any]]:
+    # Validate the full span before accepting it. This retains multiword street
+    # names rather than reducing them to their final word.
+    word = r"[^\W\d_]+(?:[.:'’\-][^\W\d_]+)*\.?"
+    pattern = re.compile(rf"{word}(?:\s+{word}){{0,14}}\s+\d{{1,4}}[A-Za-z]?(?:\s*[-–]\s*\d{{1,4}}[A-Za-z]?)?(?!\w)")
+    spans = []
+    for match in pattern.finditer(raw):
+        fragment = re.sub(r"^.*?\b(?:and|och|or|eller)\s+", "", match.group(), flags=re.IGNORECASE)
+        fragment = re.sub(r"^.*?\b(?:addresses?|adresser)\s*[:\-]?\s+", "", fragment, flags=re.IGNORECASE)
+        address = normalize_address_candidate(fragment, allow_four_digit_number=True)
+        if not address:
+            suffix = STREET_ADDRESS_FRAGMENT_RE.search(fragment)
+            address = normalize_address_candidate(suffix.group(1), allow_four_digit_number=True) if suffix else None
+        if address:
+            start = raw.lower().rfind(address.lower(), match.start(), match.end())
+            spans.append({"address": address, "start": start if start >= 0 else match.start(), "end": match.end()})
+    return spans
+
+
+def _extract_address_references_from_text(text: Optional[str]) -> List[Dict[str, Any]]:
+    raw = str(text or "")
+    spans = _validated_address_spans(raw)
+    refs = []
+    for index, span in enumerate(spans):
+        limit = spans[index + 1]["start"] if index + 1 < len(spans) else len(raw)
+        local_text = raw[span["start"]:limit]
+        local_text = re.split(r"\b(?:and|och|or|eller)\b|[;\n]", local_text, maxsplit=1, flags=re.IGNORECASE)[0]
+        hint = _extract_address_location_hint_from_text(local_text, span["address"])
+        refs.append({"address": span["address"], "location_hint": hint})
+    # A single trailing location in a coordinated list applies to all entries.
+    # Explicitly different locations always remain attached to their addresses.
+    hints = {_normalize_location(ref["location_hint"]) for ref in refs if ref["location_hint"]}
+    coordinated = len(spans) > 1 and all(
+        not re.search(r"[.!?;\n]", raw[left["end"]:right["start"]])
+        and re.search(r"(?:,|/|&|\b(?:and|och|or|eller)\b)", raw[left["end"]:right["start"]], re.IGNORECASE)
+        for left, right in zip(spans, spans[1:])
+    )
+    if coordinated and len(hints) == 1 and refs and refs[-1]["location_hint"]:
+        for ref in refs:
+            ref["location_hint"] = ref["location_hint"] or refs[-1]["location_hint"]
+    seen = set()
+    unique_refs = []
+    for ref in refs:
+        key = (_normalize_address(ref["address"]), _normalize_location(ref["location_hint"]))
+        if key not in seen:
+            unique_refs.append(ref)
+            seen.add(key)
+    return unique_refs
+
+
 def _extract_address_candidates_from_text(text: Optional[str]) -> List[str]:
-    if not text:
-        return []
-
-    raw = str(text)
-    candidates = [match.group(1) for match in STREET_ADDRESS_FRAGMENT_RE.finditer(raw)]
-    if len(_dedupe_address_candidates(candidates)) >= 2:
-        return _dedupe_address_candidates(candidates)
-
-    fragments = MULTI_ADDRESS_SPLIT_RE.split(raw)
-    for fragment in fragments:
-        cleaned = _clean_address_candidate_fragment(fragment)
-        if cleaned:
-            candidates.append(cleaned)
-
-    return _dedupe_address_candidates(candidates)
+    return [ref["address"] for ref in _extract_address_references_from_text(text)]
 
 
 def _segment_is_address_only(segment: str) -> bool:
@@ -747,36 +805,17 @@ def _looks_like_multi_address_identity_question(text: Optional[str], candidates:
             or "adress" in lowered
             or "property" in lowered
             or "fastighet" in lowered
+            or bool(re.search(r"\b(?:same\s+(?:building|house)|samma\s+(?:hus|byggnad|fastighet))\b", lowered))
         )
     )
 
 
 def _clean_brf_name(value: Optional[str]) -> Optional[str]:
-    if not value:
-        return None
-    cleaned = re.sub(r"\s+", " ", str(value)).strip(" .,:;!?\"'")
-    cleaned = re.sub(
-        r"^(?:brf|bostadsr[äa]ttsf[öo]reningen|bostadsrattsforeningen)\s+",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    ).strip(" .,:;!?\"'")
-    if re.fullmatch(r"(?:in|at|on|from|i|på)\s+[A-Za-zÅÄÖåäö .'\-]+", cleaned, flags=re.IGNORECASE):
-        return None
-    if INVALID_BRF_NAME_START_RE.search(cleaned):
-        return None
-    if INVALID_BRF_NAME_PHRASE_RE.search(cleaned):
-        return None
-    return cleaned or None
+    return normalize_brf_name(value)
 
 
 def _extract_brf_name_from_text(text: Optional[str]) -> Optional[str]:
-    if not text:
-        return None
-    match = BRF_NAME_RE.search(str(text))
-    if not match:
-        return None
-    return _clean_brf_name(match.group(1))
+    return extract_concrete_brf_name(text)
 
 
 def _extract_recent_brf_name_from_messages(messages: Optional[List[Dict[str, Any]]]) -> Optional[str]:
@@ -874,9 +913,9 @@ def _summarize_brf_addresses(addresses: List[str], limit: int = 6) -> str:
     return summary
 
 
-def _build_brf_selection_question(brf_name: str, options: List[Dict[str, Any]]) -> str:
+def _build_brf_selection_question(brf_name: str, options: List[Dict[str, Any]], language: str = "en") -> str:
     lines = [
-        f"I found more than one building for BRF {brf_name}. Which building should I use?",
+        f"Jag hittade flera byggnader för BRF {brf_name}. Vilken byggnad gäller frågan?" if language == "sv" else f"I found more than one building for BRF {brf_name}. Which building should I use?",
         "",
     ]
     for option in options or []:
@@ -885,7 +924,7 @@ def _build_brf_selection_question(brf_name: str, options: List[Dict[str, Any]]) 
     lines.extend(
         [
             "",
-            "Reply with the number, the building ID, or one of the listed addresses.",
+            "Svara med numret, byggnadsid eller en av adresserna i listan." if language == "sv" else "Reply with the number, the building ID, or one of the listed addresses.",
         ]
     )
     return "\n".join(lines)
@@ -1006,6 +1045,7 @@ def _iter_metadata_address_candidates(metadata: Dict[str, Any]) -> List[Any]:
     for key in (
         "address",
         "address_from_user",
+        "requested_address",
         PENDING_AMBIGUOUS_ADDRESS_KEY,
         "matched_address",
         "input_address",
@@ -1122,6 +1162,8 @@ EXPLICIT_GENERAL_SCOPE_PATTERNS = (
     r"\bmore broadly\b",
     r"\bnot building[-\s]?specific\b",
     r"\bgeneral tips?\b",
+    r"\b(?:generellt|allm[äa]nt|allm[äa]nna\s+(?:r[åa]d|tips))\b",
+    r"\binte\s+byggnadsspecifikt\b",
 )
 
 BUILDING_CONTEXT_KEYS = (
@@ -1139,6 +1181,48 @@ BUILDING_CONTEXT_KEYS = (
 )
 
 PENDING_BUILDING_ADVICE_KEY = "pending_building_advice_request"
+PENDING_BUILDING_REQUEST_KEY = "pending_building_request"
+
+
+def _requires_full_question_response(question: str, ctx: Dict[str, Any]) -> bool:
+    if requests_existing_document(question):
+        return True
+    parts = ctx.get("request_parts") or []
+    if len(parts) > 1 or any(part.get("kind") != "fact" for part in parts if isinstance(part, dict)):
+        return True
+    if any(str(intent).lower() == "vector database" for intent in _coerce_intent_list(ctx)):
+        return True
+    # Protect older/parser-fallback outputs that do not provide request_parts.
+    return bool(re.search(
+        r"\b(?:good\s+or\s+bad|better\s+or\s+worse|priorit\w*|mean\w*|"
+        r"explain\w*|interpret\w*|compar\w*|recommend\w*|why|should|"
+        r"bra\s+eller\s+d[åa]lig\w*|b[äa]ttre\s+eller\s+s[äa]mre|"
+        r"bety\w*|inneb[äa]r\w*|f[öo]rklar\w*|bed[öo]m\w*|j[äa]mf[öo]r\w*|"
+        r"rekommend\w*|varf[öo]r|b[öo]r)\b",
+        str(question or ""), re.IGNORECASE,
+    )) or len(_requested_fact_specs(question)) > 1
+
+
+def _remember_pending_building_request(state: GraphState, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = dict(metadata)
+    ctx = state.get("context") or {}
+    question = ctx.get("answer_focus") or state.get("last_message") or ""
+    metadata[PENDING_BUILDING_REQUEST_KEY] = {
+        "question": question,
+        "context": copy.deepcopy(ctx),
+    }
+    metadata["request_parts"] = copy.deepcopy(ctx.get("request_parts") or [])
+    return metadata
+
+
+def _restore_request_focus(ctx: Dict[str, Any], saved: Dict[str, Any], question: str) -> None:
+    """Restore retrieval and response focus without replacing the supplied identity."""
+    for key in ("parsed_intent", "intents", "intent_list", "request_parts", "effective_query", "answer_focus", "advice_type"):
+        if key in saved:
+            ctx[key] = copy.deepcopy(saved[key])
+    if question:
+        ctx["answer_focus"] = question
+        ctx.setdefault("effective_query", question)
 
 ADVICE_QUERY_FACT_LABELS = {
     "energy_class": "energy class",
@@ -1176,12 +1260,15 @@ def _looks_like_identity_followup(message: Optional[str], ctx: Dict[str, Any]) -
     lowered = text.lower()
     if _looks_like_building_ecm_advice(text):
         return False
-    if re.search(r"\b(?:what|why|how|which|when|where|can|could|should|would|recommend|reduce|lower|improve)\b", lowered):
+    if _requested_fact_specs(text):
+        return False
+    if re.search(r"\b(?:what|why|how|which|when|where|can|could|should|would|recommend|reduce|lower|improve|vad|varf[öo]r|hur|vilken|vilket|vilka|n[äa]r|kan|b[öo]r|f[öo]rklara|j[äa]mf[öo]r)\b", lowered):
         return False
 
     return bool(
         _extract_building_id_from_text(text)
         or _extract_brf_name_from_text(text)
+        or _extract_address_candidate_from_text(text)
         or ctx.get("address")
     )
 
@@ -1196,6 +1283,7 @@ def _pending_advice_context(question: str, ctx: Dict[str, Any]) -> Dict[str, Any
             "effective_query": ctx.get("effective_query"),
             "answer_focus": question,
             "advice_type": "ecm",
+            "request_parts": copy.deepcopy(ctx.get("request_parts") or []),
         },
     }
 
@@ -1440,7 +1528,28 @@ def _format_fact_value(value: Any, unit: Optional[str] = None) -> str:
     return f"{text} {unit}" if unit and text else text
 
 
-def _format_fact_value_for_user(key: str, value: Any, unit: Optional[str] = None) -> str:
+def _format_fact_value_for_user(key: str, value: Any, unit: Optional[str] = None, language: str = "en") -> str:
+    if key == "heating_system":
+        code = re.sub(r"[\s_-]", "", _ascii_fold(str(value)) or "").casefold()
+        heating_names = {
+            "eldirekt": ("direct electric heating", "direktverkande el"),
+            "direktel": ("direct electric heating", "direktverkande el"),
+            "fjarrvarme": ("district heating", "fjärrvärme"),
+            "bergvarme": ("ground source heat pump", "bergvärmepump"),
+        }
+        if code in heating_names:
+            value = heating_names[code][1 if language == "sv" else 0]
+    if language == "sv":
+        unit = {"kWh/m2-year": "kWh/(m²·år)", "kWh/year": "kWh/år"}.get(unit, unit)
+        translations = {"district heating": "fjärrvärme", "ground source heat pump": "bergvärmepump",
+                        "exhaust air heat pump": "frånluftsvärmepump", "air-to-water heat pump": "luft-vattenvärmepump",
+                        "air-to-air heat pump": "luft-luftvärmepump", "direct electric heating": "direktverkande el",
+                        "oil heating": "oljeuppvärmning", "wood heating": "vedeldning",
+                        "F with heat recovery": "frånluft med värmeåtervinning", "FMED": "frånluft med värmeåtervinning"}
+        if isinstance(value, bool):
+            return "Ja" if value else "Nej"
+        value = translations.get(str(value), value)
+        return _format_fact_value(value, unit)
     if key == "ventilation_type":
         normalized = str(value or "").strip().upper()
         if normalized == "FMED":
@@ -1454,10 +1563,11 @@ FACT_CONCEPTS: Tuple[Dict[str, Any], ...] = (
     {
         "key": "energy_class",
         "label": "energy class",
-        "patterns": (r"\benergy\s+class\b", r"\benergiklass\b"),
+        "patterns": (r"\benergy\s+class(?:es)?\b", r"\benergiklass(?:en|er|erna)?\b"),
         "explanation": (
-            "Energy classes usually run from A to G, where A is best and G is weakest; "
-            "class {value} means there is likely room to improve the building's energy performance."
+            "This is the declared energy class in the retrieved certificate. "
+            "Class C corresponds to the new-building reference requirement used in the classification; "
+            "a class alone does not establish the building's current condition or which investment to choose."
         ),
     },
     {
@@ -1466,8 +1576,8 @@ FACT_CONCEPTS: Tuple[Dict[str, Any], ...] = (
         "patterns": (r"\benergy\s+performance\b", r"\benergiprestanda\b"),
         "unit": "kWh/m2-year",
         "explanation": (
-            "Energy performance is the building's annual energy use per square meter of heated area. "
-            "Lower numbers generally mean a more energy-efficient building."
+            "Energy performance is the value recorded in the energy declaration. "
+            "Check that declaration's definition before comparing it with specific energy use or a primary energy number."
         ),
     },
     {
@@ -1525,7 +1635,7 @@ FACT_CONCEPTS: Tuple[Dict[str, Any], ...] = (
     {
         "key": "construction_year",
         "label": "construction year",
-        "patterns": (r"\b(?:construction|built|build)\s+year\b", r"\bwhen\s+was\b.*\b(?:built|constructed)\b"),
+        "patterns": (r"\b(?:construction|built|build)\s+year\b", r"\bwhen\s+was\b.*\b(?:built|constructed)\b", r"\bbygg[åa]r\b", r"\bn[äa]r\b.*\bbygg(?:des|d)\b"),
         "explanation": (
             "The construction year gives useful context about likely original insulation, windows, and ventilation design, "
             "but renovations can change performance a lot."
@@ -1534,7 +1644,7 @@ FACT_CONCEPTS: Tuple[Dict[str, Any], ...] = (
     {
         "key": "energy_declaration_year",
         "label": "energy declaration year",
-        "patterns": (r"\benergy\s+declaration\s+year\b", r"\bdeclaration\s+year\b", r"\bepc\s+year\b"),
+        "patterns": (r"\benergy\s+declaration\s+year\b", r"\bdeclaration\s+year\b", r"\bepc\s+year\b", r"\benergideklaration(?:ens)?\s+[åa]r\b"),
         "explanation": (
             "This is the year the energy declaration data was approved. "
             "If the building has been renovated since then, the current performance may be different."
@@ -1567,7 +1677,7 @@ FACT_CONCEPTS: Tuple[Dict[str, Any], ...] = (
     {
         "key": "epc_egenatemp",
         "label": "Atemp/heated area",
-        "patterns": (r"\barea\b", r"\batemp\b", r"\bheated\s+area\b"),
+        "patterns": (r"\barea\b", r"\batemp\b", r"\bheated\s+area\b", r"\buppv[äa]rmd\s+(?:area|yta)\b"),
         "unit": "m2",
         "explanation": "Atemp is the heated floor area used in Swedish energy declarations.",
     },
@@ -1706,6 +1816,7 @@ def _targeted_building_fact_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: str = "en",
 ) -> Optional[str]:
     specs = _requested_fact_specs(user_input)
     if not specs:
@@ -1713,32 +1824,284 @@ def _targeted_building_fact_response(
 
     lines: List[str] = []
     if building_id and building_id != "building_id_not_available":
-        lines.append(f"Building ID: {building_id}")
+        lines.append(f"{'Byggnadsid' if language == 'sv' else 'Building ID'}: {building_id}")
 
     fact_lines: List[str] = []
     explanations: List[str] = []
+    missing_lines: List[str] = []
     for key, label, unit, preface in specs:
+        if language == "sv":
+            label = FACT_LABELS_SV.get(key, label)
+            preface = None
         value = facts.get(key)
         if value in (None, "", [], {}):
             value = _first_fact_value(facts, (key,))
+        if key == "energy_class":
+            declared = _first_fact_value(facts, ("declared_energy_class", "epc_egienergiklass", "declaredEnergyClass"))
+            calculated = _first_fact_value(facts, ("calculated_energy_class", "epc_egienergiklass2020_calc", "epc_egienergiklass2016_calc", "epc_egienergiklass_calc"))
+            if _fact_present(declared):
+                value = declared
+            elif _fact_present(calculated):
+                # A generic alias derived from a calculation is not a declaration.
+                value = None
+            label = "deklarerad energiklass" if language == "sv" else "declared energy class"
+            explicit_basis = re.search(r"\b(?:calculated|calculation|basis|rules|beräkn\w*|regler)\b", user_input, re.IGNORECASE)
+            years = [year for year in ("2020", "2016") if re.search(rf"\b{year}\b", user_input)] if explicit_basis else []
+            if _fact_present(calculated) or years:
+                if years:
+                    entries = [(year, facts.get(f"epc_egienergiklass{year}_calc")) for year in years]
+                else:
+                    basis = next((year for year in ("2020", "2016") if _fact_present(facts.get(f"epc_egienergiklass{year}_calc"))), None)
+                    entries = [(basis, facts.get(f"epc_egienergiklass{basis}_calc") if basis else calculated)]
+                for basis, calculation in entries:
+                    basis_text = (f" (beräkningsgrund {basis})" if language == "sv" else f" ({basis} calculation basis)") if basis else ""
+                    if not _fact_present(calculation):
+                        missing_lines.append(f"Beräknad energiklass{basis_text} saknas i underlaget." if language == "sv"
+                                             else f"The record does not provide calculated energy class{basis_text}.")
+                        continue
+                    fact_lines.append((f"Beräknad energiklass{basis_text}: {calculation}. Den är separat från den deklarerade klassen."
+                                       if language == "sv" else f"Calculated energy class{basis_text}: {calculation}. This is separate from the declared class."))
         if value in (None, "", [], {}):
+            missing_lines.append(
+                f"Uppgift om {label} saknas i underlaget. Kontrollera energideklarationen eller föreningens tekniska dokumentation."
+                if language == "sv" else f"The retrieved record does not provide {label}. Check the energy declaration or the association's technical records for this information."
+            )
             continue
         if preface and preface not in explanations:
             explanations.append(preface)
-        fact_lines.append(f"Your building's {label} is {_format_fact_value_for_user(key, value, unit)}.")
-        explanation = _plain_language_fact_explanation(key, value)
+        formatted_value = _format_fact_value_for_user(key, value, unit, language)
+        possessive_label = re.sub(r"^deklarerad\b", "deklarerade", label)
+        fact_lines.append(f"Byggnadens {possessive_label}: {formatted_value}." if language == "sv" else f"Your building's {label} is {formatted_value}.")
+        explanation = ({
+            "energy_class": "Detta är energiklassen i den hämtade energideklarationen. Klass C motsvarar referenskravet för nya byggnader i klassningen. Klassen ensam fastställer inte byggnadens nuvarande skick eller vilken investering som bör väljas.",
+            "energy_performance": "Värdet är energiprestandan i den registrerade energideklarationen. Kontrollera deklarationens definition innan det jämförs med specifik energianvändning eller primärenergital.",
+            "specific_energy_use": "Specifik energianvändning beskriver årlig energianvändning per kvadratmeter enligt den angivna definitionen och perioden.",
+            "primary_energy_number": "Primärenergitalet är ett viktat energimått. Det ska inte förväxlas med oviktad energianvändning.",
+            "heating_system": "Uppvärmningssystemet är hur byggnaden får värme till uppvärmning och tappvarmvatten.",
+            "ventilation_type": "Ventilationen påverkar luftkvalitet, komfort, värmeförluster och fläktarnas elanvändning.",
+            "epc_egenatemp": "Atemp är den uppvärmda golvarea som används i energideklarationen.",
+        }.get(key) if language == "sv" else _plain_language_fact_explanation(key, value))
+        if language == "sv" and key == "ventilation_type":
+            ventilation_meaning = {
+                "F": "F betyder mekanisk frånluftsventilation: fläktar för ut inomhusluft.",
+                "FT": "FT betyder mekanisk till- och frånluftsventilation utan värmeåtervinning.",
+                "FTX": "FTX betyder mekanisk till- och frånluftsventilation med värmeåtervinning.",
+                "FMED": "FMED betyder mekanisk frånluftsventilation med värmeåtervinning.",
+                "F WITH HEAT RECOVERY": "Systemet har mekanisk frånluft med värmeåtervinning.",
+                "S": "S betyder självdragsventilation som främst drivs av tryck- och temperaturskillnader.",
+            }.get(str(value).strip().upper())
+            if ventilation_meaning:
+                explanation = f"{ventilation_meaning} {explanation}"
         if explanation and explanation not in explanations:
             explanations.append(explanation)
 
-    if not fact_lines:
+    if not fact_lines and not missing_lines:
         return None
 
     if lines:
         lines.append("")
-    lines.extend(fact_lines[:3])
+    lines.extend(fact_lines)
+    lines.extend(missing_lines)
+    record_date = _first_fact_value(facts, ("epc_godkand", "energy_declaration_year", "epc_year"))
+    if _fact_present(record_date):
+        lines.append(f"Underlag: energideklaration godkänd {record_date}." if language == "sv"
+                     else f"Source: energy declaration approved {record_date}.")
     if explanations:
-        lines.extend(explanations[:3])
+        lines.extend(explanations)
     return "\n".join(lines)
+
+
+def _request_parts_for_response(question: str, ctx: Dict[str, Any], facts: Dict[str, Any]) -> List[Dict[str, Any]]:
+    parts = [copy.deepcopy(part) for part in (ctx.get("request_parts") or [])
+             if isinstance(part, dict) and isinstance(part.get("question"), str) and part["question"].strip()]
+    # The original question remains authoritative if the intent model omits a
+    # clause. Never reconcile against an address/ID-only clarification reply.
+    clauses = [clause.strip(" ,;.?") for clause in re.split(
+        r"[?;]+\s*|\b(?:and\s+also|och\s+även)\b|,?\s+\b(?:and|och)\s+(?=(?:what|which|how|why|is|should|vad|vilk\w*|hur|varför|är|bör)\b)",
+        question or "", flags=re.IGNORECASE,
+    ) if clause.strip(" ,;.?")]
+    if len(clauses) > 1:
+        full_text = re.sub(r"\W+", " ", question.casefold()).strip()
+        parts = [part for part in parts if re.sub(r"\W+", " ", part["question"].casefold()).strip() != full_text]
+        for clause in clauses:
+            folded = re.sub(r"\W+", " ", clause.casefold()).strip()
+            if any(folded == re.sub(r"\W+", " ", part["question"].casefold()).strip() for part in parts):
+                continue
+            kind = "interpretation" if re.search(r"\b(?:mean|good|bad|betyder|bra|dålig)\b", clause, re.IGNORECASE) else (
+                "advice" if re.search(r"\b(?:priorit\w*|recommend\w*|should|bör|rekommend\w*)\b", clause, re.IGNORECASE) else "fact")
+            parts.append({"question": clause + "?", "kind": kind,
+                          "sources": ["SQL database"] if kind == "fact" else ["vector database"]})
+    if not parts:
+        parts = [{
+            "question": question,
+            "kind": "other" if any(str(i).lower() == "vector database" for i in _coerce_intent_list(ctx)) or _looks_like_building_ecm_advice(question) else "fact",
+            "sources": _coerce_intent_list(ctx),
+        }]
+    for part in parts:
+        part["missing_fields"] = [
+            label for key, label, *_ in _requested_fact_specs(part["question"])
+            if not _fact_present(_first_fact_value(facts, (key,)))
+        ]
+    return parts
+
+
+def _missing_document_response(language: str, question: str = "") -> str:
+    ovk = bool(re.search(r"\b(?:OVK|inspection\s+report|ventilation\s+inspection)\b", question, re.IGNORECASE))
+    epc = bool(re.search(r"\b(?:energy\s+declaration|energideklaration)\b", question, re.IGNORECASE))
+    document_sv = "er OVK-rapport" if ovk and not epc else "er energideklaration" if epc and not ovk else "det begärda dokumentet"
+    document_en = "your ventilation inspection report" if ovk and not epc else "your energy declaration" if epc and not ovk else "the requested document"
+    return (f"Jag har inte originaltexten från {document_sv} i underlaget, så jag kan inte citera, sammanfatta dess slutsatser eller bekräfta att ventilationen är godkänd. Databasfält och allmän vägledning ersätter inte rapporten. Klistra in det relevanta avsnittet så kan jag hjälpa till att tolka det."
+            if language == "sv" else
+            f"The evidence does not include the original text of {document_en}, so I cannot quote it, summarize its findings, or confirm that ventilation was approved. Database fields and general guidance do not replace that report. Paste the relevant passage so I can help interpret it.")
+
+
+def _provided_document_text(messages: List[Dict[str, Any]], question: str = "", building_id: str = "") -> List[str]:
+    """Only explicit user-supplied text can supplement the guidance-only index."""
+    passages = []
+    selected_id = str(building_id or "").strip()
+    current_id = None
+    wanted_ovk = bool(re.search(r"\b(?:OVK|ventilation\s+inspection|inspection\s+report)\b", question, re.IGNORECASE))
+    wanted_epc = bool(re.search(r"\b(?:energy\s+declaration|energideklaration)\b", question, re.IGNORECASE))
+    wanted_audit = bool(re.search(r"\baudit\s+report\b", question, re.IGNORECASE))
+    last_user_index = max((index for index, item in enumerate(messages or []) if isinstance(item, dict) and item.get("role") == "user"), default=-1)
+    for index, message in enumerate(messages or []):
+        if not isinstance(message, dict):
+            continue
+        content = str(message.get("content") or "")
+        mentioned_id = _extract_building_id_from_text(content)
+        if mentioned_id:
+            current_id = mentioned_id
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        has_ovk = bool(re.search(r"\b(?:OVK|inspection\s+report)\b", content, re.IGNORECASE))
+        has_epc = bool(re.search(r"\b(?:energy\s+declaration|energideklaration)\b", content, re.IGNORECASE))
+        has_audit = bool(re.search(r"\baudit\s+report\b", content, re.IGNORECASE))
+        if (wanted_ovk and not has_ovk) or (wanted_epc and not has_epc) or (wanted_audit and not has_audit):
+            continue
+        if selected_id and current_id and current_id.casefold() != selected_id.casefold():
+            continue
+        if selected_id and index != last_user_index and current_id is None:
+            # An unscoped old passage cannot establish the selected building's document.
+            continue
+        later_identity = False
+        for item in (messages or [])[index + 1:]:
+            if not isinstance(item, dict) or item.get("role") != "user":
+                continue
+            later_content = str(item.get("content") or "")
+            later_id = _extract_building_id_from_text(later_content)
+            if later_id and current_id and later_id.casefold() == current_id.casefold():
+                continue
+            if later_id or _extract_street_address_fragment(later_content):
+                later_identity = True
+                break
+        if index != last_user_index and later_identity:
+            continue
+        if not re.search(r"\b(?:OVK|energy\s+declaration|inspection\s+report|audit\s+report|energideklaration|OVK-rapport)\b", content, re.IGNORECASE):
+            continue
+        passages.extend(block.strip() for block in re.findall(r"```[^\n]*\n(.*?)```", content, flags=re.DOTALL) if len(block.strip()) >= 40)
+        labelled = re.search(r"(?:energy\s+declaration|inspection\s+report|audit\s+report|energideklaration|OVK-rapport)(?:\s+(?:text|excerpt|utdrag))?\s*:\s*\n(.+)", content, flags=re.IGNORECASE | re.DOTALL)
+        if labelled and len(labelled.group(1).strip()) >= 40 and not labelled.group(1).lstrip().startswith("```"):
+            passages.append(labelled.group(1).strip())
+    return list(dict.fromkeys(passages))
+
+
+def _render_multipart_response(answer: str, parts: List[Dict[str, Any]], facts: Dict[str, Any], language: str) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
+    """Check structural coverage without imposing advisory headings or judging prose."""
+    content = re.sub(r"^```(?:json)?\s*|\s*```$", "", answer.strip(), flags=re.IGNORECASE)
+    try:
+        payload = json.loads(content)
+    except (ValueError, TypeError):
+        payload = None
+    indexed = {}
+    invalid = False
+    if isinstance(payload, dict) and isinstance(payload.get("parts"), list):
+        for item in payload["parts"]:
+            if not isinstance(item, dict):
+                invalid = True
+                continue
+            number = item.get("part_index")
+            if (isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= len(parts)
+                    or number in indexed or not isinstance(item.get("answer"), str) or not item["answer"].strip()):
+                invalid = True
+                continue
+            indexed[number] = item["answer"].strip()
+    else:
+        invalid = True
+    looks_like_internal_json = answer.lstrip().startswith(("{", "[", "```"))
+    if payload is None and not looks_like_internal_json and not any(part.get("document_text_status") == "original_text_unavailable" for part in parts):
+        note = ("Jag kunde inte kontrollera att varje del av frågan täcks; svaret kan vara ofullständigt."
+                if language == "sv" else "I could not check that every part of your question is covered; the response may be incomplete.")
+        for part in parts:
+            note += (f"\n- Täckningen kunde inte bekräftas för: {part['question']}" if language == "sv"
+                     else f"\n- Coverage could not be confirmed for: {part['question']}")
+        return answer.strip() + "\n\n" + note, [], {"status": "unverified", "checked_parts": len(parts), "mapped_parts": 0, "basis": "missing_part_mapping", "unverified_parts": [part["question"] for part in parts]}
+    lines, unanswered = [], []
+    if invalid and not indexed:
+        # Preserve useful legacy prose, but do not silently certify full coverage.
+        if payload is None and not looks_like_internal_json and not any(part.get("document_text_status") == "original_text_unavailable" for part in parts):
+            lines.append(answer.strip())
+        lines.append("Jag kunde inte verifiera ett separat svar på varje del. Följande delar behöver kompletteras:"
+                     if language == "sv" else "I could not verify a separate answer to every part. These parts need completion:")
+    for number, part in enumerate(parts, 1):
+        if part.get("document_text_status") == "original_text_unavailable":
+            lines.append(part.get("source_limitation") or _missing_document_response(language, part["question"]))
+            unanswered.append({"question": part["question"], "kind": part.get("kind") or "document"})
+            continue
+        if number in indexed:
+            lines.append(indexed[number])
+            continue
+        lines.append(f"{number}. {part['question']}")
+        if requests_existing_document(part["question"]):
+            lines.append(_missing_document_response(language, part["question"]))
+        elif part.get("kind") == "fact":
+            fact_answer = _targeted_building_fact_response(user_input=part["question"], current_address="", building_id="", facts=facts, language=language)
+            if fact_answer:
+                lines.append(fact_answer)
+                continue
+            lines.append("Underlaget räcker inte för att besvara den här uppgiften. Ange vilken uppgift eller vilket dokument som behövs."
+                         if language == "sv" else "The available evidence is insufficient to answer this fact question. Specify the record or document needed.")
+        else:
+            lines.append("Den här delen är ännu obesvarad. Försök igen för en fullständig bedömning."
+                         if language == "sv" else "This part remains unanswered. Please retry for the full assessment.")
+        unanswered.append({"question": part["question"], "kind": part.get("kind") or "other"})
+    coverage = {"status": "complete" if not invalid and not unanswered else "partial",
+                "checked_parts": len(parts), "mapped_parts": len(indexed), "basis": "explicit_part_mapping"}
+    return "\n\n".join(lines), unanswered, coverage
+
+
+def _partial_building_response(
+    *, question: str, parts: List[Dict[str, Any]], building_id: str, facts: Dict[str, Any],
+    language: Optional[str] = None,
+) -> Tuple[str, List[Dict[str, str]]]:
+    """A generation failure may supply known values, never imply all parts were answered."""
+    swedish = (language or response_language(user_message=question)) == "sv"
+    lines = ["Jag kunde inte färdigställa hela svaret. Här är vad som finns i underlaget:"
+             if swedish else "I couldn't complete the full answer. Here is what the available records provide:"]
+    if building_id and building_id != "building_id_not_available":
+        lines.append(f"{'Byggnadsid' if swedish else 'Building ID'}: {building_id}")
+    unanswered = []
+    for number, part in enumerate(parts, 1):
+        lines.extend(["", f"{number}. {part['question']}"])
+        if requests_existing_document(part["question"]):
+            if part.get("document_text_status") == "user_supplied_unverified":
+                lines.append("Du har lämnat ett dokumentutdrag, men jag kunde inte färdigställa tolkningen. Försök igen."
+                             if swedish else "You provided a document passage, but I could not complete its interpretation. Please retry.")
+            else:
+                lines.append(_missing_document_response("sv" if swedish else "en", part["question"]))
+            unanswered.append({"question": part["question"], "kind": part.get("kind") or "other"})
+            continue
+        specs = _requested_fact_specs(part["question"])
+        fact_answer = _targeted_building_fact_response(user_input=part["question"], current_address="", building_id="", facts=facts, language="sv" if swedish else "en")
+        if fact_answer:
+            lines.append(fact_answer)
+        missing = any(not _fact_present(_first_fact_value(facts, (key,))) for key, *_ in specs)
+        if part.get("kind") != "fact" or not specs:
+            missing = True
+            lines.append("Den här delen är ännu obesvarad. Försök igen för att få en fullständig förklaring eller bedömning."
+                         if swedish else "This part remains unanswered. Please retry for the full explanation or assessment.")
+        if missing:
+            unanswered.append({"question": part["question"], "kind": part.get("kind") or "other"})
+    return "\n".join(lines), unanswered
 
 
 def _deterministic_building_fact_response(
@@ -1747,12 +2110,14 @@ def _deterministic_building_fact_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: str = "en",
 ) -> str:
     targeted = _targeted_building_fact_response(
         user_input=user_input,
         current_address=current_address,
         building_id=building_id,
         facts=facts,
+        language=language,
     )
     if targeted:
         return targeted
@@ -1761,7 +2126,7 @@ def _deterministic_building_fact_response(
     if current_address:
         lines.append(str(current_address))
     if building_id and building_id != "building_id_not_available":
-        lines.append(f"Building ID: {building_id}")
+        lines.append(f"{'Byggnadsid' if language == 'sv' else 'Building ID'}: {building_id}")
 
     fact_lines: List[str] = []
     for key, label, unit in (
@@ -1782,9 +2147,16 @@ def _deterministic_building_fact_response(
             "kWh/year",
         ),
     ):
+        if key == "energy_class":
+            class_answer = _targeted_building_fact_response(user_input="energiklass" if language == "sv" else "energy class", current_address="", building_id="", facts=facts, language=language)
+            if any(_fact_present(facts.get(name)) for name in ("energy_class", "declared_energy_class", "calculated_energy_class", "epc_egienergiklass", "epc_egienergiklass2020_calc", "epc_egienergiklass2016_calc")):
+                fact_lines.append(class_answer)
+            continue
         value = facts.get(key)
         if value not in (None, "", [], {}):
-            fact_lines.append(f"{label}: {_format_fact_value(value, unit)}")
+            if language == "sv":
+                label = FACT_LABELS_SV.get(key, label)
+            fact_lines.append(f"{label}: {_format_fact_value_for_user(key, value, unit, language)}")
 
     if fact_lines:
         if lines:
@@ -1795,8 +2167,8 @@ def _deterministic_building_fact_response(
     if lines:
         lines.append("")
     lines.append(
-        "I found the building record, but the response model is temporarily busy. "
-        "Please retry shortly if you need a fuller explanation."
+        "Jag hittade byggnadsuppgifterna men kunde inte färdigställa svaret. Försök igen om en stund."
+        if language == "sv" else "I found the building record, but the response model is temporarily busy. Please retry shortly if you need a fuller explanation."
     )
     return "\n".join(lines)
 
@@ -1845,40 +2217,57 @@ def _normalize_frontend_building_metadata(
         or _first_fact_value(facts, ("address", "official_address", "epc_idadr"))
         or requested_address
     )
-    matched_building_id = (
-        (identity_check or {}).get("matched_building_id")
-        or normalized.get("byggnadsid")
-        or normalized.get("building_id")
-        or usable_building_id
+    verified = bool(
+        usable_building_id
+        and (identity_check or {}).get("status") == "passed"
+        and str((identity_check or {}).get("matched_building_id") or "").strip().casefold() == usable_building_id.casefold()
     )
+    fact_ids = [str(facts[key]).strip() for key in ("byggnadsid", "building_id") if facts.get(key) not in (None, "")]
+    facts_match = all(value.casefold() == str(usable_building_id or "").casefold() for value in fact_ids)
+    if not verified or not facts_match:
+        normalized["retrieved_facts"] = {}
+        normalized["building_match"] = {
+            "input_address": requested_address,
+            "building_id": usable_building_id if verified else None,
+            "match_confidence": "high" if verified else "low",
+            "ambiguous": not verified,
+        }
+        return normalized
 
     if usable_building_id:
-        normalized.setdefault("byggnadsid", usable_building_id)
-        facts.setdefault("byggnadsid", usable_building_id)
-        facts.setdefault("building_id", usable_building_id)
+        normalized["byggnadsid"] = usable_building_id
+        normalized["building_id"] = usable_building_id
+        if facts:
+            facts["byggnadsid"] = usable_building_id
+            facts["building_id"] = usable_building_id
     if requested_address:
-        normalized.setdefault("address", requested_address)
-        normalized.setdefault("address_from_user", requested_address)
-        normalized.setdefault("requested_address", requested_address)
-        facts.setdefault("address", requested_address)
-        facts.setdefault("address_from_user", requested_address)
+        normalized["address"] = requested_address
+        normalized["address_from_user"] = requested_address
+        normalized["requested_address"] = requested_address
+        if facts:
+            facts.setdefault("address", requested_address)
+            facts["address_from_user"] = requested_address
     if epc_record_address:
-        normalized.setdefault("epc_record_address", epc_record_address)
-        facts.setdefault("epc_idadr", epc_record_address)
+        normalized["epc_record_address"] = epc_record_address
+        if facts:
+            facts["epc_idadr"] = epc_record_address
+    else:
+        normalized.pop("epc_record_address", None)
 
-    existing_match = normalized.get("building_match") if isinstance(normalized.get("building_match"), dict) else {}
-    status = str((identity_check or {}).get("status") or "").lower()
-    normalized["building_match"] = _deep_merge(
-        existing_match,
-        {
-            "input_address": requested_address or existing_match.get("input_address"),
-            "matched_address": matched_address or existing_match.get("matched_address"),
-            "building_id": matched_building_id or existing_match.get("building_id"),
-            "match_confidence": "high" if status == "passed" else existing_match.get("match_confidence", "medium"),
-            "ambiguous": bool((identity_check or {}).get("ambiguous", False)),
-        },
-    )
+    normalized["building_match"] = {
+        "input_address": requested_address,
+        "matched_address": matched_address,
+        "building_id": usable_building_id,
+        "match_confidence": "high",
+        "ambiguous": False,
+    }
     normalized["retrieved_facts"] = facts
+    prior_clarification = dict(normalized.get("clarification") or {})
+    # A verified identity has answered any address/selection question. Advisory
+    # questions about measurements are separate and keep their own wording.
+    prior_clarification.update(needed=False, resolved=True)
+    prior_clarification.pop("identity_required", None)
+    normalized["clarification"] = prior_clarification
     return normalized
 
 
@@ -1901,27 +2290,28 @@ def _unavailable_advisory_response(
     current_address: str,
     building_id: str,
     facts: Dict[str, Any],
+    language: str = "en",
 ) -> str:
     lines: List[str] = []
     if building_id and building_id != "building_id_not_available":
         lines.append(f"Building ID: {building_id}")
     if current_address:
-        lines.append(f"Address: {current_address}")
+        lines.append(f"{'Adress' if language == 'sv' else 'Address'}: {current_address}")
 
     lines.extend(
         [
             "",
-            "I couldn't generate the advisory answer, so I cannot provide a tailored "
-            "recommendation in this response. Please retry your question.",
+            "Jag kunde inte färdigställa råden och kan därför inte ge en bedömning för byggnaden i det här svaret. Försök igen."
+            if language == "sv" else "I couldn't generate the advisory answer, so I cannot provide a tailored recommendation in this response. Please retry your question.",
         ]
     )
-    summary = _short_building_fact_summary_for_advice(facts)
+    summary = "; ".join(f"{FACT_LABELS_SV.get(key, key)}: {_format_fact_value(value)}" for key, value in facts.items() if key in FACT_LABELS_SV and _fact_present(value)) if language == "sv" else _short_building_fact_summary_for_advice(facts)
     if summary:
         lines.extend(
             [
                 "",
-                f"Available building-record facts: {summary}.",
-                "These recorded facts alone do not establish which measure should be prioritized.",
+                f"Tillgängliga byggnadsuppgifter: {summary}." if language == "sv" else f"Available building-record facts: {summary}.",
+                "Uppgifterna räcker inte ensamma för att rangordna åtgärder." if language == "sv" else "These recorded facts alone do not establish which measure should be prioritized.",
             ]
         )
     return "\n".join(lines)
@@ -2130,6 +2520,8 @@ def _enrich_building_fact_aliases(row: Dict[str, Any]) -> Dict[str, Any]:
         "district_heating_space_heating",
         "district_heating_domestic_hot_water",
         "energy_class",
+        "declared_energy_class",
+        "calculated_energy_class",
         "energy_performance",
         "specific_energy_use",
         "primary_energy_number",
@@ -2188,6 +2580,25 @@ def _extract_metadata_location_hint(metadata: Optional[Dict[str, Any]]) -> Optio
     return None
 
 
+def _filter_rows_by_metadata_location(rows: Any, metadata: Optional[Dict[str, Any]]) -> Any:
+    """Apply every independently supplied location constraint together."""
+    if not isinstance(rows, list):
+        return rows
+    filtered = rows
+    for key in ADDRESS_LOCATION_HINT_KEYS:
+        value = (metadata or {}).get(key)
+        if value in (None, "", [], {}):
+            continue
+        hint = str(value).strip()
+        if key in {"municipality", "kommun"}:
+            filtered = [row for row in filtered if _row_matches_location_values(row, hint, ROW_MUNICIPALITY_KEYS, exact=True)]
+        elif key in {"postcode", "postal_code", "postnr"}:
+            filtered = [row for row in filtered if _row_matches_location_values(row, hint, ROW_POSTCODE_KEYS, exact=True)]
+        else:
+            filtered = _filter_rows_by_location_hint(filtered, hint)
+    return filtered
+
+
 def _row_values_for_keys(row: Dict[str, Any], keys: Tuple[str, ...]) -> List[str]:
     if not isinstance(row, dict):
         return []
@@ -2223,7 +2634,7 @@ def _row_matches_location_values(
     for value in _row_values_for_keys(row, keys):
         if keys == ROW_POSTCODE_KEYS:
             value_digits = _compact_digits(value)
-            if value_digits and hint_digits and len(value_digits) >= 5 and value_digits in hint_digits:
+            if value_digits and hint_digits and len(value_digits) == 5 and value_digits == hint_digits:
                 return True
             continue
 
@@ -2268,18 +2679,31 @@ def _filter_rows_by_location_hint(rows: Any, location_hint: Optional[str]) -> An
     if not location_hint or not isinstance(rows, list):
         return rows
 
-    tiers = (
-        (ROW_POSTCODE_KEYS, True),
-        (ROW_POST_TOWN_KEYS, True),
-        (ROW_MUNICIPALITY_KEYS, True),
-        (ROW_POST_TOWN_KEYS, False),
-        (ROW_MUNICIPALITY_KEYS, False),
-    )
-    for keys, exact in tiers:
+    # A postcode and town supplied across turns are both constraints. Do not
+    # let a postcode silently override a conflicting municipality.
+    postcode_match = re.search(r"\b\d{3}\s?\d{2}\b", location_hint)
+    if postcode_match:
+        postcode = postcode_match.group(0)
+        town = _clean_location_hint(
+            location_hint[:postcode_match.start()] + " " + location_hint[postcode_match.end():]
+        )
+        postcode_rows = [
+            row for row in rows
+            if _row_matches_location_values(row, postcode, ROW_POSTCODE_KEYS, exact=True)
+        ]
+        return _filter_rows_by_location_hint(postcode_rows, town) if town else postcode_rows
+
+    # The question accepts either a town or a municipality. A name such as
+    # Jönköping can mean both; keep matches from both fields until the user
+    # provides a postcode or selects a building.
+    for exact in (True, False):
         matched = [
             row
             for row in rows
-            if _row_matches_location_values(row, location_hint, keys, exact=exact)
+            if any(
+                _row_matches_location_values(row, location_hint, keys, exact=exact)
+                for keys in (ROW_POST_TOWN_KEYS, ROW_MUNICIPALITY_KEYS)
+            )
         ]
         if matched:
             return matched
@@ -2300,7 +2724,7 @@ def _rows_conflict_with_location_hint(rows: Any, location_hint: Optional[str]) -
     if not rows_with_location:
         return False
 
-    return not any(_location_hint_matches_row(location_hint, row) for row in rows_with_location)
+    return not bool(_filter_rows_by_location_hint(rows_with_location, location_hint))
 
 
 def _expand_rows_to_same_building_ids(
@@ -2343,15 +2767,222 @@ def _narrow_address_matches(
         return rows
 
     deduped_rows = _dedupe_rows(rows)
-    exact_matches = [
-        row
-        for row in deduped_rows
-        if _normalize_address(_extract_row_address(row)) == normalized_input
+    # Every distinct ID returned by the address endpoint remains a candidate.
+    # An EPC's primary address can differ from the searched address.
+    location_rows = _filter_rows_by_location_hint(deduped_rows, location_hint)
+    return _select_latest_epc_rows_preserving_ambiguity(location_rows)
+
+
+def _address_candidate_options(rows: Any) -> List[Dict[str, Any]]:
+    """Group EPC versions by ID, retaining every returned recorded address."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        building_id = str(_extract_row_identifier(row) or "").strip().upper()
+        if not building_id:
+            continue
+        option = grouped.setdefault(building_id, {
+            "byggnadsid": building_id, "recorded_addresses": [],
+            "municipalities": [], "postal_towns": [], "postcodes": [], "property_designations": [],
+        })
+        for key, values in (
+            ("recorded_addresses", row.get("recorded_addresses") or [_extract_row_address(row)]),
+            ("municipalities", row.get("municipalities") or _row_values_for_keys(row, ROW_MUNICIPALITY_KEYS)),
+            ("postal_towns", row.get("postal_towns") or _row_values_for_keys(row, ROW_POST_TOWN_KEYS)),
+            ("postcodes", row.get("postcodes") or _row_values_for_keys(row, ROW_POSTCODE_KEYS)),
+            ("property_designations", row.get("property_designations") or _row_values_for_keys(row, ("epc_idfastbet", "property_designation"))),
+        ):
+            for value in values:
+                if value and str(value).strip().casefold() not in {
+                    str(existing).casefold() for existing in option[key]
+                }:
+                    option[key].append(str(value).strip())
+    return list(grouped.values())
+
+
+def _address_candidate_question(metadata: Dict[str, Any]) -> str:
+    swedish = metadata.get("response_language") == "sv"
+    options = _address_candidate_options(metadata.get("building_candidate_matches"))
+    hint = _extract_metadata_location_hint(metadata)
+    if (metadata.get("generic_sql_trace") or {}).get("location_hint_no_match"):
+        return (
+            f"Ingen byggnad i resultatet matchar platsuppgifterna ({hint}). Vilken stad, kommun eller vilket postnummer gäller frågan?" if swedish else
+            "None of the returned buildings match the location details you provided "
+            f"({hint}). Which city, municipality or postcode should I use?"
+        )
+    municipalities = {
+        _normalize_location(value)
+        for option in options
+        for value in (option.get("municipalities") or option.get("postal_towns") or [])
+        if value
+    }
+    if len(options) > 1 and len(municipalities) > 1 and not metadata.get("multi_address_resolution"):
+        address = metadata.get("address") or metadata.get("address_from_user") or "this address"
+        if hint:
+            return (
+                f"Jag hittade fortfarande byggnader i flera kommuner för {address} med platsuppgifterna ({hint}). Vilken kommun gäller frågan?"
+                if swedish else
+                f"The matches for {address} and location ({hint}) still span several municipalities. Which municipality should I use?"
+            )
+        return (
+            f"Jag hittade byggnader i flera kommuner för {address}. Vilken stad eller kommun ligger byggnaden i?"
+            if swedish else
+            f"I found buildings in several municipalities for {address}. Which city or municipality is the building in?"
+        )
+    if not options:
+        return build_clarification_question("ambiguous_address", "sv" if swedish else "en")
+    lines = []
+    for index, option in enumerate(options, 1):
+        addresses = "; ".join(option.get("recorded_addresses") or []) or ("Adress saknas" if swedish else "Address unavailable")
+        location = ", ".join(dict.fromkeys((option.get("postal_towns") or []) + (option.get("municipalities") or [])))
+        postcode = ", ".join(option.get("postcodes") or []) or ("saknas i registret" if swedish else "unavailable in the records")
+        designation = ", ".join(option.get("property_designations") or [])
+        postcode_label = "Postnummer" if swedish else "Postcode"
+        address_label = "Registrerad adress" if swedish else "Recorded address"
+        id_label = "Byggnadsid" if swedish else "Building ID"
+        details = " — ".join(value for value in (f"{address_label}: {addresses}", f"{postcode_label}: {postcode}", location, designation) if value)
+        lines.append(f"{index}. **{id_label}: {option['byggnadsid']}** — {details}")
+    prefix = (
+        ("Valet matchar inte någon byggnad i listan." if swedish else "That selection does not identify one of the listed buildings.")
+        if metadata.get("building_selection_error")
+        else ("Jag hittade flera byggnader för de angivna adress- och platsuppgifterna." if swedish else "Several buildings match the address and location details.")
+    )
+    return (
+        prefix + "\n\n" + "\n".join(lines)
+        + ("\n\nVilket byggnadsid i listan ska jag använda?" if swedish else "\n\nWhich building ID from the list should I use?")
+    )
+
+
+def _option_matches_location_hint(option: Dict[str, Any], hint: str) -> bool:
+    postcode = re.search(r"\b\d{3}\s?\d{2}\b", hint)
+    if postcode and not any(
+        _compact_digits(value) == _compact_digits(postcode.group(0))
+        for value in option.get("postcodes") or []
+    ):
+        return False
+    town = _clean_location_hint(re.sub(r"\b\d{3}\s?\d{2}\b", "", hint))
+    if not town:
+        return bool(postcode)
+    # A town must match a recorded name, not a substring of a different town.
+    return any(
+        _normalize_location(value) == _normalize_location(town)
+        for value in (option.get("municipalities") or []) + (option.get("postal_towns") or [])
+    )
+
+
+def _apply_address_candidate_reply(metadata: Dict[str, Any], text: Optional[str]) -> bool:
+    """Narrow stored candidates by location, then accept a listed building ID."""
+    if not _awaiting_address_location_disambiguation(metadata):
+        return False
+    options = _address_candidate_options(metadata.get("building_candidate_matches"))
+    if not options:
+        return False
+    candidate_pool = _address_candidate_options(metadata.get("address_candidate_pool")) or options
+    metadata.pop("building_selection_error", None)
+    reply = str(text or "").strip()
+    matched = [
+        option for option in options
+        if re.search(r"(?<![\w:-])" + re.escape(option["byggnadsid"]) + r"(?![\w:-])", reply, re.IGNORECASE)
     ]
-    candidate_rows = exact_matches or deduped_rows
-    candidate_rows = _filter_rows_by_location_hint(candidate_rows, location_hint)
-    candidate_rows = _expand_rows_to_same_building_ids(candidate_rows, deduped_rows, location_hint)
-    return _select_latest_epc_rows_preserving_ambiguity(candidate_rows)
+    address = None
+    option_match = re.fullmatch(r"(?:(?:option|alternativ|number|nummer)\s*)?(\d{1,3})\.?", reply, re.IGNORECASE)
+    if not matched and option_match and metadata.get("multi_address_resolution"):
+        index = int(option_match.group(1)) - 1
+        matched = [options[index]] if 0 <= index < len(options) else []
+    if not matched:
+        address = _extract_address_candidate_from_text(reply)
+        hint = _extract_address_location_hint_from_text(reply, address)
+        normalized = _normalize_address(address)
+        if normalized:
+            matched = [
+                option for option in options
+                if any(_normalize_address(value) == normalized for value in option.get("recorded_addresses", []))
+            ]
+            if hint:
+                matched = [option for option in matched if _option_matches_location_hint(option, hint)]
+            elif matched and not metadata.get("multi_address_resolution"):
+                metadata["building_selection_error"] = True
+                return True
+        elif not option_match and not _extract_building_id_from_text(reply):
+            location_reply = _extract_location_only_hint_from_text(reply)
+            if location_reply:
+                previous_hint = _extract_metadata_location_hint(metadata) or ""
+                location_corrected = bool(re.search(r"\b(?:menade|menar|meant|mean|rättelse|correction)\b", reply, re.IGNORECASE))
+                previous_postcode = re.search(r"\b\d{3}\s?\d{2}\b", previous_hint) or next((
+                    postcode for key in ("postcode", "postal_code", "postnr")
+                    if (postcode := re.search(r"\b\d{3}\s?\d{2}\b", str(metadata.get(key) or "")))
+                ), None)
+                reply_postcode = re.search(r"\b\d{3}\s?\d{2}\b", location_reply)
+                if re.fullmatch(r"\d{3}\s?\d{2}", location_reply):
+                    town = re.sub(r"\b\d{3}\s?\d{2}\b", "", previous_hint).strip()
+                    location_reply = f"{location_reply} {town}".strip()
+                elif previous_postcode and not reply_postcode and not location_corrected:
+                    location_reply = f"{previous_postcode.group(0)} {location_reply}"
+                for key in ADDRESS_LOCATION_HINT_KEYS:
+                    metadata.pop(key, None)
+                metadata["address_location_hint"] = location_reply
+                # A corrected municipality must be checked against the original
+                # address results, not just the previous municipality's subset.
+                matched = [option for option in candidate_pool if _option_matches_location_hint(option, location_reply)]
+                trace = dict(metadata.get("generic_sql_trace") or {})
+                trace.pop("location_hint_no_match", None)
+                if not matched:
+                    trace["location_hint_no_match"] = True
+                metadata["generic_sql_trace"] = trace
+                if not matched:
+                    return True
+    if not matched:
+        if (
+            _extract_building_id_from_text(reply)
+            or option_match
+            or re.match(r"^(?:(?:I|jag)\s+)?(?:choose|select|use|välj|väljer|använd)\b", reply, re.IGNORECASE)
+            or (metadata.get("multi_address_resolution") and address and _normalize_address(reply) == _normalize_address(address))
+        ):
+            metadata["building_selection_error"] = True
+            return True
+        return False
+    metadata.pop("building_selection_error", None)
+    if matched and (metadata.get("generic_sql_trace") or {}).get("location_hint_no_match"):
+        for key in ADDRESS_LOCATION_HINT_KEYS:
+            metadata.pop(key, None)
+        trace = dict(metadata.get("generic_sql_trace") or {})
+        trace.pop("location_hint_no_match", None)
+        metadata["generic_sql_trace"] = trace
+    if len(matched) == 1:
+        building_id = matched[0]["byggnadsid"]
+        for key in (*BUILDING_FACT_SNAPSHOT_KEYS, "50a_uuid", "uuid", "oden_uuid", "01a_fnr"):
+            metadata.pop(key, None)
+        if str(metadata.get("selected_brf_building_id") or "").upper() != building_id:
+            for key in ("selected_brf_building_id", "brf_resolution", "selected_brf_addresses", "selected_brf_lookup_address", "brf_name"):
+                metadata.pop(key, None)
+        metadata["building_id_from_user"] = building_id
+        metadata["byggnadsid"] = building_id
+        metadata["building_id"] = building_id
+        metadata["selected_address_building_id"] = building_id
+        resolution = metadata.get("multi_address_resolution") or {}
+        selected_hints = {
+            candidate.get("location_hint")
+            for candidate in resolution.get("candidates", [])
+            if building_id in (candidate.get("building_ids") or [candidate.get("building_id")]) and candidate.get("location_hint")
+        }
+        if len(selected_hints) == 1:
+            for key in ADDRESS_LOCATION_HINT_KEYS:
+                metadata.pop(key, None)
+            metadata["address_location_hint"] = selected_hints.pop()
+        metadata.pop("building_candidate_matches", None)
+        metadata.pop("address_candidate_pool", None)
+        metadata.pop("pending_address_candidate_ids", None)
+        metadata.pop("building_identity_check", None)
+    else:
+        metadata["building_candidate_matches"] = matched
+        metadata["pending_address_candidate_ids"] = [option["byggnadsid"] for option in matched]
+        metadata["building_identity_check"] = {
+            "status": "ambiguous", "ambiguous": True,
+            "matched_building_id": None,
+            "candidate_building_ids": metadata["pending_address_candidate_ids"],
+        }
+    return True
 
 
 def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> bool:
@@ -2363,7 +2994,7 @@ def _building_id_matches(row: Dict[str, Any], building_id: Optional[str]) -> boo
 
 def _explicit_building_id_from_metadata(metadata: Dict[str, Any]) -> Optional[str]:
     metadata = metadata or {}
-    for key in ("building_id_from_user", "selected_brf_building_id"):
+    for key in ("building_id_from_user", "selected_address_building_id", "selected_brf_building_id"):
         value = metadata.get(key)
         if value not in (None, ""):
             return str(value).strip().upper()
@@ -2424,8 +3055,7 @@ def _lookup_rows_for_brf_selected_addresses(building_id: Optional[str], metadata
             continue
         narrowed = _narrow_address_matches(
             address,
-            result.get("data"),
-            _extract_metadata_location_hint(metadata),
+            _filter_rows_by_metadata_location(result.get("data"), metadata),
         )
         matched = [
             row
@@ -2531,6 +3161,7 @@ def _resolve_address_candidate_from_brf_context(
             matched["address"] = row_address
             matched_rows.append(matched)
 
+    matched_rows = _filter_rows_by_metadata_location(matched_rows, metadata)
     if not matched_rows:
         return None
 
@@ -2598,14 +3229,11 @@ def _resolve_single_address_candidate(address: str, metadata: Optional[Dict[str,
         if brf_result:
             return brf_result
 
+    candidate_options = []
     if isinstance(rows, list):
-        rows = _select_latest_epc_rows(
-            _narrow_address_matches(
-                address,
-                rows,
-                _extract_metadata_location_hint(metadata),
-            )
-        )
+        scoped_rows = _filter_rows_by_metadata_location(rows, metadata)
+        candidate_options = _address_candidate_options(scoped_rows)
+        rows = _narrow_address_matches(address, scoped_rows)
     rows = _enrich_building_data(rows)
     row_list = rows if isinstance(rows, list) else [rows] if isinstance(rows, dict) else []
     building_ids = [
@@ -2626,6 +3254,7 @@ def _resolve_single_address_candidate(address: str, metadata: Optional[Dict[str,
         "building_ids": unique_building_ids,
         "matched_address": matched_address,
         "rows": row_list,
+        "candidate_options": candidate_options,
         "message": result.get("message"),
     }
 
@@ -2643,15 +3272,36 @@ def _format_multi_address_candidate_line(candidate: Dict[str, Any]) -> str:
     return f"- {address}: no building record found"
 
 
+def _multi_address_candidate_line_sv(candidate: Dict[str, Any]) -> str:
+    address = candidate.get("address") or "Adress saknas"
+    if candidate.get("building_id"):
+        return f"- {address}: byggnadsid {candidate['building_id']}"
+    if candidate.get("building_ids"):
+        return f"- {address}: flera byggnadsid ({', '.join(candidate['building_ids'])})"
+    return f"- {address}: sökningen kunde inte bekräfta någon byggnad"
+
+
 def _build_multi_address_resolution_response(
     candidates: List[Dict[str, Any]],
     status: str,
     shared_building_id: Optional[str] = None,
+    language: str = "en",
 ) -> str:
     addresses = [str(candidate.get("address") or "").strip() for candidate in candidates if candidate.get("address")]
     first_address = addresses[0] if addresses else "the first address"
     alternate_addresses = [address for address in addresses[1:] if address]
     address_summary = " and ".join(addresses[:2]) if len(addresses) == 2 else ", ".join(addresses)
+
+    if language == "sv":
+        if status == "same_building" and shared_building_id:
+            return f"Byggnadsid: {shared_building_id}\n\n{', '.join(addresses)} hör till samma byggnadsid. Jag använder uppgifterna för detta byggnadsid och den senaste tillgängliga energideklarationen. Adresserna är alternativa adresser för samma byggnad."
+        descriptions = {
+            "different_buildings": "Adresserna har olika byggnadsid. Vilken byggnad gäller frågan?",
+            "ambiguous_matches": "Minst en adress matchar flera byggnadsid. Vilken byggnad gäller frågan?",
+            "partial_match": "Jag kunde bara bekräfta vissa adresser. Vilket byggnadsid gäller frågan?",
+            "no_match": "Jag kunde inte bekräfta byggnaden för adresserna. Ange kommun, postnummer eller ett exakt byggnadsid.",
+        }
+        return descriptions.get(status, descriptions["no_match"]) + "\n\n" + "\n".join(_multi_address_candidate_line_sv(candidate) for candidate in candidates)
 
     if status == "same_building" and shared_building_id:
         alternate_text = (
@@ -2667,6 +3317,8 @@ def _build_multi_address_resolution_response(
         )
 
     lines = [_format_multi_address_candidate_line(candidate) for candidate in candidates]
+    if status == "ambiguous_matches":
+        return "At least one address matches several building IDs. Please choose the building the question concerns.\n\n" + "\n".join(lines)
     if status == "different_buildings":
         return (
             "I found different building IDs for those addresses, so I should not choose automatically.\n\n"
@@ -2697,32 +3349,81 @@ def _build_multi_address_resolution_response(
     )
 
 
+def _cached_address_candidate_answer(
+    message: Optional[str], metadata: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Explain retrieved candidates without consuming a selection or location."""
+    text = str(message or "").strip()
+    resolution = metadata.get("multi_address_resolution") or {}
+    candidates = resolution.get("candidates") if isinstance(resolution, dict) else None
+    if not candidates and not metadata.get("building_candidate_matches"):
+        return None
+    if _extract_building_id_from_text(text) or _extract_address_candidate_from_text(text):
+        return None
+    if not re.search(
+        r"\b(?:which|what|show|list|give|tell|vilka|vilken|visa|lista|ge|förklara)\b.*"
+        r"\b(?:building\s+ids?|byggnadsid|candidates?|kandidater|matches|träffar|adresser|addresses)\b",
+        text, re.IGNORECASE,
+    ):
+        return None
+    swedish = metadata.get("response_language") == "sv"
+    lines = [
+        (_multi_address_candidate_line_sv(candidate) if swedish else _format_multi_address_candidate_line(candidate))
+        for candidate in candidates or [] if isinstance(candidate, dict)
+    ]
+    response = "\n".join(lines)
+    if metadata.get("building_candidate_matches"):
+        response += ("\n\n" if response else "") + _address_candidate_question(metadata)
+    elif not response:
+        return None
+    updated = copy.deepcopy(metadata)
+    if (updated.get("clarification") or {}).get("needed"):
+        updated["clarification"]["question_asked"] = response
+    return {
+        "final_response": response, "metadata": updated,
+        "multi_address_resolution_complete": True, "cached_candidate_answer": True,
+    }
+
+
 def resolve_multi_address_identity_message(
     last_message: Optional[str],
     metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     md = dict(metadata or {})
-    candidates = _extract_address_candidates_from_text(last_message)
+    cached_candidate_answer = _cached_address_candidate_answer(last_message, md)
+    if cached_candidate_answer is not None:
+        return cached_candidate_answer
+    references = _extract_address_references_from_text(last_message)
+    candidates = [ref["address"] for ref in references]
     if len(candidates) < 2:
         return None
 
     if not _looks_like_multi_address_identity_question(last_message, candidates):
         return None
 
-    resolved = [_resolve_single_address_candidate(address, md) for address in candidates]
+    resolved = []
+    for reference in references:
+        scoped_md = dict(md)
+        if any(ref["location_hint"] for ref in references):
+            for key in ADDRESS_LOCATION_HINT_KEYS:
+                scoped_md.pop(key, None)
+        if reference["location_hint"]:
+            scoped_md["address_location_hint"] = reference["location_hint"]
+        candidate = _resolve_single_address_candidate(reference["address"], scoped_md)
+        candidate["location_hint"] = reference["location_hint"] or _extract_metadata_location_hint(scoped_md)
+        resolved.append(candidate)
     matched = [candidate for candidate in resolved if candidate.get("ok")]
-    matched_ids = [
-        candidate.get("building_id")
-        for candidate in matched
-        if candidate.get("building_id")
-    ]
+    matched_ids = [identifier for candidate in matched for identifier in (candidate.get("building_ids") or [candidate.get("building_id")]) if identifier]
     unique_ids = list(dict.fromkeys(matched_ids))
 
-    if len(matched) == len(resolved) and len(unique_ids) == 1:
+    if len(matched) == len(resolved) and len(unique_ids) == 1 and all(candidate.get("building_id") == unique_ids[0] for candidate in resolved):
         status = "same_building"
         shared_building_id = unique_ids[0]
-    elif matched and len(unique_ids) > 1:
+    elif len(matched) == len(resolved) and all(candidate.get("building_id") for candidate in resolved) and len(unique_ids) > 1:
         status = "different_buildings"
+        shared_building_id = None
+    elif matched and any(len(candidate.get("building_ids") or []) > 1 for candidate in matched):
+        status = "ambiguous_matches"
         shared_building_id = None
     elif matched:
         status = "partial_match"
@@ -2735,9 +3436,11 @@ def resolve_multi_address_identity_message(
         resolved,
         status,
         shared_building_id=shared_building_id,
+        language=md.get("response_language") or "en",
     )
     metadata_updates = {
         "address_candidates": candidates,
+        "address_references": references,
         "multi_address_resolution": {
             "status": status,
             "candidates": [
@@ -2748,13 +3451,22 @@ def resolve_multi_address_identity_message(
                     "building_ids": candidate.get("building_ids"),
                     "ok": candidate.get("ok"),
                     "message": candidate.get("message"),
+                    "location_hint": candidate.get("location_hint"),
+                    "recorded_addresses_by_building_id": {
+                        option["byggnadsid"]: option.get("recorded_addresses") or []
+                        for option in candidate.get("candidate_options") or _address_candidate_options(candidate.get("rows"))
+                    },
                 }
                 for candidate in resolved
             ],
         },
     }
+    # This resolution concerns a new set of address references.
+    md.pop("address_candidate_pool", None)
 
     if status == "same_building" and shared_building_id:
+        for key in ("building_id_from_user", "selected_address_building_id", "selected_brf_building_id", "building_id", "byggnadsid", "50a_uuid", "uuid", "oden_uuid", "01a_fnr", "brf_resolution", "brf_candidate_buildings", "pending_brf_resolution", "selected_brf_addresses", "selected_brf_lookup_address", "brf_name", *BUILDING_FACT_SNAPSHOT_KEYS):
+            md.pop(key, None)
         metadata_updates.update(
             {
                 "address": candidates[0],
@@ -2782,7 +3494,36 @@ def resolve_multi_address_identity_message(
                 },
             }
         )
-    elif status in {"different_buildings", "partial_match", "no_match"}:
+        if references[0]["location_hint"]:
+            for key in ADDRESS_LOCATION_HINT_KEYS:
+                md.pop(key, None)
+            metadata_updates["address_location_hint"] = references[0]["location_hint"]
+    elif status in {"different_buildings", "ambiguous_matches", "partial_match", "no_match"}:
+        for key in ("byggnadsid", "building_id", "building_id_from_user", "selected_address_building_id", "selected_brf_building_id", "brf_resolution", "pending_brf_resolution", "brf_candidate_buildings", "selected_brf_addresses", "selected_brf_lookup_address", "brf_name", "50a_uuid", "uuid", "oden_uuid", "01a_fnr", "same_building_multiple_addresses", *BUILDING_FACT_SNAPSHOT_KEYS):
+            md.pop(key, None)
+        if any(ref["location_hint"] for ref in references):
+            for key in ADDRESS_LOCATION_HINT_KEYS:
+                md.pop(key, None)
+            if references[0]["location_hint"]:
+                md["address_location_hint"] = references[0]["location_hint"]
+        options = _address_candidate_options([
+            row for candidate in resolved
+            for row in (candidate.get("candidate_options") or candidate.get("rows") or [])
+        ])
+        metadata_updates.update({
+            "address": candidates[0], "address_from_user": candidates[0],
+            PENDING_AMBIGUOUS_ADDRESS_KEY: next((
+                candidate["address"] for candidate in resolved
+                if len(candidate.get("building_ids") or []) > 1
+            ), candidates[0]),
+            "building_candidate_matches": options,
+            "building_identity_check": {"status": "ambiguous" if options else "missing", "candidate_building_ids": unique_ids, "ambiguous": bool(options)},
+            "pending_address_query": {"user_message": last_message, "context": {"answer_focus": last_message, "effective_query": last_message}},
+        })
+        if options:
+            response += "\n\n" + _address_candidate_question(_deep_merge(md, metadata_updates))
+            if status == "different_buildings":
+                response += "\n\n" + ("Vilket byggnadsid ska jag använda?" if md.get("response_language") == "sv" else "Which building ID should I use?")
         metadata_updates["clarification"] = {
             "needed": True,
             "reason": f"multi_address_{status}",
@@ -2791,10 +3532,11 @@ def resolve_multi_address_identity_message(
             "resolved_after_turns": None,
         }
 
+    continue_request = status == "same_building" and bool(_requested_fact_specs(last_message or "") or _looks_like_building_ecm_advice(last_message))
     return {
         "final_response": response,
         "metadata": _deep_merge(md, metadata_updates),
-        "multi_address_resolution_complete": True,
+        "multi_address_resolution_complete": not continue_request,
     }
 
 # =================
@@ -2899,10 +3641,89 @@ def understand_context_node(state: GraphState) -> GraphState:
     if merged_metadata:
         state["metadata"] = merge_identifier_metadata(merged_metadata, prior_state)
 
+    selection_metadata = dict(state.get("metadata") or {})
+    selection_metadata["response_language"] = response_language(state.get("messages"), state.get("last_message") or "", selection_metadata)
+    pending_request = selection_metadata.get(PENDING_BUILDING_REQUEST_KEY)
+    verified_address_explanation = is_verified_address_explanation_followup(
+        state.get("last_message"), selection_metadata,
+    )
+    candidate_selection_handled = not state.get("multi_address_resolution_checked") and _apply_address_candidate_reply(selection_metadata, state.get("last_message"))
+    state["metadata"] = selection_metadata
+    if candidate_selection_handled:
+        # Location and selection replies use the already retrieved candidate
+        # list and the saved request; they do not need another intent-model call.
+        pending_query = selection_metadata.get("pending_address_query") or {}
+        saved_context = pending_query.get("context") or prior_context or {}
+        ctx = copy.deepcopy(saved_context)
+        ctx["intent_list"] = _coerce_intent_list(ctx) or ["SQL database"]
+        ctx["parsed_intent"] = " ; ".join(ctx["intent_list"])
+        ctx["address"] = _extract_stored_address_from_metadata(selection_metadata)
+        for key in ADDRESS_LOCATION_HINT_KEYS:
+            ctx.pop(key, None)
+        if _extract_metadata_location_hint(selection_metadata):
+            ctx["address_location_hint"] = _extract_metadata_location_hint(selection_metadata)
+        _restore_request_focus(ctx, saved_context, pending_query.get("user_message") or saved_context.get("answer_focus") or "")
+        ctx["ambiguous"] = ctx["ambigious"] = False
+        state["address_candidate_reply_handled"] = True
+        state["address_candidate_clarification_pending"] = bool(selection_metadata.get("building_candidate_matches"))
+        if state["address_candidate_clarification_pending"]:
+            # Nested candidates must not become a selected identity when the
+            # session's identifier metadata is merged at the start of a turn.
+            for key in (
+                "byggnadsid", "building_id", "building_id_from_user", "selected_address_building_id",
+                "selected_brf_building_id", "50a_uuid", "uuid", "oden_uuid", "01a_fnr",
+                *[key for key in BUILDING_FACT_SNAPSHOT_KEYS if key != "generic_sql_trace"],
+            ):
+                selection_metadata.pop(key, None)
+        state["context"] = ctx
+        return state
     explicit_building_id = _extract_building_id_from_text(state.get("last_message"))
-    if explicit_building_id:
+    explicit_id_changed = False
+    if explicit_building_id and not candidate_selection_handled:
         md = dict(state.get("metadata") or {})
+        previous_id = md.get("building_id_from_user") or md.get("byggnadsid") or md.get("building_id")
+        if str(previous_id or "").upper() != explicit_building_id:
+            explicit_id_changed = True
+            for key in (
+                "address", "address_from_user", "requested_address", "epc_record_address", "same_building_multiple_addresses",
+                "building_identity_check", "building_match", "retrieved_facts", "building_information",
+                "aggregated_data", "agent_data", "evidence_scope", "data_freshness", "selected_address_building_id",
+                "selected_brf_building_id", "brf_resolution", "selected_brf_addresses", "selected_brf_lookup_address", "brf_name",
+                PENDING_AMBIGUOUS_ADDRESS_KEY, "matched_address", "input_address", "official_address",
+                "pending_address_query", "building_candidate_matches", "pending_address_candidate_ids", "building_selection_error",
+                "clarification", "uncertainty",
+                *BUILDING_FACT_SNAPSHOT_KEYS, *ADDRESS_LOOKUP_CONTEXT_KEYS,
+                *ADDRESS_LOCATION_HINT_KEYS,
+            ):
+                md.pop(key, None)
+            if isinstance(pending_request, dict) and previous_id:
+                previous_request_id = _extract_building_id_from_text(pending_request.get("question"))
+                if previous_request_id and previous_request_id != explicit_building_id:
+                    if _looks_like_identity_followup(state.get("last_message"), {}):
+                        # A replacement ID can fulfil the original fact request,
+                        # but the saved question must refer to the replacement.
+                        pending_request = copy.deepcopy(pending_request)
+                        pending_request["question"] = BUILDING_ID_RE.sub(explicit_building_id, pending_request.get("question") or "")
+                        saved_context = pending_request.get("context") or {}
+                        for key in ("answer_focus", "effective_query"):
+                            if isinstance(saved_context.get(key), str):
+                                saved_context[key] = BUILDING_ID_RE.sub(explicit_building_id, saved_context[key])
+                        for part in saved_context.get("request_parts") or []:
+                            if isinstance(part, dict) and isinstance(part.get("question"), str):
+                                part["question"] = BUILDING_ID_RE.sub(explicit_building_id, part["question"])
+                        md[PENDING_BUILDING_REQUEST_KEY] = pending_request
+                    else:
+                        pending_request = None
+                        md.pop(PENDING_BUILDING_REQUEST_KEY, None)
+                        md.pop(PENDING_BUILDING_ADVICE_KEY, None)
+            # A different ID must not inherit the previous building's address
+            # from either the parser context or the session snapshot.
+            prior_metadata = {}
+            prior_state = {}
+            prior_context = {}
+            state["session_state"] = {}
         md["byggnadsid"] = explicit_building_id
+        md["building_id"] = explicit_building_id
         md["building_id_from_user"] = explicit_building_id
         state["metadata"] = md
         print(f"[understand_context] detected building id from text: {explicit_building_id!r}", flush=True)
@@ -2926,6 +3747,118 @@ def understand_context_node(state: GraphState) -> GraphState:
     ctx["intent_list"] = intent_list
     if "parsed_intent" not in ctx or ctx.get("parsed_intent") in (None, ""):
         ctx["parsed_intent"] = " ; ".join(intent_list) if intent_list else None
+
+    raw_address = None if verified_address_explanation else _extract_address_candidate_from_text(state.get("last_message"))
+    current_stored_address = _extract_stored_address_from_metadata(state.get("metadata") or {})
+    if verified_address_explanation and current_stored_address:
+        # Comparing the saved lookup address with its declaration address is
+        # a question about existing evidence, not a request to switch buildings.
+        ctx["address"] = current_stored_address
+        for key in ADDRESS_LOCATION_HINT_KEYS:
+            ctx.pop(key, None)
+        saved_location = _extract_metadata_location_hint(state.get("metadata") or {})
+        if saved_location:
+            ctx["address_location_hint"] = saved_location
+    corrected_location = None
+    correction_phrase = bool(re.search(
+        r"\b(?:jag\s+(?:menade|menar)|i\s+(?:meant|mean)|rättelse|correction)\b",
+        state.get("last_message") or "", re.IGNORECASE,
+    ))
+    non_location_correction = bool(correction_phrase and NON_LOCATION_CORRECTION_RE.search(state.get("last_message") or ""))
+    if current_stored_address and not raw_address and not explicit_building_id and non_location_correction:
+        # User corrections about a budget or heating observation do not supply
+        # a different municipality, even if the parser guesses a location.
+        ctx["address"] = current_stored_address
+        for key in ADDRESS_LOCATION_HINT_KEYS:
+            ctx.pop(key, None)
+        saved_location = _extract_metadata_location_hint(state.get("metadata") or {})
+        if saved_location:
+            ctx["address_location_hint"] = saved_location
+    if (
+        current_stored_address and not raw_address and not explicit_building_id
+        and correction_phrase and not non_location_correction
+        and not _requested_fact_specs(state.get("last_message"))
+        and not _looks_like_building_ecm_advice(state.get("last_message"))
+    ):
+        corrected_location = _extract_location_only_hint_from_text(state.get("last_message"))
+    raw_location = corrected_location or _extract_address_location_hint_from_text(state.get("last_message"), raw_address)
+    previous_location = _extract_metadata_location_hint(state.get("metadata") or {})
+    location_changed = bool(raw_location and previous_location and _normalize_location(raw_location) != _normalize_location(previous_location))
+    if (raw_address or corrected_location) and not state.get("multi_address_resolution_checked") and not candidate_selection_handled and not explicit_building_id and current_stored_address and ((raw_address and _normalize_address(raw_address) != _normalize_address(current_stored_address)) or location_changed):
+        md = dict(state.get("metadata") or {})
+        for key in (
+            *BUILDING_FACT_SNAPSHOT_KEYS, *ADDRESS_LOOKUP_CONTEXT_KEYS, *ADDRESS_LOCATION_HINT_KEYS,
+            "building_id_from_user", "selected_address_building_id", "building_id", "byggnadsid",
+            "selected_brf_building_id", "brf_resolution", "selected_brf_addresses", "selected_brf_lookup_address", "brf_name",
+            "building_identity_check", "building_candidate_matches", PENDING_AMBIGUOUS_ADDRESS_KEY,
+            "pending_address_query", "pending_address_candidate_ids", "building_selection_error",
+            "clarification", "uncertainty",
+        ):
+            md.pop(key, None)
+        next_address = raw_address or current_stored_address
+        md["address"] = md["address_from_user"] = next_address
+        state["metadata"] = md
+        state["session_state"] = {}
+        if corrected_location:
+            _restore_request_focus(ctx, prior_context or {}, "")
+            pending_request = None
+            md.pop(PENDING_BUILDING_REQUEST_KEY, None)
+            md.pop(PENDING_BUILDING_ADVICE_KEY, None)
+            if previous_location:
+                location_pattern = re.compile(r"(?<!\w)" + re.escape(previous_location) + r"(?!\w)", re.IGNORECASE)
+                for key in ("answer_focus", "effective_query"):
+                    if isinstance(ctx.get(key), str):
+                        ctx[key] = location_pattern.sub(corrected_location, ctx[key])
+                for part in ctx.get("request_parts") or []:
+                    if isinstance(part, dict) and isinstance(part.get("question"), str):
+                        part["question"] = location_pattern.sub(corrected_location, part["question"])
+        prior_state, prior_metadata, prior_context = {}, {}, {}
+        ctx["address"] = next_address
+        for key in ADDRESS_LOCATION_HINT_KEYS:
+            ctx.pop(key, None)
+        if not corrected_location:
+            ctx.pop("answer_focus", None)
+        if raw_location:
+            ctx["address_location_hint"] = raw_location
+    if explicit_building_id:
+        # The model can misread the numeric prefix of an ID as a street
+        # number. The full supplied ID determines identity on this turn.
+        ctx.pop("address", None)
+        for key in ADDRESS_LOCATION_HINT_KEYS:
+            ctx.pop(key, None)
+        if explicit_id_changed and not _looks_like_identity_followup(state.get("last_message"), ctx):
+            ctx["answer_focus"] = state.get("last_message") or ""
+            ctx["effective_query"] = ctx["answer_focus"]
+            parsed_parts = ctx.get("request_parts") or []
+            if any(
+                isinstance(part, dict)
+                and (part_id := _extract_building_id_from_text(part.get("question")))
+                and part_id != explicit_building_id
+                for part in parsed_parts
+            ):
+                ctx["request_parts"] = [{
+                    "question": ctx["answer_focus"],
+                    "kind": "fact" if _requested_fact_specs(ctx["answer_focus"]) and ctx["intent_list"] == ["SQL database"] else "other",
+                    "sources": list(ctx["intent_list"] or ["SQL database"]),
+                }]
+
+    if isinstance(pending_request, dict) and _looks_like_identity_followup(state.get("last_message"), ctx):
+        saved_context = pending_request.get("context") or {}
+        _restore_request_focus(ctx, saved_context, pending_request.get("question") or "")
+        ctx["ambiguous"] = ctx["ambigious"] = False
+    elif not candidate_selection_handled and not state.get("multi_address_resolution_checked"):
+        # A fresh substantive question replaces a pending request. Location
+        # clarification is restored separately from pending_address_query below.
+        md = dict(state.get("metadata") or {})
+        md.pop(PENDING_BUILDING_REQUEST_KEY, None)
+        if not _looks_like_identity_followup(state.get("last_message"), ctx):
+            md.pop(PENDING_BUILDING_ADVICE_KEY, None)
+            if not (
+                _awaiting_address_location_disambiguation(md)
+                and _extract_location_only_hint_from_text(state.get("last_message"))
+            ):
+                md.pop("pending_address_query", None)
+        state["metadata"] = md
 
     current_message_is_advice = _looks_like_building_ecm_advice(state.get("last_message"))
 
@@ -2962,7 +3895,7 @@ def understand_context_node(state: GraphState) -> GraphState:
     address_location_hint = _extract_metadata_location_hint(ctx)
 
     # If the parser missed an address on an address-only follow-up, recover it heuristically.
-    if ctx.get("address"):
+    if ctx.get("address") and not explicit_building_id:
         raw_parser_address = ctx.get("address")
         cleaned_address = _extract_address_candidate_from_text(raw_parser_address)
         if cleaned_address:
@@ -2978,7 +3911,7 @@ def understand_context_node(state: GraphState) -> GraphState:
             print(f"[understand_context] discarded non-address parser value: {ctx.get('address')!r}", flush=True)
             ctx.pop("address", None)
 
-    if not ctx.get("address"):
+    if not ctx.get("address") and not explicit_building_id and not verified_address_explanation:
         recovered_address = _extract_address_candidate_from_text(state.get("last_message"))
         if recovered_address:
             ctx["address"] = recovered_address
@@ -2993,9 +3926,10 @@ def understand_context_node(state: GraphState) -> GraphState:
         or _extract_stored_address_from_metadata(prior_metadata or {})
     )
     if (
-        not ctx.get("address")
-        and not address_location_hint
-        and stored_address_for_disambiguation
+        stored_address_for_disambiguation
+        and not candidate_selection_handled
+        and not _extract_address_candidate_from_text(state.get("last_message"))
+        and not _extract_building_id_from_text(state.get("last_message"))
         and (
             _awaiting_address_location_disambiguation(state.get("metadata") or {})
             or _awaiting_address_location_disambiguation(prior_metadata or {})
@@ -3010,6 +3944,12 @@ def understand_context_node(state: GraphState) -> GraphState:
             ctx["parsed_intent"] = (prior_context or {}).get("parsed_intent") or " ; ".join(prior_intent_list)
             ctx["ambiguous"] = False
             ctx["ambigious"] = False
+            pending_query = (state.get("metadata") or {}).get("pending_address_query") or {}
+            if pending_query.get("user_message"):
+                saved_context = pending_query.get("context") or {}
+                ctx["intent_list"] = _coerce_intent_list(saved_context) or ctx["intent_list"]
+                ctx["parsed_intent"] = saved_context.get("parsed_intent") or " ; ".join(ctx["intent_list"])
+                _restore_request_focus(ctx, saved_context, pending_query["user_message"])
             print(
                 "[understand_context] resolved ambiguous address with location hint: "
                 f"{location_only_hint!r}",
@@ -3052,6 +3992,17 @@ def understand_context_node(state: GraphState) -> GraphState:
         md = state.get("metadata") or {}
         # Shallow copy to avoid mutating any external references
         md = dict(md)
+        if stored_address and _normalize_address(addr) != _normalize_address(stored_address) and not candidate_selection_handled:
+            for key in (
+                "building_id_from_user", "selected_address_building_id", "building_id", "byggnadsid",
+                "selected_brf_building_id", "brf_resolution", "selected_brf_addresses", "selected_brf_lookup_address",
+                "building_identity_check", "building_candidate_matches", PENDING_AMBIGUOUS_ADDRESS_KEY,
+                "pending_address_candidate_ids", "pending_address_query", "building_selection_error",
+                "same_building_multiple_addresses", "requested_address", "epc_record_address",
+                *BUILDING_FACT_SNAPSHOT_KEYS, *ADDRESS_LOOKUP_CONTEXT_KEYS,
+                *ADDRESS_LOCATION_HINT_KEYS,
+            ):
+                md.pop(key, None)
         prior_location_hint = (
             _extract_metadata_location_hint(md)
             or _extract_metadata_location_hint(prior_metadata or {})
@@ -3066,7 +4017,29 @@ def understand_context_node(state: GraphState) -> GraphState:
             address_location_hint = prior_location_hint
         md["address"] = addr
         md["address_from_user"] = addr
+        # Typed fields from the parser stay independent; the generic display
+        # hint cannot replace an explicitly supplied municipality or postcode.
+        if not candidate_selection_handled:
+            for key in ADDRESS_LOCATION_HINT_KEYS:
+                if key != "address_location_hint" and ctx.get(key) not in (None, "", [], {}):
+                    md[key] = ctx[key]
         if address_location_hint:
+            if (
+                prior_location_hint
+                and stored_address
+                and _normalize_address(addr) == _normalize_address(stored_address)
+            ):
+                new_is_postcode = bool(re.fullmatch(r"\d{3}\s?\d{2}", address_location_hint))
+                prior_is_postcode = bool(re.fullmatch(r"\d{3}\s?\d{2}", prior_location_hint))
+                if new_is_postcode and not prior_is_postcode:
+                    previous_town = re.sub(r"\b\d{3}\s?\d{2}\b", "", prior_location_hint).strip()
+                    address_location_hint = f"{address_location_hint} {previous_town}".strip()
+                elif prior_is_postcode and not new_is_postcode:
+                    address_location_hint = f"{prior_location_hint} {address_location_hint}"
+                elif not new_is_postcode and not re.search(r"\b\d{3}\s?\d{2}\b", address_location_hint):
+                    prior_postcode = re.search(r"\b\d{3}\s?\d{2}\b", prior_location_hint)
+                    if prior_postcode:
+                        address_location_hint = f"{prior_postcode.group(0)} {address_location_hint}"
             md["address_location_hint"] = address_location_hint
             ctx["address_location_hint"] = address_location_hint
             print(f"[understand_context] address location hint set: {address_location_hint!r}", flush=True)
@@ -3078,6 +4051,11 @@ def understand_context_node(state: GraphState) -> GraphState:
         print(f"[understand_context] address set in metadata: {addr!r}", flush=True)
 
     # Write context back to state (in place) and return state
+    ctx.setdefault("answer_focus", state.get("last_message") or "")
+    ctx.setdefault("effective_query", ctx.get("answer_focus") or state.get("last_message") or "")
+    md = dict(state.get("metadata") or {})
+    md["request_parts"] = copy.deepcopy(ctx.get("request_parts") or [])
+    state["metadata"] = md
     state["context"] = ctx
     print(f"[understand_context] parsed_intent={ctx.get('parsed_intent')!r} intent_list={ctx.get('intent_list')}", flush=True)
     print("[understand_context] EXIT", flush=True)
@@ -3086,6 +4064,8 @@ def understand_context_node(state: GraphState) -> GraphState:
 
 def brf_resolution_node(state: GraphState) -> GraphState:
     print("[brf_resolution] ENTER", flush=True)
+    if state.get("address_candidate_reply_handled"):
+        return {}
     md = dict(state.get("metadata") or {})
     ctx = dict(state.get("context") or {})
     last_message = state.get("last_message") or ""
@@ -3138,6 +4118,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
                 md["address_from_user"] = selected_address
                 md["requested_address"] = selected_address
             ctx = dict(original_context)
+            _restore_request_focus(ctx, original_context, original_question)
             intent_list = _coerce_intent_list(ctx)
             if intent_list:
                 ctx["intent_list"] = intent_list
@@ -3231,6 +4212,7 @@ def brf_resolution_node(state: GraphState) -> GraphState:
                 },
                 "clarification": {
                     "needed": True,
+                    "identity_required": True,
                     "reason": "brf_lookup_failed",
                     "question_asked": question,
                     "resolved": False,
@@ -3337,7 +4319,20 @@ def brf_resolution_node(state: GraphState) -> GraphState:
 
 
 def multi_address_resolution_node(state: GraphState) -> GraphState:
+    if state.get("address_candidate_reply_handled"):
+        return {}
     print("[multi_address_resolution] ENTER", flush=True)
+    if state.get("multi_address_resolution_checked"):
+        md = dict(state.get("metadata") or {})
+        pending = md.get("pending_address_query")
+        if isinstance(pending, dict):
+            pending = dict(pending)
+            pending["context"] = copy.deepcopy(state.get("context") or pending.get("context") or {})
+            md["pending_address_query"] = pending
+        ctx = dict(state.get("context") or {})
+        if (md.get("building_identity_check") or {}).get("status") == "passed":
+            ctx["ambiguous"] = ctx["ambigious"] = False
+        return {"metadata": md, "context": ctx, "multi_address_resolution_complete": bool(state.get("multi_address_resolution_complete"))}
     result = resolve_multi_address_identity_message(
         state.get("last_message") or "",
         state.get("metadata") or {},
@@ -3345,6 +4340,16 @@ def multi_address_resolution_node(state: GraphState) -> GraphState:
     if not result:
         print("[multi_address_resolution] no multi-address identity question", flush=True)
         return {}
+
+    pending = (result.get("metadata") or {}).get("pending_address_query")
+    if isinstance(pending, dict):
+        pending["context"] = copy.deepcopy(state.get("context") or pending.get("context") or {})
+        pending["user_message"] = state.get("last_message") or pending.get("user_message")
+    if not result.get("multi_address_resolution_complete"):
+        result.pop("final_response", None)
+        ctx = dict(state.get("context") or {})
+        ctx["ambiguous"] = ctx["ambigious"] = False
+        result["context"] = ctx
 
     status = ((result.get("metadata") or {}).get("multi_address_resolution") or {}).get("status")
     print(f"[multi_address_resolution] status={status}", flush=True)
@@ -3359,6 +4364,8 @@ def route_after_multi_address_resolution(state: GraphState) -> str:
 
 
 def route_after_brf_resolution(state: GraphState) -> str:
+    if state.get("address_candidate_clarification_pending"):
+        return "clarification"
     clarification = ((state.get("metadata") or {}).get("clarification") or {})
     if clarification.get("needed") and clarification.get("reason") in {
         "ambiguous_brf",
@@ -3372,6 +4379,19 @@ def route_after_brf_resolution(state: GraphState) -> str:
 # =====================================
 # Early ambiguity + address gate router
 # =====================================
+def _has_recorded_fact_request(context: Dict[str, Any]) -> bool:
+    parts = context.get("request_parts") or []
+    return isinstance(parts, list) and any(
+        isinstance(part, dict)
+        and str(part.get("kind") or "").lower() == "fact"
+        and any(
+            "sql" in str(source).lower()
+            for source in (part.get("sources") if isinstance(part.get("sources"), list) else [part.get("sources")])
+        )
+        for part in parts
+    )
+
+
 def route_after_ambiguity(state: GraphState) -> str:
     ctx = state.get("context", {}) or {}
     md = state.get("metadata", {}) or {}
@@ -3382,6 +4402,13 @@ def route_after_ambiguity(state: GraphState) -> str:
     single_filter = _has_single_filter(md)
 
     print(f"[route_after_ambiguity] ENTER intents={intents} addr={addr_present} single_filter={single_filter} ambiguous={ctx.get('ambiguous') or ctx.get('ambigious')}", flush=True)
+
+    # A clear request for recorded facts needs identity even when the parser
+    # marks the absent/forgotten name as ambiguous. Do not ask about equipment
+    # or objectives before establishing which building's records to retrieve.
+    if not (addr_present or single_filter) and _has_recorded_fact_request(ctx):
+        print("[route_after_ambiguity] → request_address (recorded fact needs identity)", flush=True)
+        return "request_address"
 
     # Ambiguity gate (support both 'ambiguous' and misspelled 'ambigious')
     if ctx.get("ambiguous") or ctx.get("ambigious"):
@@ -3436,6 +4463,22 @@ def maintain_history_node(state: GraphState) -> GraphState:
     intents = _coerce_intent_list(ctx)
     required = {INTENT_TO_FLAG.get(str(intent).strip().lower()) for intent in intents}
     updates: Dict[str, Any] = {}
+    question = str(ctx.get("answer_focus") or state.get("last_message") or "").lower()
+    identity = md.get("building_identity_check") or {}
+    if (
+        intents
+        and all(str(intent).strip().lower() == "vector database" for intent in intents)
+        and (md.get("address") or select_preferred_identifier(md))
+        and identity.get("status") != "passed"
+        and not any(re.search(pattern, question) for pattern in EXPLICIT_GENERAL_SCOPE_PATTERNS)
+    ):
+        # Identity replies can restore a pending vector-only advisory request.
+        # Resolve the supplied building before attaching advice to that address.
+        intents = ["SQL database", *intents]
+        ctx["intent_list"] = intents
+        ctx["parsed_intent"] = " ; ".join(intents)
+        required.add("done_generic_sql")
+        updates["context"] = ctx
     if (
         "done_specialized_sql" in required
         and "done_generic_sql" not in required
@@ -3624,6 +4667,78 @@ def await_more_node(state: "GraphState") -> "GraphState":
 # ===========================================
 # Agent nodes (updated for parallel semantics)
 # ===========================================
+def _verified_cached_building_result(state: GraphState, selected_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Reuse a verified record only for an unchanged building's fact follow-up."""
+    metadata = state.get("metadata") or {}
+    facts = metadata.get("retrieved_facts")
+    identity = metadata.get("building_identity_check") or {}
+    selected = str(selected_id or "").strip().upper()
+    if (not selected or not isinstance(facts, dict)
+            or identity.get("status") != "passed"
+            or str(identity.get("matched_building_id") or "").strip().upper() != selected
+            or metadata.get("building_candidate_matches") or metadata.get("building_selection_error")
+            or (metadata.get("clarification") or {}).get("needed")):
+        return None
+    ids = [str(facts[key]).strip().upper() for key in ("byggnadsid", "building_id") if facts.get(key)]
+    if not ids or any(value != selected for value in ids):
+        return None
+    evidence = metadata.get("evidence_scope") or {}
+    if evidence.get("building_id") and str(evidence["building_id"]).strip().upper() != selected:
+        return None
+    question = str(state.get("last_message") or (state.get("context") or {}).get("answer_focus") or "")
+    if re.search(
+        r"\b(?:refresh|reload|latest|current|today|uppdater\w*|senaste|nyaste|aktuell\w*|idag)\b|\bi dag\b",
+        question, re.IGNORECASE,
+    ) or len(_extract_address_references_from_text(question)) > 1:
+        return None
+    explicit = _extract_building_id_from_text(question)
+    if explicit and explicit != selected:
+        return None
+    new_address = _extract_address_candidate_from_text(question)
+    if new_address:
+        known_addresses = [metadata.get(key) for key in ("address", "address_from_user", "requested_address", "epc_record_address")]
+        if not any(_normalize_address(new_address) == _normalize_address(value) for value in known_addresses if value):
+            return None
+    specs = _requested_fact_specs(question)
+    identity_question = bool(re.search(
+        r"\b(?:which|what)\s+building\b.*\b(?:using|selected|chosen)\b|"
+        r"\bvilken\s+byggnad\b.*\b(?:valt|använder|används)\b", question, re.IGNORECASE,
+    ))
+    if not specs and not identity_question:
+        return None
+    # Retrieved facts can merge ODEN and meter data. Cache reuse must preserve
+    # the original ODEN projection, rather than relabel monthly readings as
+    # annual EPC values in a generic-only follow-up.
+    meter_source = (evidence.get("sources") or {}).get("specialized_sql") or {}
+    if meter_source.get("accepted_records"):
+        consumption_keys = {
+            "electricity_use", "district_heating_use", "district_heating_space_heating",
+            "district_heating_domestic_hot_water",
+        }
+        if any(key in consumption_keys for key, *_ in specs):
+            return None
+        previous = _latest_session_state(state.get("session_state"))
+        previous_trace = ((previous.get("metadata") or {}).get("query_traces") or {}).get("generic_sql") or {}
+        if previous_trace.get("execution_status") in {"error", "not_found", "empty_result", "db_error", "model_error"}:
+            return None
+        rows = previous.get("agent_data_generic")
+        if rows is None:
+            rows = (previous.get("aggregated_data") or {}).get("generic_sql")
+        if not _all_retrieved_rows_match_building_id(rows, selected):
+            return None
+        facts = extract_retrieved_facts(rows)
+    # A partial cached projection cannot answer a newly requested missing field.
+    if any(key not in facts for key, *_ in specs):
+        return None
+    cached = copy.deepcopy(facts)
+    trace = {
+        "query_type": "cached_building_facts", "execution_status": "cached",
+        "building_id": selected, "rows_returned": 1, "cache_used": True,
+        "returned_values_used": cached,
+    }
+    return {"ok": True, "data": [cached], "trace": trace}
+
+
 def generic_sql_agent_node(state: GraphState) -> GraphState:
     par = state.get("parallel") or {}
     if par.get("active") and not par.get("required", {}).get("generic_sql", False):
@@ -3631,14 +4746,23 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
         return {"done_generic_sql": True}
 
     md = state.get("metadata", {}) or {}
+    if md.get("building_selection_error"):
+        md = dict(md)
+        clarification = dict(md.get("clarification") or {})
+        clarification["question_asked"] = _address_candidate_question(md)
+        md["clarification"] = clarification
+        return {"metadata": md, "done_generic_sql": True, "identity_gate_blocked": True}
     addr = md.get("address")
     explicit_building_id = _explicit_building_id_from_metadata(md)
     if explicit_building_id:
         addr = None
     print(f"[generic_sql_agent] ENTER addr={addr!r}", flush=True)
-    result = None
+    cache_selected_id = explicit_building_id or select_response_building_id(state, md)
+    result = _verified_cached_building_result(state, cache_selected_id)
+    candidate_rows_for_selection = []
+    candidate_pool_for_selection = []
 
-    if explicit_building_id:
+    if explicit_building_id and result is None:
         print(f"[generic_sql_agent] selected byggnadsid={explicit_building_id!r}", flush=True)
         result = sql_mapper_layer.execute("buildings_by_building_id", building_id=explicit_building_id)
         if not (result.get("ok") and result.get("data")):
@@ -3647,7 +4771,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                 print("[generic_sql_agent] used BRF selected-address fallback for byggnadsid", flush=True)
                 result = fallback
                 addr = None
-            elif md.get("address"):
+            elif md.get("address") and not md.get("building_id_from_user"):
                 print("[generic_sql_agent] fallback to address lookup after byggnadsid miss", flush=True)
                 addr = md.get("address")
                 result = None
@@ -3666,8 +4790,16 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     result = res2
         if result.get("ok") and isinstance(result.get("data"), list):
             original_rows = result.get("data") or []
+            candidate_pool_for_selection = _address_candidate_options(original_rows)
             location_hint = _extract_metadata_location_hint(md)
-            narrowed_rows = _narrow_address_matches(addr, original_rows, location_hint)
+            candidate_rows_for_selection = _filter_rows_by_metadata_location(original_rows, md)
+            allowed_ids = set(md.get("pending_address_candidate_ids") or [])
+            if allowed_ids:
+                candidate_rows_for_selection = [
+                    row for row in candidate_rows_for_selection
+                    if str(_extract_row_identifier(row) or "").upper() in allowed_ids
+                ]
+            narrowed_rows = _narrow_address_matches(addr, candidate_rows_for_selection)
             result["data"] = narrowed_rows
             trace = result.get("trace") or {}
             trace["rows_returned"] = len(narrowed_rows or [])
@@ -3683,9 +4815,9 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                 "address_location_no_match"
                 if location_hint_no_match
                 else
-                "exact_address_location"
+                "address_location"
                 if location_hint and narrowed_rows and len(narrowed_rows) < len(original_rows)
-                else "exact_address"
+                else "address_versions_grouped"
                 if narrowed_rows and len(narrowed_rows) < len(original_rows)
                 else "address_lookup"
             )
@@ -3732,7 +4864,7 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
 
     if result and result.get("ok"):
         location_hint_for_identity = _extract_metadata_location_hint(md)
-        if _rows_conflict_with_location_hint(result.get("data"), location_hint_for_identity):
+        if location_hint_for_identity and result.get("data") and not _filter_rows_by_metadata_location(result.get("data"), md):
             trace = result.get("trace") or {}
             trace["address_location_hint"] = location_hint_for_identity
             trace["location_hint_no_match"] = True
@@ -3786,6 +4918,16 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     "explicit_building_id_accepted": True,
                 },
             )
+        elif explicit_building_id and not (trace or {}).get("location_hint_no_match"):
+            # Query traces also contain returned IDs. They must never make a
+            # different building appear consistent with the user's selection.
+            has_rows = bool(result.get("data"))
+            identity_check = _deep_merge(identity_check, {
+                "status": "conflict" if has_rows else "missing",
+                "matched_building_id": None,
+                "conflicting_metadata": has_rows,
+                "explicit_building_id_accepted": False,
+            })
         if (
             identity_check.get("status") == "ambiguous"
             and addr
@@ -3828,6 +4970,8 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                 },
             )
             metadata_updates.pop(PENDING_AMBIGUOUS_ADDRESS_KEY, None)
+            for key in ("building_candidate_matches", "address_candidate_pool", "pending_address_candidate_ids", "building_selection_error"):
+                metadata_updates.pop(key, None)
             outs.append("generic_sql: ok")
             try:
                 n = len(result.get("data") or [])
@@ -3838,7 +4982,29 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
             clarification_reason = (
                 "ambiguous_address"
                 if identity_check.get("ambiguous") or (trace or {}).get("location_hint_no_match")
+                else "building_not_found_by_id" if explicit_building_id and not result.get("data")
                 else "missing_building_data"
+            )
+            options = _address_candidate_options(candidate_rows_for_selection or result.get("data"))
+            if candidate_pool_for_selection:
+                metadata_updates["address_candidate_pool"] = candidate_pool_for_selection
+            if not options and (trace or {}).get("location_hint_no_match"):
+                options = _address_candidate_options(metadata_updates.get("address_candidate_pool"))
+            metadata_updates["building_candidate_matches"] = options
+            # An ambiguous response must not leave a candidate's ID selected.
+            if identity_check.get("status") == "ambiguous":
+                identity_check["matched_building_id"] = None
+                metadata_updates["building_identity_check"] = identity_check
+                for key in ("byggnadsid", "building_id"):
+                    metadata_updates.pop(key, None)
+            metadata_updates.setdefault("pending_address_query", {
+                "context": copy.deepcopy(state.get("context") or {}),
+                "user_message": (state.get("context") or {}).get("answer_focus") or state.get("last_message"),
+            })
+            question = (
+                _address_candidate_question(metadata_updates)
+                if clarification_reason == "ambiguous_address"
+                else build_clarification_question(clarification_reason)
             )
             metadata_updates = _deep_merge(
                 metadata_updates,
@@ -3846,12 +5012,12 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     "clarification": {
                         "needed": True,
                         "reason": clarification_reason,
-                        "question_asked": build_clarification_question(clarification_reason),
+                        "question_asked": question,
                         "resolved": False,
                         "resolved_after_turns": None,
                     },
                     PENDING_AMBIGUOUS_ADDRESS_KEY: addr,
-                    "building_candidate_matches": result.get("data")[:5] if isinstance(result.get("data"), list) else result.get("data"),
+                    "building_candidate_matches": options,
                 },
             )
             updates["identity_gate_blocked"] = True
@@ -3860,11 +5026,16 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
     else:
         if addr:
             outs.append(f"generic_sql: no rows for address {addr!r} (ASCII fallback tried if applicable).")
+            lookup_by_id = bool((trace or {}).get("building_id") or
+                                (trace or {}).get("operation") == "buildings_by_building_id" or
+                                (trace or {}).get("query_type") == "buildings_by_building_id")
             clarification_reason = (
-                "building_not_found"
+                ("building_not_found_by_id" if lookup_by_id else "building_not_found")
                 if ((trace or {}).get("execution_status") == "not_found" or result)
                 else "missing_building_data"
             )
+            if (trace or {}).get("execution_status") in {"error", "db_error", "model_error", "import_error"}:
+                clarification_reason = "building_lookup_failed"
             metadata_updates = _deep_merge(
                 metadata_updates,
                 {
@@ -3897,9 +5068,11 @@ def generic_sql_agent_node(state: GraphState) -> GraphState:
                     {
                         "clarification": {
                             "needed": True,
-                            "reason": "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data",
+                            "reason": ("building_lookup_failed" if (trace or {}).get("execution_status") in {"error", "db_error", "model_error", "import_error"}
+                                       else "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data"),
                             "question_asked": build_clarification_question(
-                                "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data"
+                                "building_lookup_failed" if (trace or {}).get("execution_status") in {"error", "db_error", "model_error", "import_error"}
+                                else "building_not_found_by_id" if key == "byggnadsid" else "missing_building_data"
                             ),
                             "resolved": False,
                             "resolved_after_turns": None,
@@ -4002,7 +5175,7 @@ def vector_db_agent_node(state: GraphState) -> GraphState:
         return {"done_vector": True}
 
     ctx = state.get("context", {}) or {}
-    query = ctx.get("effective_query") or state.get("last_message") or ""
+    query = ctx.get("effective_query") or ctx.get("answer_focus") or state.get("last_message") or ""
     entities = ctx.get("entities") or []
     hint = f" Entities: {', '.join(entities)}" if entities else ""
     q = f"{query}{hint}".strip()
@@ -4200,6 +5373,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     ctx = state.get("context", {}) or {}
     prior_metadata = _latest_session_state(state.get("session_state")).get("metadata") or {}
     metadata = dict(state.get("metadata") or prior_metadata)
+    language = response_language(state.get("messages"), (state.get("context") or {}).get("answer_focus") or state.get("last_message") or "", metadata)
+    metadata["response_language"] = language
     aggregate = state.get("aggregated_data") or state.get("agent_data") or {}
     oden_records = (
         state["agent_data_generic"] if "agent_data_generic" in state
@@ -4226,6 +5401,27 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     metadata["retrieved_facts"] = retrieved_facts
     metadata["data_freshness"] = evidence["data_freshness"]
     metadata["evidence_scope"] = evidence["evidence_scope"]
+    if identity_check.get("status") == "passed":
+        address_evidence = []
+        for candidate in (metadata.get("multi_address_resolution") or {}).get("candidates", []):
+            returned_ids = candidate.get("building_ids") or [candidate.get("building_id")]
+            if str(building_id) not in returned_ids:
+                continue
+            address_evidence.append({
+                "searched_address": candidate.get("address"),
+                "location_hint": candidate.get("location_hint"),
+                "returned_building_ids": returned_ids,
+                "selected_building_id": str(building_id),
+                "recorded_addresses_for_selected_id": (candidate.get("recorded_addresses_by_building_id") or {}).get(str(building_id), []),
+                "unique_match": len(returned_ids) == 1,
+            })
+        if address_evidence:
+            metadata["address_identity_evidence"] = {
+                "source": "ODEN address endpoint",
+                "selected_building_id": str(building_id),
+                "address_lookups": address_evidence,
+                "interpretation": "These address lookups returned the selected ID. A lookup with several returned IDs remains ambiguous; user selection identifies the chosen ID without proving that this address belongs only to it.",
+            }
     current_address = metadata.get("address") or metadata.get("address_from_user") or ""
     epc_record_address = _extract_first_address_for_keys(
         (evidence["results"].get("generic_sql"),), ("epc_idadr", "official_address"),
@@ -4261,7 +5457,9 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
         identity_check=identity_check,
         epc_record_address=epc_record_address,
     )
-    retrieved_facts = metadata.get("retrieved_facts") or retrieved_facts
+    metadata = with_clarification_progress(metadata, state.get("messages") or [],
+        (_latest_session_state(state.get("session_state")).get("metadata") or {}))
+    retrieved_facts = metadata.get("retrieved_facts", {})
     metadata["data_freshness"] = evidence["data_freshness"]
     route_hint = "clarification" if (metadata.get("clarification") or {}).get("needed") else "building_specific"
     metadata["uncertainty"] = compute_uncertainty(
@@ -4276,6 +5474,22 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     )
     user_input_for_response = ctx.get("answer_focus") or state.get("last_message") or ""
     ecm_request = _looks_like_building_ecm_advice(user_input_for_response)
+    metadata["request_parts"] = _request_parts_for_response(user_input_for_response, ctx, retrieved_facts)
+    full_question_response = _requires_full_question_response(user_input_for_response, {**ctx, "request_parts": metadata["request_parts"]})
+    multipart = len(metadata["request_parts"]) > 1
+    metadata["multipart_response_format"] = multipart
+    document_request = requests_existing_document(user_input_for_response)
+    provided_documents = []
+    if document_request:
+        for part in metadata["request_parts"]:
+            if requests_existing_document(part["question"]):
+                passages = _provided_document_text(state.get("messages") or [], part["question"], str(building_id))
+                provided_documents.extend(passages)
+                part["document_text_status"] = "user_supplied_unverified" if passages else "original_text_unavailable"
+                if passages:
+                    part["user_supplied_document_passages"] = passages
+                else:
+                    part["source_limitation"] = _missing_document_response(language, part["question"])
     # The legacy direct-fact renderer assumes annual EPC units. Meter readings
     # may instead be monthly or use another unit; keep their model explanation.
     has_meter_records = bool(evidence["evidence_scope"]["sources"]["specialized_sql"]["accepted_records"])
@@ -4283,6 +5497,8 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     # Failure status belongs to this generation, not a previous session turn.
     metadata.pop("response_fallback", None)
     metadata.pop("response_model_error", None)
+    metadata.pop("unanswered_request_parts", None)
+    metadata.pop("request_part_coverage", None)
     prompt = build_building_response_prompt(
         user_input=user_input_for_response,
         current_address=str(current_address),
@@ -4295,13 +5511,29 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
     # A valid advisory answer may be a single focused recommendation or a
     # diagnostic question. Keyword/section checks cannot judge that quality.
     model_failure_reason = None
-    try:
-        answer = llm_summarizer.generate_response(prompt, message_list=[])
-    except Exception as exc:
-        answer = None
-        model_failure_reason = "response_model_exception"
-        metadata["response_model_error"] = type(exc).__name__
-        print(f"[llm_summarizer] model error: {type(exc).__name__}", flush=True)
+    targeted_fact_answer = _targeted_building_fact_response(
+        user_input=user_input_for_response, current_address=str(current_address),
+        building_id=str(building_id), facts=fixed_unit_facts, language=language,
+    )
+    deterministic_document = document_request and not provided_documents and not multipart
+    deterministic_fact = bool(targeted_fact_answer and not full_question_response and not ecm_request and not has_meter_records)
+    if deterministic_document:
+        answer = _missing_document_response(language, user_input_for_response)
+        metadata["unanswered_request_parts"] = [{"question": user_input_for_response, "kind": "document"}]
+        metadata["response_fallback"] = {"reason": "original_document_text_unavailable"}
+    elif deterministic_fact:
+        # The fact renderer already has the scoped result. A generation whose
+        # output would be discarded adds cost without changing the answer.
+        answer = targeted_fact_answer
+        metadata["response_fallback"] = {"reason": "direct_fact_response_targeted"}
+    else:
+        try:
+            answer = llm_summarizer.generate_response(prompt, message_list=[], language=language)
+        except Exception as exc:
+            answer = None
+            model_failure_reason = "response_model_exception"
+            metadata["response_model_error"] = type(exc).__name__
+            print(f"[llm_summarizer] model error: {type(exc).__name__}", flush=True)
 
     if _is_model_error_response(answer):
         model_failure_reason = "response_model_error"
@@ -4315,11 +5547,20 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 
     if model_failure_reason:
         metadata["response_fallback"] = {"reason": model_failure_reason}
-        if ecm_request:
+        if document_request or (full_question_response and len(metadata["request_parts"]) > 1 and any(part.get("kind") != "fact" for part in metadata["request_parts"])):
+            answer, metadata["unanswered_request_parts"] = _partial_building_response(
+                question=user_input_for_response,
+                parts=metadata["request_parts"],
+                building_id=str(building_id),
+                facts=fixed_unit_facts,
+                language=language,
+            )
+        elif ecm_request:
             answer = _unavailable_advisory_response(
                 current_address=str(current_address),
                 building_id=str(building_id),
                 facts=fixed_unit_facts,
+                language=language,
             )
         else:
             answer = _deterministic_building_fact_response(
@@ -4327,31 +5568,30 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
                 current_address=str(current_address),
                 building_id=str(building_id),
                 facts=fixed_unit_facts,
+                language=language,
             )
         print("[llm_summarizer] used model-unavailable fallback", flush=True)
 
-    targeted_fact_answer = _targeted_building_fact_response(
-        user_input=user_input_for_response,
-        current_address=str(current_address),
-        building_id=str(building_id),
-        facts=fixed_unit_facts,
-    )
-    if targeted_fact_answer and not ecm_request and not model_failure_reason:
-        fallback_reason = (
-            "direct_fact_response_was_too_broad"
-            if _response_looks_like_full_profile(answer)
-            else "direct_fact_response_targeted"
-        )
-        metadata["response_fallback"] = {"reason": fallback_reason}
-        answer = targeted_fact_answer
-        print("[llm_summarizer] used targeted direct-fact response", flush=True)
-    answer = ensure_building_identifier_in_response(answer, building_id)
+    if multipart and not model_failure_reason:
+        answer, unanswered, coverage = _render_multipart_response(answer, metadata["request_parts"], fixed_unit_facts, language)
+        metadata["request_part_coverage"] = coverage
+        if unanswered:
+            metadata["unanswered_request_parts"] = unanswered
+    if document_request and not provided_documents and not deterministic_document and not multipart:
+        # Even a successful prose answer must state the document-text limit.
+        limitation = _missing_document_response(language, user_input_for_response)
+        if limitation not in answer:
+            answer = limitation + "\n\n" + answer
+    answer = ensure_building_identifier_in_response(answer, building_id, language=language)
     answer = apply_response_safety_notes(answer, metadata, user_message=user_input_for_response)
+    answer = guard_response_links(answer, language)
     print("[llm_summarizer] response prepared ✓", flush=True)
 
     sess = _latest_session_state(state.get("session_state"))
     if not (metadata.get("clarification") or {}).get("needed"):
         metadata.pop(PENDING_BUILDING_ADVICE_KEY, None)
+        metadata.pop(PENDING_BUILDING_REQUEST_KEY, None)
+        metadata.pop("pending_address_query", None)
     sess["metadata"] = metadata
     sess["context"] = ctx
     if ctx.get("intent"):
@@ -4368,12 +5608,37 @@ def llm_summarizer_node(state: GraphState) -> GraphState:
 # ======================
 def request_address_node(state: GraphState) -> GraphState:
     print("[request_address] ENTER → END", flush=True)
-    md = state.get("metadata", {}) or {}
+    md = _remember_pending_building_request(state, state.get("metadata", {}) or {})
     clarification = md.get("clarification") or {}
+    md["clarification"] = {**clarification, "identity_required": True}
     reason = clarification.get("reason") or "missing_address"
-    question = clarification.get("question_asked") or build_clarification_question(reason)
-    generated = generate_clarification(state=state, reason=reason, fallback=question)
+    if (
+        reason in {"incomplete_question", "missing_building_data"}
+        and not (md.get("address") or _has_single_filter(md))
+        and _has_recorded_fact_request(state.get("context") or {})
+    ):
+        reason = "missing_address"
+        clarification = {}
+    language = md.get("response_language") or response_language(state.get("messages"), state.get("last_message") or "", md)
+    md["response_language"] = language
+    question = build_clarification_question(reason, language) if language == "sv" else clarification.get("question_asked") or build_clarification_question(reason)
+    if reason == "ambiguous_address" and md.get("building_candidate_matches"):
+        question = _address_candidate_question(md)
+    generated = (
+        {"question": question, "status": "deterministic", "focus": "building_selection"}
+        if reason == "ambiguous_address" and (md.get("building_candidate_matches") or (md.get("generic_sql_trace") or {}).get("location_hint_no_match"))
+        else generate_clarification(state=state, reason=reason, fallback=question)
+    )
     question = generated["question"]
+    original_question = (state.get("context") or {}).get("answer_focus") or state.get("last_message") or ""
+    if requests_existing_document(original_question) and not _provided_document_text(state.get("messages") or [], original_question, _explicit_building_id_from_metadata(md) or ""):
+        parts = _request_parts_for_response(original_question, state.get("context") or {}, {})
+        md["request_parts"] = parts
+        explanation = _missing_document_response(language)
+        if any(part.get("kind") != "fact" and not requests_existing_document(part["question"]) for part in parts):
+            explanation += ("\n\nSom allmän nästa åtgärd kan styrelsen samla energifakturor, driftscheman och rapporterade komfortproblem, jämföra likvärdiga perioder och låta förvaltaren kontrollera reglering och injustering innan investeringar rangordnas. Byggnadsspecifika prioriteringar kräver mer underlag."
+                            if language == "sv" else "\n\nAs general next steps, the BRF board can gather energy bills, operating schedules and reported comfort problems, compare like periods, and ask the manager to review controls and balancing before ranking investments. Building-specific priorities need further evidence.")
+        question = explanation + "\n\n" + question
     return {
         "final_response": question,
         "metadata": _deep_merge(
@@ -4394,11 +5659,22 @@ def request_address_node(state: GraphState) -> GraphState:
 
 def clarification_node(state: GraphState) -> GraphState:
     print("[clarification] ENTER → END", flush=True)
-    md = state.get("metadata", {}) or {}
+    md = _remember_pending_building_request(state, state.get("metadata", {}) or {})
     clarification = md.get("clarification") or {}
     reason = clarification.get("reason") or "incomplete_question"
-    question = clarification.get("question_asked") or build_clarification_question(reason)
-    generated = generate_clarification(state=state, reason=reason, fallback=question)
+    language = md.get("response_language") or response_language(state.get("messages"), state.get("last_message") or "", md)
+    md["response_language"] = language
+    question = build_clarification_question(reason, language) if language == "sv" else clarification.get("question_asked") or build_clarification_question(reason)
+    if reason == "ambiguous_address" and md.get("building_candidate_matches"):
+        question = _address_candidate_question(md)
+    if reason == "ambiguous_brf" and md.get("pending_brf_resolution"):
+        pending = md["pending_brf_resolution"]
+        question = _build_brf_selection_question(pending.get("brf_name") or "", pending.get("options") or [], language)
+    generated = (
+        {"question": question, "status": "deterministic", "focus": "building_selection"}
+        if reason == "ambiguous_address" and (md.get("building_candidate_matches") or (md.get("generic_sql_trace") or {}).get("location_hint_no_match"))
+        else generate_clarification(state=state, reason=reason, fallback=question)
+    )
     question = generated["question"]
     return {
         "final_response": question,
@@ -4407,6 +5683,7 @@ def clarification_node(state: GraphState) -> GraphState:
             {
                 "clarification": {
                     "needed": True,
+                    "identity_required": True,
                     "reason": reason,
                     "question_asked": question,
                     "generation_status": generated["status"],

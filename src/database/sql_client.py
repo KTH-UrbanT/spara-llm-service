@@ -94,8 +94,9 @@ class SQLClient:
     def building_by_uuid(self, building_uuid: str) -> Optional[Row]:
         url = f"{self.base_url}{self.BASE_PATH}{building_uuid}/"
         r = self._get(url)
-        if not r.ok:
+        if r.status_code == 404:
             return None
+        r.raise_for_status()
         try:
             data = r.json()
             return data if isinstance(data, dict) else None

@@ -9,6 +9,7 @@ import re
 from typing import Any, Dict
 
 from src.pipeline.safety_analysis import compute_data_freshness, extract_retrieved_facts
+from src.services.source_link_registry import resolve_source_links
 
 
 def _identifier(value: Any) -> str:
@@ -59,6 +60,15 @@ def select_response_building_id(state: Dict[str, Any], metadata: Dict[str, Any])
     snippets cannot select the current building.
     """
     state, metadata = state or {}, metadata or {}
+    explicit = {
+        _canonical_field_id(metadata.get(key))
+        for key in ("building_id_from_user", "selected_address_building_id", "selected_brf_building_id")
+        if _canonical_field_id(metadata.get(key))
+    }
+    if len({value.casefold() for value in explicit}) > 1:
+        return None
+    if explicit:
+        return next(iter(explicit))
     selected = _canonical_field_id(metadata.get("byggnadsid"))
     if selected:
         return selected
@@ -105,7 +115,18 @@ def _canonical_row(row: dict) -> dict:
     declared_key = lower.get("epc_egienergiklass")
     if declared_key and flat[declared_key] not in (None, ""):
         flat["energy_class"] = flat[declared_key]
-    return extract_retrieved_facts(flat)
+    facts = extract_retrieved_facts(flat)
+    if declared_key and flat[declared_key] not in (None, ""):
+        facts["declared_energy_class"] = flat[declared_key]
+    for key in ("epc_egienergiklass2020_calc", "epc_egienergiklass2016_calc", "epc_egienergiklass_calc"):
+        if lower.get(key) and flat[lower[key]] not in (None, ""):
+            facts["calculated_energy_class"] = flat[lower[key]]
+            if not declared_key or flat[declared_key] in (None, ""):
+                # Extraction aliases can originate in a calculation. Without
+                # a declared source field, expose only the calculated label.
+                facts.pop("energy_class", None)
+            break
+    return facts
 
 
 def _consistent_facts(rows: list, selected: str):
@@ -142,14 +163,16 @@ def prepare_response_evidence(state: Dict[str, Any], metadata: Dict[str, Any], b
     projection_bound = (identity.get("status") == "passed" and _matches(identity.get("matched_building_id"), selected))
     results, scoped_rows, oden_rows, sources = {}, [], [], {}
     refreshed = False
+    cache_used = False
     for name, done_key in (("generic_sql", "done_generic_sql"), ("specialized_sql", "done_specialized_sql")):
         present, payload = _source(state, name)
         trace = (metadata.get("query_traces") or {}).get(name)
         # Metadata can retain a trace from an earlier turn; only graph output
         # or a completion flag indicates a retrieval attempt in this state.
         attempted = present or bool(state.get(done_key))
-        refreshed = refreshed or attempted
         trace_status = str(trace.get("execution_status") or "").lower() if isinstance(trace, dict) else ""
+        cached_source = name == "generic_sql" and trace_status == "cached" and bool(trace.get("cache_used"))
+        refreshed = refreshed or (attempted and not cached_source)
         failed_refresh = bool(state.get(done_key) and trace_status in {
             "error", "not_found", "model_error", "import_error", "db_error", "empty_result", "not_run", "noop",
         })
@@ -160,6 +183,9 @@ def prepare_response_evidence(state: Dict[str, Any], metadata: Dict[str, Any], b
         excluded = len(candidates) - len(accepted)
         status = "available" if accepted else "unmatched" if excluded else "empty_or_failed" if attempted else "not_requested"
         sources[name] = {"status": status, "accepted_records": len(accepted), "excluded_records": excluded}
+        if cached_source and accepted:
+            cache_used = True
+            sources[name].update(status="cached", reason="Previously verified building facts; no new ODEN request during this turn.")
         if excluded:
             sources[name]["reason"] = "Returned records lack a verified match to the selected building ID. Local database IDs are not national building IDs."
         if present:
@@ -171,11 +197,15 @@ def prepare_response_evidence(state: Dict[str, Any], metadata: Dict[str, Any], b
     present, vector = _source(state, "vector")
     if present:
         results["vector"] = copy.deepcopy(vector)
+        if isinstance(results["vector"], dict):
+            source_keys = list(vector.get("sources") or [])
+            source_keys.extend(hit.get("source") for hit in vector.get("hits", []) if isinstance(hit, dict) and hit.get("source"))
+            results["vector"]["source_documents"] = resolve_source_links(source_keys)
         sources["vector"] = {"status": "guidance_only", "reason": "Document excerpts do not establish this building's own facts or identity."}
 
-    cache_used = False
     cache = metadata.get("retrieved_facts")
-    if not refreshed and isinstance(cache, dict) and _row_matches(cache, selected):
+    cache_ids = [cache.get(key) for key in ("byggnadsid", "building_id") if _identifier(cache.get(key))] if isinstance(cache, dict) else []
+    if not refreshed and not cache_used and isinstance(cache, dict) and cache_ids and all(_matches(value, selected) for value in cache_ids):
         scoped_rows = [cache]
         results["cached_building_facts"] = copy.deepcopy(cache)
         sources["cached_building_facts"] = {"status": "cached", "reason": "Previously retrieved facts for the same building; not refreshed during this turn."}
@@ -189,6 +219,9 @@ def prepare_response_evidence(state: Dict[str, Any], metadata: Dict[str, Any], b
         freshness["freshness_status"] = "mixed"
     else:
         freshness = compute_data_freshness(freshness_rows)
+    if not freshness_rows:
+        # Guidance documents and linked meter data do not establish an EPC date.
+        freshness["requires_warning"] = False
     return {
         "facts": facts,
         "data_freshness": freshness,

@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 from src.pipeline.safety_analysis import assess_boundary_safety
@@ -15,20 +16,34 @@ ROUTE_LABELS = {
 }
 
 BUILDING_IDENTIFIER_KEYS = (
-    "building_id",
     "byggnadsid",
-    "50a_uuid",
-    "uuid",
-    "oden_uuid",
-    "01a_fnr",
-    "epc_idadr",
+    "building_id",
+    "selected_address_building_id",
+    "selected_brf_building_id",
+    "building_id_from_user",
 )
 
 SESSION_MEMORY_KEYS = (
     "address",
     "address_from_user",
     "address_location_hint",
+    "address_city",
+    "city",
+    "postort",
+    "municipality",
+    "kommun",
+    "postcode",
+    "postal_code",
+    "postnr",
     "pending_ambiguous_address",
+    "address_references",
+    "address_candidates",
+    "multi_address_resolution",
+    "address_identity_evidence",
+    "building_candidate_matches",
+    "pending_address_candidate_ids",
+    "pending_address_query",
+    "building_selection_error",
     "requested_address",
     "epc_record_address",
     "same_building_multiple_addresses",
@@ -39,9 +54,18 @@ SESSION_MEMORY_KEYS = (
     "selected_brf_addresses",
     "selected_brf_lookup_address",
     "building_id_from_user",
+    "selected_address_building_id",
     "pending_brf_resolution",
     "brf_resolution",
     "brf_candidate_buildings",
+    "pending_building_request",
+    "pending_building_advice_request",
+    "request_parts",
+    "address_selection_evidence",
+    "selected_address_lookup_address",
+    "clarification_started_user_turn",
+    "clarification_resolved_user_turn",
+    "clarification_turn_count",
 )
 
 RESOLVED_BRF_STATUSES = {
@@ -70,6 +94,123 @@ CLARIFICATION_PATTERNS = {
 def is_evaluation_mode() -> bool:
     value = str(os.getenv("EVALUATION_MODE", "false")).strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _public_building_identifier(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or text == "building_id_not_available" or re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+        return None
+    if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", text, re.IGNORECASE):
+        return None
+    return text
+
+
+def has_verified_building_identity(metadata: Dict[str, Any]) -> bool:
+    identity = (metadata or {}).get("building_identity_check") or {}
+    return bool(
+        isinstance(identity, dict)
+        and identity.get("status") == "passed"
+        and _public_building_identifier(identity.get("matched_building_id"))
+    )
+
+
+def needs_identity_clarification(metadata: Dict[str, Any]) -> bool:
+    """A diagnostic follow-up does not make a confirmed identity ambiguous."""
+    clarification = (metadata or {}).get("clarification") or {}
+    if not isinstance(clarification, dict) or not clarification.get("needed"):
+        return False
+    if clarification.get("identity_required") is False:
+        return False
+    reason = str(clarification.get("reason") or "")
+    if has_verified_building_identity(metadata) and reason in {
+        "diagnostic_question", "diagnostic_followup", "missing_measurements",
+        "missing_operational_data", "incomplete_advice_context",
+    }:
+        return False
+    return True
+
+
+def looks_like_identity_request(response_text: str) -> bool:
+    """Support legacy standalone prompts, never classify long advisory prose."""
+    text = (response_text or "").strip()
+    if not text or len(text) > 450 or len(text.splitlines()) > 3:
+        return False
+    if re.search(r"\b(?:i\s+need|please\s+provide|jag\s+beh[öo]ver)\s+(?:the\s+)?full\s+(?:building|street)\s+address\b", text, re.IGNORECASE):
+        return True
+    if text.lower().startswith("could you clarify your request"):
+        return True
+    return bool(re.search(
+        r"^(?:(?:please|to\s+[^.!?]{1,100},?|i\s+(?:need|require))\s+)?"
+        r"(?:provide|enter|give|supply|confirm|choose|select|which|what\s+is|"
+        r"ange|uppge|v[äa]lj|vilken|vilket)\b.*"
+        r"\b(?:address|street\s+address|building\s+id|brf|municipality|city|postcode|"
+        r"adress|byggnadsid|kommun|postort|postnummer)\b",
+        text, re.IGNORECASE,
+    ))
+
+
+def with_clarification_progress(
+    metadata: Dict[str, Any], messages: List[Dict[str, Any]],
+    previous_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Track replies to an identity question using the full conversation history.
+
+    This function is pure. A completed count is frozen until a new clarification
+    starts. Without history, retain a supplied count instead of inventing replies.
+    """
+    result = dict(metadata or {})
+    previous = previous_metadata or {}
+    current = result.get("clarification")
+    if not isinstance(current, dict):
+        return result
+    current = dict(current)
+    result["clarification"] = current
+    prior = previous.get("clarification") or {}
+    user_turn = sum(isinstance(item, dict) and item.get("role") == "user" for item in messages or [])
+    active = needs_identity_clarification(result)
+    was_active = needs_identity_clarification(previous)
+
+    def count(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+    start = count(result.get("clarification_started_user_turn"))
+    if start is None:
+        start = count(previous.get("clarification_started_user_turn"))
+    stopped = count(result.get("clarification_resolved_user_turn"))
+    if stopped is None:
+        stopped = count(previous.get("clarification_resolved_user_turn"))
+    if active:
+        # An old completed start cannot count towards a new identity question.
+        if stopped is not None and not was_active:
+            start = None
+        if start is None and user_turn:
+            start = user_turn
+        if start is not None:
+            result["clarification_started_user_turn"] = start
+        result.pop("clarification_resolved_user_turn", None)
+        elapsed = max(0, user_turn - start) if user_turn and start is not None else count(result.get("clarification_turn_count"))
+        if elapsed is None:
+            elapsed = count(previous.get("clarification_turn_count")) or 0
+        result["clarification_turn_count"] = elapsed
+        current.update(needed=True, resolved=False, resolved_after_turns=None)
+    elif start is not None:
+        if user_turn and (was_active or stopped is None):
+            stopped = user_turn
+        if stopped is not None:
+            result["clarification_resolved_user_turn"] = stopped
+            elapsed = max(0, stopped - start)
+        else:
+            elapsed = count(current.get("resolved_after_turns"))
+            if elapsed is None:
+                elapsed = count(prior.get("resolved_after_turns"))
+        result["clarification_started_user_turn"] = start
+        if elapsed is not None:
+            result["clarification_turn_count"] = elapsed
+            current["resolved_after_turns"] = elapsed
+        current.update(needed=False, resolved=True)
+    return result
 
 
 def _is_present(value: Any) -> bool:
@@ -104,8 +245,11 @@ def _normalize_source_list(sources: Any) -> List[Any]:
 
 def _extract_building_id(metadata: Dict[str, Any]) -> Optional[str]:
     metadata = metadata or {}
+    if has_verified_building_identity(metadata):
+        return metadata["building_identity_check"]["matched_building_id"].strip()
+
     for key in BUILDING_IDENTIFIER_KEYS:
-        value = _stringify(metadata.get(key))
+        value = _public_building_identifier(metadata.get(key))
         if value:
             return value
 
@@ -114,7 +258,7 @@ def _extract_building_id(metadata: Dict[str, Any]) -> Optional[str]:
         for nested in aggregated.values():
             if isinstance(nested, dict):
                 for key in BUILDING_IDENTIFIER_KEYS:
-                    value = _stringify(nested.get(key))
+                    value = _public_building_identifier(nested.get(key))
                     if value:
                         return value
 
@@ -124,7 +268,15 @@ def _extract_building_id(metadata: Dict[str, Any]) -> Optional[str]:
 def _extract_retrieved_facts(metadata: Dict[str, Any]) -> Dict[str, Any]:
     metadata = metadata or {}
     explicit = metadata.get("retrieved_facts")
-    if isinstance(explicit, dict) and explicit:
+    if isinstance(explicit, dict):
+        # An empty scoped snapshot is authoritative after a failed refresh.
+        # Do not rebuild it from older aggregated/session data.
+        identity = metadata.get("building_identity_check") or {}
+        if identity:
+            selected = str(identity.get("matched_building_id") or "").strip().casefold()
+            fact_ids = [str(explicit[key]).strip().casefold() for key in ("byggnadsid", "building_id") if explicit.get(key) not in (None, "")]
+            if identity.get("status") != "passed" or not selected or not fact_ids or any(value != selected for value in fact_ids):
+                return {}
         return explicit
     facts: Dict[str, Any] = {}
 
@@ -162,13 +314,23 @@ def _extract_retrieved_facts(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _extract_vector_sources(response: Dict[str, Any], metadata: Dict[str, Any]) -> List[Any]:
+    from src.services.source_link_registry import resolve_source_links
+
+    def checked(sources):
+        # Historical retrieval metadata can contain URLs even when the current
+        # agent supplied no source list. Apply the same catalog rule here.
+        if any((isinstance(item, str) and item.lower().startswith(("http://", "https://")))
+               or (isinstance(item, dict) and (item.get("link") or item.get("url"))) for item in sources):
+            return resolve_source_links(sources)
+        return sources
+
     response_sources = _normalize_source_list(response.get("sources"))
     if response_sources:
-        return response_sources
+        return checked(response_sources)
 
     vector_sources = _normalize_source_list(response.get("vector_sources"))
     if vector_sources:
-        return vector_sources
+        return checked(vector_sources)
 
     aggregated = metadata.get("aggregated_data") or {}
     if isinstance(aggregated, dict):
@@ -176,20 +338,13 @@ def _extract_vector_sources(response: Dict[str, Any], metadata: Dict[str, Any]) 
         if isinstance(vector_payload, dict):
             sources = _normalize_source_list(vector_payload.get("sources"))
             if sources:
-                return sources
+                return checked(sources)
 
     return []
 
 
 def _looks_like_clarification(response_text: str) -> bool:
-    lowered = (response_text or "").strip().lower()
-    if not lowered:
-        return False
-
-    for patterns in CLARIFICATION_PATTERNS.values():
-        if any(pattern in lowered for pattern in patterns):
-            return True
-    return False
+    return looks_like_identity_request(response_text)
 
 
 def infer_route_label(response: Dict[str, Any], metadata: Dict[str, Any]) -> str:
@@ -209,7 +364,9 @@ def infer_route_label(response: Dict[str, Any], metadata: Dict[str, Any]) -> str
     if classification == "cluster":
         return "combined"
     if classification == "building_specific":
-        if _looks_like_clarification(response.get("content") or ""):
+        if needs_identity_clarification(metadata):
+            return "clarification"
+        if not has_verified_building_identity(metadata) and _looks_like_clarification(response.get("content") or ""):
             return "clarification"
         if _extract_vector_sources(response, metadata) and _extract_retrieved_facts(metadata):
             return "combined"
@@ -231,6 +388,18 @@ def _infer_clarification_reason(response_text: str, metadata: Dict[str, Any]) ->
 
 def _build_building_match(metadata: Dict[str, Any]) -> Dict[str, Any]:
     explicit = metadata.get("building_match")
+    if has_verified_building_identity(metadata) and not needs_identity_clarification(metadata):
+        identity = metadata["building_identity_check"]
+        matched = dict(explicit) if isinstance(explicit, dict) else {}
+        input_address = _first_present(metadata.get("address_from_user"), metadata.get("address"))
+        matched.update(
+            building_id=identity["matched_building_id"],
+            matched_address=_first_present(identity.get("matched_address"), matched.get("matched_address"), input_address),
+            match_confidence="high" if input_address else "medium", ambiguous=False,
+        )
+        if input_address:
+            matched["input_address"] = input_address
+        return {key: value for key, value in matched.items() if _is_present(value) or isinstance(value, bool)}
     if isinstance(explicit, dict) and explicit:
         return explicit
     building_id = _extract_building_id(metadata)
@@ -262,12 +431,20 @@ def _build_building_match(metadata: Dict[str, Any]) -> Dict[str, Any]:
 def _build_clarification_metadata(route: str, response_text: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
     explicit = metadata.get("clarification")
     if route != "clarification":
+        resolved_turns = 0
+        if isinstance(explicit, dict):
+            value = explicit.get("resolved_after_turns")
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                resolved_turns = value
+        progress = metadata.get("clarification_turn_count")
+        if isinstance(progress, int) and not isinstance(progress, bool) and progress >= 0:
+            resolved_turns = progress
         return {
             "needed": False,
             "reason": None,
             "question_asked": None,
             "resolved": True,
-            "resolved_after_turns": 0,
+            "resolved_after_turns": resolved_turns,
         }
     if isinstance(explicit, dict) and explicit:
         return explicit
@@ -312,6 +489,8 @@ def _build_model_config() -> Dict[str, Any]:
 
 
 def _normalize_agent_name(classification: str, raw_agent: Any) -> str:
+    if isinstance(raw_agent, str) and raw_agent.strip().lower() in {"router", "routeragent"}:
+        return "RouterAgent"
     mapping = {
         "generic": "GenericAgent",
         "building_specific": "BuildingAgent",
@@ -355,6 +534,9 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
     building_id = _extract_building_id(session_metadata)
     vector_sources = _extract_vector_sources(response, session_metadata)
     retrieved_facts = _extract_retrieved_facts(session_metadata)
+    building_evidence = route in {"building_specific", "combined", "report_generation"}
+    if not building_evidence:
+        retrieved_facts = {}
     safety_boundary = assess_boundary_safety(
         user_message=session_metadata.get("last_user_message") or "",
         response_text=response.get("content") or "",
@@ -379,10 +561,14 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
         "building_match": building_match,
         "building_identity_check": session_metadata.get("building_identity_check"),
         "retrieved_facts": retrieved_facts,
+        "evidence_scope": session_metadata.get("evidence_scope") if building_evidence else None,
+        "request_parts": session_metadata.get("request_parts"),
+        "response_language": session_metadata.get("response_language"),
+        "unanswered_request_parts": session_metadata.get("unanswered_request_parts"),
         "vector_sources": vector_sources,
-        "sql_trace": session_metadata.get("sql_trace"),
-        "query_traces": session_metadata.get("query_traces"),
-        "data_freshness": session_metadata.get("data_freshness"),
+        "sql_trace": session_metadata.get("sql_trace") if building_evidence else None,
+        "query_traces": session_metadata.get("query_traces") if building_evidence else None,
+        "data_freshness": session_metadata.get("data_freshness") if building_evidence else None,
         "uncertainty": session_metadata.get("uncertainty"),
         "clarification": clarification,
         "boundary_handling": boundary_handling,
@@ -395,6 +581,7 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
             "expert_handoff_pending_confirmation", "expert_handoff_sent",
             "expert_handoff_status", "expert_handoff_simulated",
             "expert_handoff_cc_submitted",
+            "expert_handoff_language",
         ):
             if key in session_metadata:
                 payload[key] = session_metadata[key]
@@ -409,6 +596,7 @@ def build_message_metadata(response: Dict[str, Any], session_metadata: Dict[str,
             "byggnadsid",
             "selected_brf_building_id",
             "building_id_from_user",
+            "selected_address_building_id",
             "retrieved_facts",
         ):
             payload.pop(key, None)

@@ -9,6 +9,113 @@ BUILDING = "01-80-TESTA1-1"
 OTHER = "01-80-TESTB2-2"
 
 
+def test_calculated_class_only_is_not_published_as_declared_energy_class():
+    evidence = prepare_response_evidence({"agent_data_generic": [{"byggnadsid": BUILDING,
+        "epc_egienergiklass": None, "epc_egienergiklass2020_calc": "E", "epc_egienergiklass2016_calc": "D",
+        "energy_class": "E"}]}, {}, BUILDING)
+    assert "energy_class" not in evidence["facts"]
+    assert "declared_energy_class" not in evidence["facts"]
+    assert evidence["facts"]["calculated_energy_class"] == "E"
+    assert evidence["facts"]["epc_egienergiklass2016_calc"] == "D"
+
+
+@pytest.mark.parametrize("reply_count", [1, 2, 4])
+def test_identity_clarification_counts_replies_and_freezes_after_resolution(reply_count):
+    from src.pipeline.evaluation_metadata import with_clarification_progress
+    messages = [{"role": "user", "content": "What class does Ringvägen 10 have?"}]
+    pending = with_clarification_progress({"clarification": {"needed": True, "reason": "ambiguous_address"}}, messages)
+    assert pending["clarification_started_user_turn"] == 1
+    for index in range(reply_count):
+        messages += [{"role": "assistant", "content": "Which candidate?"}, {"role": "user", "content": str(index)}]
+        if index < reply_count - 1:
+            pending = with_clarification_progress(pending, messages, pending)
+            assert pending["clarification_turn_count"] == index + 1
+    resolved = with_clarification_progress({**pending, "clarification": {"needed": False, "resolved": True, "resolved_after_turns": 0}}, messages, pending)
+    assert resolved["clarification"]["resolved_after_turns"] == reply_count
+    assert resolved["clarification_turn_count"] == reply_count
+    later = with_clarification_progress(resolved, messages + [{"role": "user", "content": "What about ventilation?"}], resolved)
+    assert later["clarification"]["resolved_after_turns"] == reply_count
+
+
+def test_new_identity_question_starts_a_new_clarification_count():
+    from src.pipeline.evaluation_metadata import with_clarification_progress
+    old = {"clarification": {"needed": False, "resolved": True, "resolved_after_turns": 2}, "clarification_started_user_turn": 1, "clarification_resolved_user_turn": 3, "clarification_turn_count": 2}
+    current = {**old, "clarification": {"needed": True, "reason": "ambiguous_address"}}
+    result = with_clarification_progress(current, [{"role": "user", "content": str(index)} for index in range(5)], old)
+    assert result["clarification_started_user_turn"] == 5
+    assert result["clarification_turn_count"] == 0
+    assert "clarification_resolved_user_turn" not in result
+
+
+def test_missing_history_keeps_explicit_count_without_inventing_resolution_turns():
+    from src.pipeline.evaluation_metadata import with_clarification_progress
+    metadata = {"clarification": {"needed": False, "resolved": True, "resolved_after_turns": 3}, "clarification_started_user_turn": 1}
+    result = with_clarification_progress(metadata, [])
+    assert result["clarification"]["resolved_after_turns"] == 3
+    assert "clarification_resolved_user_turn" not in result
+
+
+def test_public_metadata_keeps_true_resolution_count_and_pending_multipart_context():
+    from src.pipeline.evaluation_metadata import build_message_metadata
+    parts = [{"question": "What is the energy class?", "kind": "fact", "sources": ["SQL database"]}, {"question": "Explain it and suggest next steps.", "kind": "advice", "sources": ["vector database"]}]
+    metadata = {"byggnadsid": BUILDING, "selected_address_building_id": BUILDING, "selected_address_lookup_address": "Ringvägen 10", "request_parts": parts, "pending_building_request": {"question": "Original multipart request", "context": {"request_parts": parts}}, "clarification": {"needed": False, "resolved": True, "resolved_after_turns": 2}, "clarification_started_user_turn": 1, "clarification_resolved_user_turn": 3, "clarification_turn_count": 2}
+    result = build_message_metadata({"classification": "building_specific", "route": "building_specific", "content": "Scoped answer"}, metadata)
+    assert result["clarification"]["resolved_after_turns"] == 2
+    assert result["request_parts"] == parts
+    assert result["pending_building_request"] == metadata["pending_building_request"]
+    assert result["selected_address_lookup_address"] == "Ringvägen 10"
+    assert result["clarification_started_user_turn"] == 1
+    assert result["clarification_resolved_user_turn"] == 3
+
+
+def test_public_verified_advice_ignores_stale_parser_ambiguity_and_long_prose():
+    from src.pipeline.evaluation_metadata import build_message_metadata
+    metadata = {"byggnadsid": BUILDING, "address": "Teknikringen 78B", "context": {"ambigious": True}, "building_identity_check": {"status": "passed", "matched_building_id": BUILDING, "matched_address": "Teknikringen 78B"}, "retrieved_facts": {"byggnadsid": BUILDING, "energy_class": "C"}}
+    answer = "Review the building and BRF systems before choosing which controls to change. " * 12
+    result = build_message_metadata({"classification": "building_specific", "content": answer}, metadata)
+    assert result["route"] == "building_specific"
+    assert result["needs_clarification"] is False
+    assert result["building_match"]["ambiguous"] is False
+    assert result["building_match"]["building_id"] == BUILDING
+    assert result["retrieved_facts"]["energy_class"] == "C"
+
+
+def test_generic_topic_keeps_identity_but_does_not_publish_old_sql_evidence():
+    from src.pipeline.evaluation_metadata import build_message_metadata
+    metadata = {"byggnadsid": BUILDING, "selected_address_building_id": BUILDING, "retrieved_facts": {"byggnadsid": BUILDING, "energy_class": "B"}, "building_identity_check": {"status": "passed", "matched_building_id": BUILDING}, "query_traces": {"generic_sql": {"old": True}}, "sql_trace": {"old": True}, "evidence_scope": {"old": True}, "data_freshness": {"old": True}}
+    result = build_message_metadata({"classification": "generic", "route": "generic", "content": "Electricity demand charges depend on the grid tariff."}, metadata)
+    assert result["selected_address_building_id"] == BUILDING
+    assert result["building_id"] == BUILDING
+    for key in ("retrieved_facts", "query_traces", "sql_trace", "evidence_scope", "data_freshness"):
+        assert key not in result
+    assert metadata["retrieved_facts"]["energy_class"] == "B"
+
+
+def test_router_fallback_records_the_actual_router_agent():
+    from src.pipeline.evaluation_metadata import build_message_metadata
+    result = build_message_metadata({"classification": "conversational", "route": "clarification", "agent_answered": "router", "content": "Could you rephrase?"}, {"clarification": {"needed": True, "reason": "classification_failed"}})
+    assert result["agent"] == "RouterAgent"
+    assert result["route"] == "clarification"
+
+
+@pytest.mark.parametrize("metadata", [
+    {"building_id": 37}, {"building_id": "37"},
+    {"50a_uuid": "b16c17f9-142e-4a52-99ec-042b444c717e"},
+    {"building_id": "b16c17f9-142e-4a52-99ec-042b444c717e"},
+    {"01a_fnr": "010125807"}, {"epc_idadr": "Ringvägen 10"},
+    {"building_identity_check": {"status": "passed", "matched_building_id": "building_id_not_available"}},
+])
+def test_public_building_id_does_not_promote_other_identifier_namespaces(metadata):
+    from src.pipeline.evaluation_metadata import build_message_metadata
+    result = build_message_metadata({"classification": "building_specific", "content": "No verified record."}, metadata)
+    assert "building_id" not in result
+
+def test_declared_and_calculated_classes_remain_separate_in_scoped_facts():
+    result = prepare_response_evidence({"agent_data_generic": [{"byggnadsid": BUILDING, "epc_egienergiklass": "G", "epc_egienergiklass2020_calc": "F"}]}, {}, BUILDING)
+    assert result["facts"]["energy_class"] == "G"
+    assert result["facts"]["declared_energy_class"] == "G"
+    assert result["facts"]["calculated_energy_class"] == "F"
+
 def test_current_oden_replaces_cached_aliases_and_dates_without_mutating_inputs():
     state = {"aggregated_data": {"generic_sql": [{"byggnadsid": BUILDING, "epc_egienergiklass": "C", "epc_egienergiklass2020_calc": "D", "epc_godkand": "2024-03-02", "epc_egienergiprestanda": 85}]}}
     metadata = {"retrieved_facts": {"byggnadsid": BUILDING, "energy_class": "G", "energy_declaration_year": 2009, "heating_system": "heat pump"}}
@@ -29,6 +136,13 @@ def test_vector_content_and_metadata_traces_cannot_supply_building_facts():
     assert result["facts"] == {}
     assert result["results"]["vector"]["hits"] == [injection]
     assert result["evidence_scope"]["sources"]["vector"]["status"] == "guidance_only"
+    assert result["data_freshness"]["requires_warning"] is False
+
+
+def test_undated_building_record_still_requires_a_freshness_warning():
+    result = prepare_response_evidence({"agent_data_generic": [{"byggnadsid": BUILDING, "energy_class": "G"}]}, {}, BUILDING)
+    assert result["data_freshness"]["freshness_status"] == "unknown"
+    assert result["data_freshness"]["requires_warning"] is True
 
 
 @pytest.mark.parametrize("unmatched_id", [37, "37", OTHER])
@@ -115,6 +229,22 @@ def test_prior_query_trace_does_not_turn_same_building_cache_into_a_current_refr
     result = prepare_response_evidence({}, metadata, BUILDING)
     assert result["facts"]["energy_class"] == "B"
     assert result["evidence_scope"]["cached_facts_used"] is True
+
+
+def test_verified_graph_cache_has_explicit_cached_source_and_original_declaration_date():
+    facts = {"byggnadsid": BUILDING, "energy_class": "B", "epc_godkand": "2024-04-18"}
+    trace = {"execution_status": "cached", "cache_used": True}
+    state = {"done_generic_sql": True, "agent_data_generic": [facts]}
+    metadata = {"retrieved_facts": facts, "query_traces": {"generic_sql": trace}}
+    before = copy.deepcopy((state, metadata))
+    result = prepare_response_evidence(state, metadata, BUILDING)
+    assert result["facts"]["energy_class"] == "B"
+    assert result["evidence_scope"]["cached_facts_used"] is True
+    assert result["evidence_scope"]["sources"]["generic_sql"]["status"] == "cached"
+    assert "no new ODEN request" in result["evidence_scope"]["sources"]["generic_sql"]["reason"]
+    assert "cached_building_facts" not in result["results"]
+    assert result["data_freshness"]["energy_declaration_year"] == 2024
+    assert (state, metadata) == before
 
 
 @pytest.mark.parametrize("local", [37, "37", 37.0, "uuid-1"])

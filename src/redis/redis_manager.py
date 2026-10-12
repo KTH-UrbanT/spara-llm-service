@@ -32,7 +32,7 @@ def _is_resolved_brf_metadata(metadata):
     )
 
 
-def _metadata_keys_to_delete(metadata):
+def _metadata_keys_to_delete(metadata, previous_metadata=None):
     metadata = metadata or {}
     delete_keys = []
     for key in TRANSIENT_METADATA_KEYS:
@@ -40,6 +40,10 @@ def _metadata_keys_to_delete(metadata):
             delete_keys.append(key)
     if _is_resolved_brf_metadata(metadata) and "pending_brf_resolution" not in delete_keys:
         delete_keys.append("pending_brf_resolution")
+    # Router output is authoritative: removed lookup fields must also leave Redis.
+    for key in previous_metadata or {}:
+        if key not in metadata and key not in delete_keys:
+            delete_keys.append(key)
     return delete_keys
 
 
@@ -47,6 +51,39 @@ def _encode_metadata_value(value):
     if isinstance(value, (list, dict, bool)):
         return json.dumps(value)
     return str(value)
+
+
+def _reply_target(message):
+    return message.get("in_reply_to_message_id") or (message.get("metadata") or {}).get("in_reply_to_message_id")
+
+
+def _next_user_turn(messages):
+    """Select the oldest tracked unanswered request with its logical history.
+
+    Historical untracked messages remain context, not a queue to replay. A second
+    user message may arrive before the first answer is appended to the Redis list.
+    """
+    replies = {str(_reply_target(item)): item for item in messages
+               if item.get("role") == "assistant" and _reply_target(item) is not None}
+    index = next((i for i, item in enumerate(messages)
+                  if item.get("role") == "user" and item.get("message_id") is not None
+                  and (item.get("metadata") or {}).get("request_tracking")
+                  and str(item["message_id"]) not in replies), None)
+    if index is None:
+        if not messages or messages[-1].get("role") != "user":
+            return None, []
+        index = len(messages) - 1
+        if str(messages[index].get("message_id")) in replies:
+            return None, []
+    history = []
+    for item in messages[:index]:
+        if item.get("role") == "assistant" and _reply_target(item) is not None:
+            continue
+        history.append(item)
+        if item.get("role") == "user" and str(item.get("message_id")) in replies:
+            history.append(replies[str(item["message_id"])])
+    history.append(messages[index])
+    return messages[index], history
 
 
 '''
@@ -213,7 +250,16 @@ class RedisQueueManager:
     #     except Exception as e:
     #         print(f"❌ Error processing thread {thread_id}: {e}")
     def process_thread_event(self, thread_id):
-        """Process an individual thread's latest user message and respond."""
+        """Serialize a conversation across workers and process one pending turn."""
+        lock = self.redis.lock(f"thread:{thread_id}:processing", timeout=900, blocking_timeout=0)
+        if not lock.acquire(blocking=False):
+            return
+        try:
+            self._process_thread_event(thread_id)
+        finally:
+            lock.release()
+
+    def _process_thread_event(self, thread_id):
         try:
             import json, time  # ensure imported here or at module top
 
@@ -225,9 +271,8 @@ class RedisQueueManager:
                 print(f"⚠️ No messages found for thread {thread_id}.")
                 return
 
-            last_message = messages[-1]
-            if last_message.get("role") != "user":
-                print(f"ℹ️ Last message in thread {thread_id} not from user. Ignoring.")
+            last_message, messages = _next_user_turn(messages)
+            if last_message is None:
                 return
 
             print(f"📨 Routing message from thread {thread_id} via agent_router...")
@@ -247,6 +292,7 @@ class RedisQueueManager:
 
             start_time = time.time()
 
+            previous_metadata = dict(metadata)
             with telemetry_context("live_chat_turn"):
                 response, metadata = self.agent_router.route_message(
                     messages, last_message['content'], metadata, thread_id
@@ -261,6 +307,7 @@ class RedisQueueManager:
                 print(f"⚠️ No response from agent for thread {thread_id}.")
                 return
 
+            response['role'] = 'assistant'
             response['timestamp'] = time.time()
             response['added_to_database'] = 0
             response_metadata = build_message_metadata(response, metadata)
@@ -268,11 +315,14 @@ class RedisQueueManager:
                 **(response.get("metadata") or {}),
                 **response_metadata,
             }
+            if last_message.get("message_id") is not None:
+                response["in_reply_to_message_id"] = last_message["message_id"]
+                response["metadata"]["in_reply_to_message_id"] = last_message["message_id"]
             response["evidence"] = build_message_evidence(response["metadata"])
 
             # ---- Write metadata back so cross-turn state like expert handoff confirmation persists
             if metadata:
-                delete_keys = _metadata_keys_to_delete(metadata)
+                delete_keys = _metadata_keys_to_delete(metadata, previous_metadata)
                 if delete_keys:
                     self.redis.hdel(meta_key, *delete_keys)
                 encoded_metadata = {

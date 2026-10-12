@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from src.agents.base_agent import BaseAgent
 from src.pipeline.telemetry import record_model_call
+from src.pipeline.safety_analysis import normalize_address_candidate
 
 # Load environment variables
 load_dotenv()
@@ -154,15 +155,23 @@ def _intent_input(state: Dict[str, Any]) -> Dict[str, Any]:
         "question", "original_question", "context", "original_context", "type",
         "parsed_intent", "intent_list", "intents", "effective_query", "answer_focus",
         "advice_type", "brf_resolution", "selected_building_id", "selected_addresses",
+        "pending_building_request", "pending_address_query", "user_message",
+        "address_location_hint", "request_parts", "kind", "sources",
+        "selected_address_building_id", "selected_address_lookup_address",
+        "address_identity_evidence", "address_selection_evidence",
+        "matched_building_id", "matched_address", "missing_fields",
+        "clarification_started_user_turn", "clarification_resolved_user_turn",
+        "clarification_turn_count",
     }
 
-    def clean(value, depth=0):
-        if depth > 4:
+    def clean(value, depth=0, field=None):
+        if depth > 7:
             return None
         if isinstance(value, dict):
-            return {key: clean(item, depth + 1) for key, item in value.items() if key in allowed}
+            return {key: clean(item, depth + 1, key) for key, item in value.items() if key in allowed}
         if isinstance(value, list):
-            return [clean(item, depth + 1) for item in value[:12]]
+            items = value if field == "request_parts" else value[:12]
+            return [clean(item, depth + 1) for item in items]
         if isinstance(value, str):
             return value[:4000]
         return value if value is None or isinstance(value, (bool, int, float)) else None
@@ -286,7 +295,7 @@ class ParseIntentAgent(BaseAgent):
             return state
 
         try:
-            parsed = self._parse_response(raw)
+            parsed = self._parse_response(raw, user_input=user_input)
             if parsed["address"] and not _address_in_current_message(parsed["address"], user_input):
                 # Stored identity is carried separately. A model must not turn an
                 # earlier or invented address into a new user-supplied address.
@@ -299,13 +308,14 @@ class ParseIntentAgent(BaseAgent):
 
         return state
 
-    def _parse_response(self, text: str) -> Dict[str, Any]:
+    def _parse_response(self, text: str, *, user_input: Optional[str] = None) -> Dict[str, Any]:
         """
         Expects the model to return JSON. Validates/normalizes:
           - 'parsed_intent' (string; can include separators)
           - 'intents' (list[str]) derived from parsed_intent
           - 'address' (string or null; default None)
           - 'ambigious' (boolean; default True)
+          - optional 'request_parts', each with a question, kind and source list
         Falls back to DEFAULT_CONTEXT on any validation issue.
         """
         d = json.loads(text)
@@ -322,28 +332,60 @@ class ParseIntentAgent(BaseAgent):
         if not parts and isinstance(d.get("intents"), list):
             parts = [str(p).strip() for p in d["intents"] if str(p).strip()]
 
-        if not parts:
-            # No valid intents -> default
-            return DEFAULT_CONTEXT.copy()
-
         # Validate intents are within ALLOWED
         if any(p not in ALLOWED for p in parts):
             raise ValueError(f"Disallowed intent(s) in parsed_intent: {parts}")
 
         # Normalize
         intents = list(dict.fromkeys(parts))
+        request_parts = []
+        raw_request_parts = d.get("request_parts")
+        for part in raw_request_parts if isinstance(raw_request_parts, list) else []:
+            if not isinstance(part, dict):
+                continue
+            question = part.get("question")
+            kind = part.get("kind", "other")
+            kind = {"explanation": "interpretation", "next_step": "advice", "next_steps": "advice"}.get(kind, kind) if isinstance(kind, str) else "other"
+            sources = part.get("sources")
+            if not isinstance(question, str) or not question.strip():
+                continue
+            if kind not in {"fact", "interpretation", "advice", "comparison", "other"}:
+                kind = "other"
+            sources = [source for source in sources if isinstance(source, str) and source in ALLOWED] if isinstance(sources, list) else []
+            if not sources:
+                sources = list(intents) or ["SQL database"]
+                if kind in {"interpretation", "advice", "comparison"}:
+                    sources.append("vector database")
+            sources = list(dict.fromkeys(sources))
+            request_parts.append({"question": question.strip(), "kind": kind, "sources": sources})
+            # Every subquestion contributes its retrieval needs. A top-level
+            # classification must not discard the advisory half of a request.
+            intents = list(dict.fromkeys([*intents, *sources]))
+        if not intents:
+            return DEFAULT_CONTEXT.copy()
         address = d.get("address", None)
         if address is not None and not isinstance(address, str):
             raise ValueError("Intent address must be a string or null")
         address = address.strip() or None if isinstance(address, str) else None
+        if address:
+            # Check every original token before removing question grammar. In
+            # particular, an invented city/postcode must not become acceptable
+            # just because a cleaner can recover a real street from the value.
+            if user_input is not None and not _address_in_current_message(address, user_input):
+                address = None
+            else:
+                address = normalize_address_candidate(address, allow_four_digit_number=True)
         ambigious = d.get("ambigious", True)
         if not isinstance(ambigious, bool):
             raise ValueError("Intent ambigious must be a JSON boolean")
         parsed_intent = " ; ".join(intents)  # keep your format with spaces around semicolons
 
-        return {
+        context = {
             "intents": intents,
             "address": address,
             "ambigious": ambigious,
             "parsed_intent": parsed_intent,
         }
+        if request_parts:
+            context["request_parts"] = request_parts
+        return context

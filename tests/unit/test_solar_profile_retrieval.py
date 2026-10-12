@@ -108,7 +108,7 @@ def test_solar_summary_receives_latest_oden_record_alongside_specialized_data():
     module.specialized_layer.execute = lambda *args: {"ok": True, "data": []}
     generated_prompts = []
 
-    def summarize(prompt, message_list=None):
+    def summarize(prompt, message_list=None, *, language=None):
         generated_prompts.append(prompt)
         return "Compare the expected solar production with the shared meter's load profile."
 
@@ -124,12 +124,13 @@ def test_solar_summary_receives_latest_oden_record_alongside_specialized_data():
 
     assert calls == [("buildings_by_building_id", {"building_id": BUILDING_ID})]
     facts = result["metadata"]["retrieved_facts"]
-    assert facts["energy_class"] == "C"
+    assert facts["calculated_energy_class"] == "C"
+    assert "energy_class" not in facts
     assert facts["energy_performance"] == 82
     assert facts["electricity_use"] == 64000
     assert result["metadata"]["data_freshness"]["energy_declaration_year"] == 2024
     assert "district_heating_use" not in result["metadata"]["uncertainty"]["missing_facts"]
-    assert "energy_class" not in result["metadata"]["uncertainty"]["missing_facts"]
+    assert "energy_class" in result["metadata"]["uncertainty"]["missing_facts"]
     assert "electricity_use" not in result["metadata"]["uncertainty"]["missing_facts"]
     assert "Some building details may be outdated" not in result["final_response"]
     assert "I do not have confirmed data for:" not in result["final_response"]

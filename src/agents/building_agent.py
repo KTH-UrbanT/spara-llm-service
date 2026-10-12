@@ -6,8 +6,18 @@ from src.agents.building_flow_graph import (
     build_building_flow_graph,
     resolve_multi_address_identity_message,
 )
-from src.agents.building_response_prompt import merge_identifier_metadata
+from src.agents.building_response_prompt import (
+    is_verified_address_explanation_followup,
+    merge_identifier_metadata,
+)
 from src.pipeline.telemetry import record_component_latency
+from src.pipeline.safety_analysis import response_language
+from src.pipeline.evaluation_metadata import (
+    has_verified_building_identity,
+    looks_like_identity_request,
+    needs_identity_clarification,
+    with_clarification_progress,
+)
 from src.redis.redis_session_store import get_session_state, update_session_state
 from src.services.source_link_registry import resolve_source_links
 
@@ -64,6 +74,7 @@ def _direct_resolution_metadata(
         "selected_brf_lookup_address",
         "byggnadsid",
         "building_id_from_user",
+        "selected_address_building_id",
     ):
         value = latest_state.get(key)
         if value not in (None, "", [], {}) and key not in merged:
@@ -93,9 +104,17 @@ def _metadata_without_unresolved_selection(metadata: Dict[str, Any]) -> Dict[str
         "byggnadsid",
         "selected_brf_building_id",
         "building_id_from_user",
+        "selected_address_building_id",
         "retrieved_facts",
+        "building_information",
         "aggregated_data",
         "agent_data",
+        "agent_data_generic",
+        "agent_data_specialized",
+        "evidence_scope",
+        "data_freshness",
+        "sql_trace",
+        "query_traces",
     ):
         cleaned.pop(key, None)
     building_match = cleaned.get("building_match")
@@ -105,7 +124,44 @@ def _metadata_without_unresolved_selection(metadata: Dict[str, Any]) -> Dict[str
         building_match["match_confidence"] = "low"
         building_match["ambiguous"] = True
         cleaned["building_match"] = building_match
+    identity = cleaned.get("building_identity_check")
+    if isinstance(identity, dict) and identity.get("status") == "passed":
+        identity = dict(identity)
+        identity.pop("matched_building_id", None)
+        identity.pop("matched_address", None)
+        identity["status"] = "ambiguous" if "ambiguous" in str((cleaned.get("clarification") or {}).get("reason") or "") else "missing"
+        cleaned["building_identity_check"] = identity
     return cleaned
+
+
+def _normalize_response_metadata(metadata, route, messages, previous_metadata):
+    normalized = dict(metadata or {})
+    if route == "clarification":
+        normalized = _metadata_without_unresolved_selection(normalized)
+    elif has_verified_building_identity(normalized):
+        clarification = dict(normalized.get("clarification") or {})
+        if clarification.get("needed") and not needs_identity_clarification(normalized):
+            question = clarification.get("question_asked")
+            if question:
+                normalized["diagnostic_question"] = question
+        clarification.update(needed=False, resolved=True, reason=None, question_asked=None)
+        normalized["clarification"] = clarification
+    return with_clarification_progress(normalized, messages, previous_metadata)
+
+
+def _persist_response_state(state, metadata, route):
+    """Persist the same selected scope returned to the router and frontend."""
+    state["metadata"] = metadata
+    if route == "clarification":
+        for key in (
+            "building_id", "byggnadsid", "50a_uuid", "uuid", "oden_uuid", "01a_fnr",
+            "selected_address_building_id", "selected_brf_building_id", "building_id_from_user",
+            "retrieved_facts", "building_information", "aggregated_data", "agent_data",
+            "agent_data_generic", "agent_data_specialized", "query_traces", "sql_trace",
+            "evidence_scope", "data_freshness",
+        ):
+            state.pop(key, None)
+    return state
 
 
 class BuildingAgent:
@@ -115,19 +171,9 @@ class BuildingAgent:
     @staticmethod
     def _derive_route(final_state: Dict[str, Any], response_text: str) -> str:
         metadata = final_state.get("metadata") if isinstance(final_state, dict) else {}
-        clarification = metadata.get("clarification") if isinstance(metadata, dict) else {}
-        if isinstance(clarification, dict) and clarification.get("needed"):
+        if needs_identity_clarification(metadata or {}):
             return "clarification"
-
-        lowered = (response_text or "").strip().lower()
-        if (
-            "provide the building address" in lowered
-            or "full building address" in lowered
-            or "full street address" in lowered
-            or "need the full building address" in lowered
-            or "could you clarify your request" in lowered
-            or ADDRESS_DISAMBIGUATION_REQUEST_RE.search(response_text or "")
-        ):
+        if not has_verified_building_identity(metadata or {}) and looks_like_identity_request(response_text):
             return "clarification"
 
         if final_state.get("done_vector") and (
@@ -160,7 +206,23 @@ class BuildingAgent:
             }
         """
         started_at = time.perf_counter()
+        language = response_language(messages, last_message, metadata)
+        empty_response = ("Jag kunde inte färdigställa svaret just nu. Försök igen om en stund."
+                          if language == "sv" else "No output was generated.")
         session_state = _session_state if _session_state is not None else get_session_state(thread_id)
+        latest_state = _latest_session_state(session_state)
+        latest_metadata = latest_state.get("metadata") or {}
+        previous_metadata = {**latest_metadata, **(metadata or {})}
+        context_start = (metadata or {}).get("routing_context_start", 0)
+        stored_context_start = latest_metadata.get("routing_context_start", 0)
+        if (
+            isinstance(context_start, int)
+            and isinstance(stored_context_start, int)
+            and context_start > stored_context_start
+        ):
+            # A failed lookup was dismissed since this snapshot. Incoming metadata
+            # retains confirmed context; do not restore the abandoned request.
+            session_state = {}
 
         initial_state = {
             "thread_id": thread_id,
@@ -170,20 +232,46 @@ class BuildingAgent:
             "session_state": session_state,
         }
 
-        direct_multi_address_state = resolve_multi_address_identity_message(
-            last_message,
-            _direct_resolution_metadata(metadata or {}, session_state),
+        resolution_metadata = _direct_resolution_metadata(metadata or {}, session_state)
+        verified_address_explanation = is_verified_address_explanation_followup(
+            last_message, resolution_metadata,
         )
-        if direct_multi_address_state:
-            update_session_state(thread_id, direct_multi_address_state)
-            response = direct_multi_address_state.get("final_response") or "No output was generated."
+        if verified_address_explanation:
+            # The recorded identity already supports this relationship. Preserve
+            # its original request and let the graph explain it, without fresh
+            # address lookups that could replace the verified selected building.
+            initial_state["metadata"] = resolution_metadata
+        direct_multi_address_state = (
+            None if verified_address_explanation else resolve_multi_address_identity_message(
+                last_message, resolution_metadata,
+            )
+        )
+        direct_metadata = (direct_multi_address_state or {}).get("metadata") or {}
+        parse_pending_multi_address = bool(
+            direct_metadata.get("address_references")
+            and isinstance(direct_metadata.get("pending_address_query"), dict)
+            and not (direct_multi_address_state or {}).get("cached_candidate_answer")
+        )
+        if (
+            direct_multi_address_state
+            and direct_multi_address_state.get("multi_address_resolution_complete", True)
+            and not parse_pending_multi_address
+        ):
+            if context_start:
+                direct_multi_address_state["metadata"] = {
+                    **(direct_multi_address_state.get("metadata") or {}),
+                    "routing_context_start": context_start,
+                }
+            response = direct_multi_address_state.get("final_response") or empty_response
             md = direct_multi_address_state.get("metadata") or {}
-            route = "clarification" if (md.get("clarification") or {}).get("needed") else "building_specific"
+            route = "clarification" if needs_identity_clarification(md) else "building_specific"
             metadata_payload = (
                 _metadata_without_unresolved_selection(md)
                 if route == "clarification"
                 else merge_identifier_metadata(md, direct_multi_address_state)
             )
+            metadata_payload = _normalize_response_metadata(metadata_payload, route, messages, previous_metadata)
+            update_session_state(thread_id, _persist_response_state(direct_multi_address_state, metadata_payload, route))
             payload = {
                 "content": response,
                 "classification": "building_specific",
@@ -195,6 +283,31 @@ class BuildingAgent:
             record_component_latency("building_agent", time.perf_counter() - started_at)
             return payload, metadata_payload
 
+        if direct_multi_address_state:
+            # Parse the original facts/advice request after identity resolution,
+            # including pending choices, so every part survives the follow-up.
+            resolved_metadata = dict(direct_multi_address_state.get("metadata") or {})
+            if context_start:
+                resolved_metadata["routing_context_start"] = context_start
+            initial_state["metadata"] = resolved_metadata
+            initial_state["multi_address_resolution_checked"] = True
+            initial_state["multi_address_resolution_complete"] = direct_multi_address_state.get("multi_address_resolution_complete", True)
+            if parse_pending_multi_address:
+                initial_state["final_response"] = direct_multi_address_state.get("final_response") or empty_response
+            # Replace the snapshot metadata so omitted stale identity/facts
+            # cannot be restored when the graph merges session context.
+            resolved_session = _latest_session_state(session_state)
+            resolved_session["metadata"] = dict(resolved_metadata)
+            for key in (
+                "byggnadsid", "building_id", "50a_uuid", "uuid", "oden_uuid", "01a_fnr",
+                "building_id_from_user", "selected_address_building_id", "selected_brf_building_id",
+                "retrieved_facts", "building_match", "building_information", "aggregated_data", "agent_data",
+                "agent_data_generic", "agent_data_specialized", "evidence_scope", "data_freshness",
+                "query_traces", "generic_sql_trace", "sql_trace",
+            ):
+                resolved_session.pop(key, None)
+            initial_state["session_state"] = resolved_session
+
         self.graph = build_building_flow_graph()
         try:
             #print(initial_state)
@@ -202,7 +315,8 @@ class BuildingAgent:
         except Exception as e:
             record_component_latency("building_agent", time.perf_counter() - started_at)
             return {
-                "content": f"An error occurred while handling your building-related request: {e}",
+                "content": ("Jag kunde inte hämta byggnadsuppgifterna just nu. Försök igen om en stund."
+                            if language == "sv" else f"An error occurred while handling your building-related request: {e}"),
                 "agent_answered": "unknown",
                 "classification": "building_specific",
                 "parsed_intent": None,
@@ -212,14 +326,18 @@ class BuildingAgent:
 
         # Persist (possibly updated) session state
         # new_state = final_state.get("session_state", session_state)
-        update_session_state(thread_id, final_state)
+        if context_start:
+            final_state["metadata"] = {
+                **(final_state.get("metadata") or {}),
+                "routing_context_start": context_start,
+            }
 
         # Compose response content
         response = (
             final_state.get("final_response")
             or final_state.get("response")
             or final_state.get("prompt")
-            or "No output was generated."
+            or empty_response
         )
 
         # Extract diagnostics
@@ -270,9 +388,12 @@ class BuildingAgent:
                 "needed": True,
                 "reason": clarification_reason,
                 "question_asked": existing_clarification.get("question_asked") or response,
-                "resolved": existing_clarification.get("resolved", False),
+                "resolved": False,
                 "resolved_after_turns": existing_clarification.get("resolved_after_turns"),
             }
+
+        metadata_payload = _normalize_response_metadata(metadata_payload, route, messages, previous_metadata)
+        update_session_state(thread_id, _persist_response_state(final_state, metadata_payload, route))
 
         payload = {
             "content": response,

@@ -36,6 +36,7 @@ class FakeRedisClient:
         self.hashes = {}
         self.published = []
         self.pubsub_events = []
+        self.held_locks = set()
         FakeRedisClient.instances.append(self)
 
     def ping(self):
@@ -70,6 +71,18 @@ class FakeRedisClient:
 
     def pubsub(self):
         return FakePubSub(self.pubsub_events)
+
+    def lock(self, key, **kwargs):
+        client = self
+        class Lock:
+            def acquire(self, **kwargs):
+                if key in client.held_locks:
+                    return False
+                client.held_locks.add(key)
+                return True
+            def release(self):
+                client.held_locks.remove(key)
+        return Lock()
 
 
 class FakeRedisExceptions:
@@ -143,6 +156,49 @@ def test_process_thread_event_skips_non_user_latest_message():
     assert manager.redis.published == []
 
 
+def test_pending_turns_are_processed_once_and_keep_reply_association():
+    module = import_redis_manager_module()
+    manager = module.RedisQueueManager()
+    key = 'thread:queued:messages'
+    manager.redis.lists[key] = [json.dumps(item) for item in [
+        {'role': 'user', 'message_id': 101, 'metadata': {'request_tracking': True}, 'content': 'Andra lägenheter är för varma.'},
+        {'role': 'user', 'message_id': 102, 'metadata': {'request_tracking': True}, 'content': 'Bör vi beställa fönster direkt?'},
+    ]]
+    manager.process_thread_event('queued')
+    assert len(FakeAgentRouter.calls) == 1
+    assert FakeAgentRouter.calls[0][1] == 'Andra lägenheter är för varma.'
+    assert len(FakeAgentRouter.calls[0][0]) == 1
+    first_reply = json.loads(manager.redis.lists[key][-1])
+    assert first_reply['in_reply_to_message_id'] == 101
+    manager.process_thread_event('queued')
+    second_history = FakeAgentRouter.calls[1][0]
+    assert [item['role'] for item in second_history] == ['user', 'assistant', 'user']
+    assert second_history[1]['in_reply_to_message_id'] == 101
+    assert json.loads(manager.redis.lists[key][-1])['metadata']['in_reply_to_message_id'] == 102
+    manager.process_thread_event('queued')
+    assert len(FakeAgentRouter.calls) == 2
+
+
+def test_tracked_requests_do_not_replay_historical_untracked_users():
+    module = import_redis_manager_module()
+    manager = module.RedisQueueManager()
+    manager.redis.lists['thread:history:messages'] = [json.dumps(item) for item in [
+        {'role': 'user', 'message_id': 1, 'content': 'Old question'},
+        {'role': 'assistant', 'message_id': 2, 'content': 'Old answer'},
+        {'role': 'user', 'message_id': 3, 'metadata': {'request_tracking': True}, 'content': 'New question'},
+    ]]
+    manager.process_thread_event('history')
+    assert FakeAgentRouter.calls[-1][1] == 'New question'
+
+
+def test_busy_conversation_is_not_generated_by_another_worker():
+    module = import_redis_manager_module()
+    manager = module.RedisQueueManager()
+    manager.redis.held_locks.add('thread:busy:processing')
+    manager.process_thread_event('busy')
+    assert FakeAgentRouter.calls == []
+
+
 def test_process_thread_event_deletes_stale_pending_brf_resolution_after_selection():
     module = import_redis_manager_module()
     manager = module.RedisQueueManager()
@@ -189,3 +245,28 @@ def test_event_listener_consumes_pubsub_messages_with_thread_name():
     manager.event_listener()
 
     assert seen == ["thread-3"]
+
+
+def test_failed_lookup_fields_are_removed_from_redis_and_stay_removed():
+    module = import_redis_manager_module()
+    manager = module.RedisQueueManager()
+    message_key = "thread:failed-lookup:messages"
+    metadata_key = "thread:failed-lookup:meta"
+    manager.redis.lists[message_key] = [json.dumps({"role": "user", "content": "Vad är en BRF?"})]
+    manager.redis.hashes[metadata_key] = {
+        "brf_name": json.dumps("Okänd"),
+        "brf_resolution": json.dumps({"status": "not_found"}),
+        "clarification": json.dumps({"reason": "brf_not_found", "needed": True}),
+        "context": json.dumps({"parsed_intent": "SQL database"}),
+        "kept": json.dumps(True),
+    }
+    FakeAgentRouter.metadata = {"kept": True, "routing_context_start": 2}
+    manager.process_thread_event("failed-lookup")
+    saved = manager.redis.hashes[metadata_key]
+    assert all(key not in saved for key in ("brf_name", "brf_resolution", "clarification", "context"))
+    assert json.loads(saved["kept"]) is True
+
+    manager.redis.rpush(message_key, json.dumps({"role": "user", "content": "Hur kan vi spara energi?"}))
+    manager.process_thread_event("failed-lookup")
+    assert "brf_name" not in FakeAgentRouter.calls[-1][2]
+    assert "clarification" not in FakeAgentRouter.calls[-1][2]

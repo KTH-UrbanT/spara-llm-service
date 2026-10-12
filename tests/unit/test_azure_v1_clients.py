@@ -89,7 +89,9 @@ openai.OpenAI, openai.AsyncOpenAI = client, async_client
 sys.modules['src.database.vector_client'] = types.SimpleNamespace(
     VectorClient=object, VectorClientConfig=object)
 sys.modules['src.services.source_link_registry'] = types.SimpleNamespace(
-    resolve_source_links=lambda sources: [])
+    resolve_source_links=lambda sources: [],
+    guard_response_links=lambda text, language="sv": text,
+    verified_link_context=lambda: [])
 
 target = sys.argv[1]
 if target in ('vector_database', 'vector_database_pinecone'):
